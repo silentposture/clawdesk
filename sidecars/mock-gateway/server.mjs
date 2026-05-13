@@ -68,8 +68,8 @@ const openClawRuntimeSurfaces = [
     id: "provider-auth",
     upstreamPaths: ["src/agents/model-auth.ts", "src/agents/model-auth-env.ts", "src/agents/auth-profiles/*"],
     status: "contract-compatible",
-    windowsAdapter: "Provider auth plans map API key, OAuth, local endpoint, and mock modes to desktop-safe endpoints.",
-    remainingWork: "Persist real credentials in Windows Credential Manager and implement token refresh.",
+    windowsAdapter: "Provider auth plans map API key, OAuth, local endpoint, and mock modes to desktop-safe endpoints. Tauri desktop stores provider secrets with Windows DPAPI.",
+    remainingWork: "Replace OAuth account stubs with real token refresh and optional Windows Credential Manager integration.",
   },
   {
     id: "provider-catalog",

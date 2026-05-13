@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import type { PermissionResultEvent } from "./events";
 import type { LegalConsentRecord } from "./legalConsent";
+import type { ProviderAuthMode, ProviderId } from "./providers";
 
 export interface GatewayInfo {
   baseUrl: string;
@@ -206,4 +207,37 @@ export async function saveLegalExport(defaultFileName: string, contents: string)
   }
   const savedPath = await invoke<string | null>("save_legal_export", { defaultFileName, contents });
   return savedPath ?? undefined;
+}
+
+export interface ProviderCredentialInput {
+  providerId: ProviderId;
+  authMode: ProviderAuthMode;
+  secret?: string;
+  accountEmail?: string;
+  endpoint?: string;
+  model?: string;
+}
+
+export interface ProviderCredentialSummary {
+  providerId: ProviderId;
+  authMode: ProviderAuthMode;
+  hasSecret: boolean;
+  secretLabel?: string;
+  accountEmail?: string;
+  endpoint?: string;
+  model?: string;
+  storage: "windows-dpapi" | "portable-dev";
+  updatedAtEpochMs: number;
+}
+
+export async function writeProviderCredentialToApp(
+  credential: ProviderCredentialInput,
+): Promise<ProviderCredentialSummary | undefined> {
+  if (!hasTauriRuntime()) return undefined;
+  return invoke<ProviderCredentialSummary>("write_provider_credential", { credential });
+}
+
+export async function readProviderCredentialSummariesFromApp(): Promise<ProviderCredentialSummary[]> {
+  if (!hasTauriRuntime()) return [];
+  return invoke<ProviderCredentialSummary[]>("read_provider_credential_summaries");
 }

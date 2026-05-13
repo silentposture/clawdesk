@@ -8,6 +8,13 @@ use std::{
     time::Duration,
 };
 use tauri::Manager;
+#[cfg(all(windows, test))]
+use windows_sys::Win32::Security::Cryptography::CryptUnprotectData;
+#[cfg(windows)]
+use windows_sys::Win32::{
+    Foundation::LocalFree,
+    Security::Cryptography::{CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB},
+};
 
 const MOCK_PORT: u16 = 18890;
 const BUILD_PROFILE: Option<&str> = option_env!("CLAWDESK_BUILD_PROFILE");
@@ -35,6 +42,44 @@ struct LegalConsentRecord {
     accepted_at: String,
     document_hash: String,
     documents: Vec<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderCredentialInput {
+    provider_id: String,
+    auth_mode: String,
+    secret: Option<String>,
+    account_email: Option<String>,
+    endpoint: Option<String>,
+    model: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderCredentialRecord {
+    provider_id: String,
+    auth_mode: String,
+    encrypted_secret: Option<String>,
+    secret_label: Option<String>,
+    account_email: Option<String>,
+    endpoint: Option<String>,
+    model: Option<String>,
+    updated_at_epoch_ms: u128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderCredentialSummary {
+    provider_id: String,
+    auth_mode: String,
+    has_secret: bool,
+    secret_label: Option<String>,
+    account_email: Option<String>,
+    endpoint: Option<String>,
+    model: Option<String>,
+    storage: String,
+    updated_at_epoch_ms: u128,
 }
 
 #[derive(Default)]
@@ -195,6 +240,255 @@ fn legal_consent_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
         .app_config_dir()
         .map_err(|error| format!("Failed to resolve app config dir: {error}"))?;
     Ok(legal_consent_path_from_config_dir(config_dir))
+}
+
+fn provider_credentials_path_from_config_dir(config_dir: PathBuf) -> PathBuf {
+    config_dir.join("provider-credentials.json")
+}
+
+fn provider_credentials_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("Failed to resolve app config dir: {error}"))?;
+    Ok(provider_credentials_path_from_config_dir(config_dir))
+}
+
+fn now_epoch_ms() -> u128 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|duration| duration.as_millis())
+        .unwrap_or(0)
+}
+
+fn validate_provider_credential_input(input: &ProviderCredentialInput) -> Result<(), String> {
+    let provider_id = input.provider_id.trim();
+    if provider_id.is_empty() || provider_id.len() > 80 {
+        return Err("Provider id is required".to_string());
+    }
+    if !provider_id
+        .chars()
+        .all(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit() || ch == '-')
+    {
+        return Err("Provider id contains unsupported characters".to_string());
+    }
+    match input.auth_mode.trim() {
+        "api-key" | "oauth" | "local-endpoint" | "mock" => Ok(()),
+        _ => Err("Unsupported provider auth mode".to_string()),
+    }
+}
+
+fn mask_secret(secret: &str) -> String {
+    let trimmed = secret.trim();
+    if trimmed.is_empty() {
+        return String::new();
+    }
+    let prefix: String = trimmed.chars().take(4).collect();
+    let suffix_chars: Vec<char> = trimmed.chars().rev().take(4).collect();
+    let suffix: String = suffix_chars.into_iter().rev().collect();
+    if trimmed.chars().count() <= 8 {
+        format!("{prefix}…")
+    } else {
+        format!("{prefix}…{suffix}")
+    }
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
+}
+
+#[cfg(test)]
+fn hex_decode(value: &str) -> Result<Vec<u8>, String> {
+    let trimmed = value.trim();
+    if trimmed.len() % 2 != 0 {
+        return Err("Encrypted secret has invalid hex length".to_string());
+    }
+    let mut bytes = Vec::with_capacity(trimmed.len() / 2);
+    for index in (0..trimmed.len()).step_by(2) {
+        let byte = u8::from_str_radix(&trimmed[index..index + 2], 16)
+            .map_err(|error| format!("Encrypted secret has invalid hex: {error}"))?;
+        bytes.push(byte);
+    }
+    Ok(bytes)
+}
+
+#[cfg(windows)]
+fn protect_secret(secret: &str) -> Result<String, String> {
+    let mut secret_bytes = secret.as_bytes().to_vec();
+    let mut input = CRYPT_INTEGER_BLOB {
+        cbData: secret_bytes.len() as u32,
+        pbData: secret_bytes.as_mut_ptr(),
+    };
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: std::ptr::null_mut(),
+    };
+
+    let ok = unsafe {
+        CryptProtectData(
+            &mut input,
+            std::ptr::null(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut output,
+        )
+    };
+    if ok == 0 {
+        return Err("Windows DPAPI failed to protect provider credential".to_string());
+    }
+    let encrypted = unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize) };
+    let encoded = hex_encode(encrypted);
+    unsafe {
+        LocalFree(output.pbData.cast());
+    }
+    Ok(encoded)
+}
+
+#[cfg(windows)]
+#[cfg(test)]
+fn unprotect_secret(encrypted_hex: &str) -> Result<String, String> {
+    let mut encrypted = hex_decode(encrypted_hex)?;
+    let mut input = CRYPT_INTEGER_BLOB {
+        cbData: encrypted.len() as u32,
+        pbData: encrypted.as_mut_ptr(),
+    };
+    let mut output = CRYPT_INTEGER_BLOB {
+        cbData: 0,
+        pbData: std::ptr::null_mut(),
+    };
+    let ok = unsafe {
+        CryptUnprotectData(
+            &mut input,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            CRYPTPROTECT_UI_FORBIDDEN,
+            &mut output,
+        )
+    };
+    if ok == 0 {
+        return Err("Windows DPAPI failed to unprotect provider credential".to_string());
+    }
+    let plain = unsafe { std::slice::from_raw_parts(output.pbData, output.cbData as usize) };
+    let value = String::from_utf8(plain.to_vec())
+        .map_err(|error| format!("Provider credential is not valid UTF-8: {error}"))?;
+    unsafe {
+        LocalFree(output.pbData.cast());
+    }
+    Ok(value)
+}
+
+#[cfg(not(windows))]
+fn protect_secret(secret: &str) -> Result<String, String> {
+    Ok(hex_encode(secret.as_bytes()))
+}
+
+#[cfg(not(windows))]
+#[cfg(test)]
+fn unprotect_secret(encrypted_hex: &str) -> Result<String, String> {
+    String::from_utf8(hex_decode(encrypted_hex)?)
+        .map_err(|error| format!("Provider credential is not valid UTF-8: {error}"))
+}
+
+fn read_provider_credentials_from_path(
+    path: PathBuf,
+) -> Result<Vec<ProviderCredentialRecord>, String> {
+    if !path.exists() {
+        return Ok(Vec::new());
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|error| format!("Failed to read provider credentials: {error}"))?;
+    serde_json::from_str::<Vec<ProviderCredentialRecord>>(&raw)
+        .map_err(|error| format!("Failed to parse provider credentials: {error}"))
+}
+
+fn write_provider_credentials_to_path(
+    path: PathBuf,
+    records: &[ProviderCredentialRecord],
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create app config dir: {error}"))?;
+    }
+    let raw = serde_json::to_string_pretty(records)
+        .map_err(|error| format!("Failed to serialize provider credentials: {error}"))?;
+    fs::write(path, raw).map_err(|error| format!("Failed to write provider credentials: {error}"))
+}
+
+fn summarize_provider_credential(record: &ProviderCredentialRecord) -> ProviderCredentialSummary {
+    ProviderCredentialSummary {
+        provider_id: record.provider_id.clone(),
+        auth_mode: record.auth_mode.clone(),
+        has_secret: record.encrypted_secret.is_some(),
+        secret_label: record.secret_label.clone(),
+        account_email: record.account_email.clone(),
+        endpoint: record.endpoint.clone(),
+        model: record.model.clone(),
+        storage: if cfg!(windows) {
+            "windows-dpapi"
+        } else {
+            "portable-dev"
+        }
+        .to_string(),
+        updated_at_epoch_ms: record.updated_at_epoch_ms,
+    }
+}
+
+fn write_provider_credential_to_path(
+    path: PathBuf,
+    input: ProviderCredentialInput,
+) -> Result<ProviderCredentialSummary, String> {
+    validate_provider_credential_input(&input)?;
+    let mut records = read_provider_credentials_from_path(path.clone())?;
+    let secret = input
+        .secret
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let encrypted_secret = match secret {
+        Some(value) => Some(protect_secret(value)?),
+        None => None,
+    };
+    let secret_label = secret.map(mask_secret);
+    let record = ProviderCredentialRecord {
+        provider_id: input.provider_id.trim().to_string(),
+        auth_mode: input.auth_mode.trim().to_string(),
+        encrypted_secret,
+        secret_label,
+        account_email: input
+            .account_email
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        endpoint: input
+            .endpoint
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        model: input
+            .model
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty()),
+        updated_at_epoch_ms: now_epoch_ms(),
+    };
+
+    records.retain(|item| item.provider_id != record.provider_id);
+    records.push(record.clone());
+    records.sort_by(|a, b| a.provider_id.cmp(&b.provider_id));
+    write_provider_credentials_to_path(path, &records)?;
+    Ok(summarize_provider_credential(&record))
+}
+
+fn read_provider_credential_summaries_from_path(
+    path: PathBuf,
+) -> Result<Vec<ProviderCredentialSummary>, String> {
+    read_provider_credentials_from_path(path).map(|records| {
+        records
+            .iter()
+            .map(summarize_provider_credential)
+            .collect::<Vec<_>>()
+    })
 }
 
 fn read_legal_consent_from_path(path: PathBuf) -> Result<Option<LegalConsentRecord>, String> {
@@ -449,6 +743,21 @@ fn save_legal_export(
     }
 }
 
+#[tauri::command]
+fn write_provider_credential(
+    app: tauri::AppHandle,
+    credential: ProviderCredentialInput,
+) -> Result<ProviderCredentialSummary, String> {
+    write_provider_credential_to_path(provider_credentials_path(&app)?, credential)
+}
+
+#[tauri::command]
+fn read_provider_credential_summaries(
+    app: tauri::AppHandle,
+) -> Result<Vec<ProviderCredentialSummary>, String> {
+    read_provider_credential_summaries_from_path(provider_credentials_path(&app)?)
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .manage(SharedGatewayState::default())
@@ -459,7 +768,9 @@ pub fn run() {
             pick_project_folder,
             read_legal_consent,
             write_legal_consent,
-            save_legal_export
+            save_legal_export,
+            write_provider_credential,
+            read_provider_credential_summaries
         ])
         .setup(|app| {
             if env_flag("CLAWDESK_SMOKE_BOOT_GATEWAY") {
@@ -634,5 +945,62 @@ mod tests {
         assert!(invalid.is_err());
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn provider_credential_persistence_masks_and_protects_secret() {
+        let base = std::env::temp_dir().join(format!(
+            "clawdesk-provider-credential-test-{}",
+            std::process::id()
+        ));
+        let path = base.join("provider-credentials.json");
+        let input = ProviderCredentialInput {
+            provider_id: "openai-api".to_string(),
+            auth_mode: "api-key".to_string(),
+            secret: Some("sk-test-1234567890".to_string()),
+            account_email: None,
+            endpoint: None,
+            model: Some("gpt-5.2".to_string()),
+        };
+
+        let summary = write_provider_credential_to_path(path.clone(), input)
+            .expect("provider credential should write");
+        assert_eq!(summary.provider_id, "openai-api");
+        assert!(summary.has_secret);
+        assert_eq!(summary.secret_label.as_deref(), Some("sk-t…7890"));
+
+        let raw = fs::read_to_string(path.clone()).expect("credential file should exist");
+        assert!(!raw.contains("sk-test-1234567890"));
+        let records =
+            read_provider_credentials_from_path(path.clone()).expect("records should read");
+        let encrypted = records[0]
+            .encrypted_secret
+            .as_deref()
+            .expect("encrypted secret should exist");
+        assert_eq!(
+            unprotect_secret(encrypted).expect("secret should unprotect"),
+            "sk-test-1234567890"
+        );
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn provider_credential_rejects_invalid_provider_id() {
+        let base = std::env::temp_dir().join(format!(
+            "clawdesk-provider-credential-invalid-test-{}",
+            std::process::id()
+        ));
+        let path = base.join("provider-credentials.json");
+        let input = ProviderCredentialInput {
+            provider_id: "../openai".to_string(),
+            auth_mode: "api-key".to_string(),
+            secret: Some("sk-test".to_string()),
+            account_email: None,
+            endpoint: None,
+            model: None,
+        };
+
+        assert!(write_provider_credential_to_path(path, input).is_err());
     }
 }

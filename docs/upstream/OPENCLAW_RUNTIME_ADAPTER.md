@@ -4,7 +4,7 @@ This project does not directly bundle the full upstream OpenClaw runtime into th
 
 The Windows landing path is therefore a runtime adapter contract:
 
-- Provider auth: OpenAI API key, OpenAI/Codex account OAuth stub, local endpoint, and mock modes are exposed as Windows Gateway endpoints.
+- Provider auth: OpenAI API key, OpenAI/Codex account OAuth stub, local endpoint, and mock modes are exposed as Windows Gateway endpoints. Tauri desktop builds persist provider secrets with Windows DPAPI under the current Windows user profile; browser dev mode does not persist secrets.
 - Provider catalog: ClawDesk carries upstream provider ids/source metadata and validates provider selection through the mock Gateway.
 - Gateway events: WebSocket event contract covers agent deltas, canvas patches/data, permission request/result, and gateway status.
 - Permission/tools: GUI approval flow is implemented and tested; real plugin loading remains blocked on Windows sandbox policy.
@@ -17,5 +17,7 @@ Runtime contract source:
 - `src/lib/openclawRuntime.ts`
 - `GET /openclaw/runtime-contract`
 - `POST /openclaw/runtime/auth-plan`
+- `write_provider_credential`
+- `read_provider_credential_summaries`
 
 Current status is honest by design: several surfaces are contract-compatible, but not all upstream execution paths are production-backed yet.

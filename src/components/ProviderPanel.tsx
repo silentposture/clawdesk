@@ -9,6 +9,7 @@ import {
   providerStatusLabel,
 } from "../lib/providers";
 import { useI18n } from "../lib/i18n";
+import { writeProviderCredentialToApp } from "../lib/tauri";
 
 interface ProviderPanelProps {
   session: ProviderSession;
@@ -99,6 +100,12 @@ export function ProviderPanel({
     if (!response) {
       setError(t("provider.error.missingAccount"));
     } else {
+      await writeProviderCredentialToApp({
+        providerId: "chatgpt-pro",
+        authMode: "oauth",
+        accountEmail: chatGptAccount.trim(),
+        model: response.model ?? chatGptModel.trim(),
+      }).catch(() => undefined);
       setChatGptModel(response.model ?? chatGptModel);
     }
   }
@@ -114,6 +121,12 @@ export function ProviderPanel({
     if (!response) {
       setError(t("provider.error.apiKey"));
     } else {
+      await writeProviderCredentialToApp({
+        providerId: "openai-api",
+        authMode: "api-key",
+        secret: apiKey.trim(),
+        model: response.model ?? openAiModel.trim(),
+      }).catch(() => undefined);
       setApiKey("");
     }
   }
@@ -129,6 +142,12 @@ export function ProviderPanel({
     if (!response) {
       setError(t("provider.error.apiKey"));
     } else {
+      await writeProviderCredentialToApp({
+        providerId: "google-gemini",
+        authMode: "api-key",
+        secret: geminiApiKey.trim(),
+        model: response.model ?? geminiModel.trim(),
+      }).catch(() => undefined);
       setGeminiApiKey("");
     }
   }
@@ -143,6 +162,13 @@ export function ProviderPanel({
     });
     if (!response) {
       setError(t("provider.error.local"));
+    } else {
+      await writeProviderCredentialToApp({
+        providerId: "local-model",
+        authMode: "local-endpoint",
+        endpoint: response.endpoint ?? localEndpoint.trim(),
+        model: response.model ?? localModel.trim(),
+      }).catch(() => undefined);
     }
   }
 
@@ -195,6 +221,14 @@ export function ProviderPanel({
       }
       const next = (await response.json()) as ProviderSession;
       onSessionChange({ ...next, activeProvider: canonicalProviderForSession(next.activeProvider) });
+      await writeProviderCredentialToApp({
+        providerId: advancedSpec.id,
+        authMode: advancedSpec.authMode,
+        secret: advancedSpec.authMode === "api-key" ? advancedKey.trim() : undefined,
+        accountEmail: advancedSpec.authMode === "oauth" ? advancedAccount.trim() : undefined,
+        endpoint: advancedSpec.authMode === "local-endpoint" ? advancedEndpoint.trim() : undefined,
+        model: next.model ?? advancedModel.trim(),
+      }).catch(() => undefined);
       if (advancedSpec.authMode === "api-key") {
         setAdvancedKey("");
       }
