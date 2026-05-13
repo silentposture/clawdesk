@@ -1,0 +1,22 @@
+services:
+  backend-auth:
+    image: node:22-alpine
+    working_dir: /workspace
+    command: ["sh", "-c", "node backend/server.mjs"]
+    ports:
+      - "19090:19090"
+    environment:
+      CLAWDESK_BACKEND_PORT: "19090"
+      CLAWDESK_BACKEND_STATE_FILE: "/workspace/.clawdesk-backend/state.json"
+      CLAWDESK_LICENSE_HMAC_KEY: "dev-keygen-hmac-key"
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=128"
+    volumes:
+      - .:/workspace
+    restart: unless-stopped
+    networks:
+      - mock-net
+
+networks:
+  mock-net:
+    driver: bridge

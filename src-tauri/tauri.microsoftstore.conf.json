@@ -1,0 +1,59 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ClawDesk",
+  "version": "0.1.0",
+  "identifier": "dev.openclaw.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "ClawDesk",
+        "width": 1240,
+        "height": 820,
+        "minWidth": 760,
+        "minHeight": 620
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: https: wss:; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "publisher": "ClawDesk",
+    "homepage": "https://clawdesk.local",
+    "category": "Productivity",
+    "resources": {
+      "../docs/legal/INSTALLER_TERMS.md": "legal/INSTALLER_TERMS.md",
+      "../docs/legal/EULA.md": "legal/EULA.md",
+      "../docs/legal/PRIVACY.md": "legal/PRIVACY.md",
+      "../docs/legal/REFUND_POLICY.md": "legal/REFUND_POLICY.md",
+      "../docs/legal/DIGITAL_CONTENT_WAIVER.md": "legal/DIGITAL_CONTENT_WAIVER.md",
+      "../docs/legal/AI_AGENT_RISK_NOTICE.md": "legal/AI_AGENT_RISK_NOTICE.md",
+      "../docs/legal/OPENCLAW_MIT_NOTICE.md": "legal/OPENCLAW_MIT_NOTICE.md",
+      "../docs/legal/OPENCLAW_UPSTREAM_LICENSE.md": "legal/OPENCLAW_UPSTREAM_LICENSE.md",
+      "../docs/legal/THIRD_PARTY_NOTICES.md": "legal/THIRD_PARTY_NOTICES.md"
+    },
+    "windows": {
+      "digestAlgorithm": "sha256",
+      "timestampUrl": "http://timestamp.digicert.com",
+      "webviewInstallMode": {
+        "type": "offlineInstaller",
+        "silent": true
+      },
+      "nsis": {
+        "displayLanguageSelector": false,
+        "installerIcon": "icons/icon.ico",
+        "installMode": "perMachine",
+        "startMenuFolder": "ClawDesk"
+      }
+    },
+    "icon": ["icons/icon.png"]
+  }
+}

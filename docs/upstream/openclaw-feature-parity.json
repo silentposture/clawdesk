@@ -1,0 +1,34 @@
+{
+  "repository": "https://github.com/openclaw/openclaw",
+  "commit": "d4484158d9291820d7af236d4277704da019f609",
+  "license": "MIT",
+  "scannedAt": "2026-05-14",
+  "sourceFileCount": 14886,
+  "summary": {
+    "covered": 0,
+    "partial": 8,
+    "mock": 6,
+    "deferred": 3,
+    "not-applicable": 1
+  },
+  "items": [
+    { "id": "model-auth-openai", "status": "partial", "domain": "模型連線與 OpenAI 登入" },
+    { "id": "provider-catalog", "status": "partial", "domain": "Provider catalog / model catalog" },
+    { "id": "gateway-protocol", "status": "mock", "domain": "Gateway protocol / WebSocket / RPC" },
+    { "id": "agents-runtime", "status": "mock", "domain": "Agents runtime / subagents / harness" },
+    { "id": "plugins-sdk", "status": "partial", "domain": "Plugin SDK / tools" },
+    { "id": "extensions", "status": "mock", "domain": "Extensions / external connectors" },
+    { "id": "channels", "status": "partial", "domain": "Messaging channels" },
+    { "id": "cron-workflows", "status": "mock", "domain": "Cron / workflow automation" },
+    { "id": "memory", "status": "mock", "domain": "Memory / embeddings / vector store" },
+    { "id": "security-auth", "status": "partial", "domain": "Security / auth profiles / secret refs" },
+    { "id": "config-schema", "status": "partial", "domain": "Config schema / guided setup" },
+    { "id": "ui-control", "status": "partial", "domain": "Control UI / TUI / chat model selection" },
+    { "id": "media-understanding", "status": "mock", "domain": "Media understanding / image/audio/video" },
+    { "id": "tts-talk", "status": "deferred", "domain": "TTS / talk / realtime transcription" },
+    { "id": "pairing-device", "status": "deferred", "domain": "Pairing / device auth / node mode" },
+    { "id": "macos-ios-android", "status": "not-applicable", "domain": "Native Apple/Android apps" },
+    { "id": "sdk", "status": "deferred", "domain": "SDK / client API" },
+    { "id": "windows-release", "status": "partial", "domain": "Windows packaging / certification" }
+  ]
+}

@@ -1,0 +1,54 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "ClawDesk",
+  "version": "0.1.0",
+  "identifier": "dev.openclaw.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "ClawDesk",
+        "width": 1240,
+        "height": 820,
+        "minWidth": 760,
+        "minHeight": 620
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: https: wss:; img-src 'self' asset: data:; style-src 'self' 'unsafe-inline'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["app", "dmg"],
+    "publisher": "ClawDesk",
+    "category": "Productivity",
+    "resources": {
+      "../docs/legal/INSTALLER_TERMS.md": "legal/INSTALLER_TERMS.md",
+      "../docs/legal/OPENCLAW_MIT_NOTICE.md": "legal/OPENCLAW_MIT_NOTICE.md",
+      "../docs/legal/THIRD_PARTY_NOTICES.md": "legal/THIRD_PARTY_NOTICES.md"
+    },
+    "macOS": {
+      "dmg": {
+        "appPosition": {
+          "x": 180,
+          "y": 170
+        },
+        "applicationFolderPosition": {
+          "x": 480,
+          "y": 170
+        },
+        "windowSize": {
+          "width": 660,
+          "height": 400
+        }
+      }
+    },
+    "icon": ["icons/icon.png"]
+  }
+}

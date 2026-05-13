@@ -1,0 +1,2 @@
+# Windows-first builds use the host MSVC target by default.
+# Do not force a platform target here; npm scripts provide release-specific build context.

@@ -1,0 +1,45 @@
+services:
+  mock-gateway:
+    image: node:22-alpine
+    working_dir: /workspace
+    command: ["sh", "-c", "node sidecars/mock-gateway/server.mjs"]
+    ports:
+      - "18890:18890"
+    environment:
+      OPENCLAW_MOCK_PORT: "18890"
+      CLAWDESK_IDENTITY_BACKEND_URL: "http://backend-auth:19090"
+      CLAWDESK_MOCK_STATE_FILE: "/workspace/.clawdesk-mock/state.json"
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=128"
+    volumes:
+      - .:/workspace
+    restart: unless-stopped
+    networks:
+      - mock-net
+
+  mock-mail:
+    image: axllent/mailpit
+    ports:
+      - "8025:8025"
+      - "1025:1025"
+    restart: unless-stopped
+    networks:
+      - mock-net
+
+  mock-reverse-proxy:
+    image: nginx:1.27-alpine
+    ports:
+      - "18889:18890"
+      - "8088:80"
+    volumes:
+      - ./infra/nginx.mock.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      - mock-gateway
+      - mock-mail
+    restart: unless-stopped
+    networks:
+      - mock-net
+
+networks:
+  mock-net:
+    driver: bridge
