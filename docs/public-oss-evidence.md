@@ -5,8 +5,8 @@ This snapshot records the current public-release posture of ClawDesk. Refresh it
 ## Repository state
 
 - Public GitHub repository: `https://github.com/silentposture/clawdesk.git`
-- Current public refs: `main` at `4476537` and `oss-launch-prep` at `8b8ce37`
-- Latest verified launch branch commit: `8b8ce37`
+- Current public refs: `main` at `7049952` and `oss-launch-prep` at `7049952`
+- Launch evidence commit used for this snapshot: `8b8ce37`
 - Anonymous GitHub access check: successful `git ls-remote` against the repository returned `HEAD`, `refs/heads/main`, and `refs/heads/oss-launch-prep`
 
 ## Public-release evidence
@@ -14,10 +14,10 @@ This snapshot records the current public-release posture of ClawDesk. Refresh it
 - `npm run legal:manifest` -> regenerated `src/lib/legalConsentManifest.ts` for the current launch branch snapshot `8b8ce37`
 - `npm run legal:notices` -> regenerated `docs/legal/THIRD_PARTY_NOTICES.md` for the current launch branch snapshot `8b8ce37`
 - `npm run preflight` -> `PASS`
-- GitHub Actions `Hidden Window Gate` run [26845869391](https://github.com/silentposture/clawdesk/actions/runs/26845869391) on `main` -> success
-- GitHub Actions `Hidden Window Gate` run [26846677736](https://github.com/silentposture/clawdesk/actions/runs/26846677736) on `oss-launch-prep` -> success
-- GitHub Actions `Public Release CI` run [26845869335](https://github.com/silentposture/clawdesk/actions/runs/26845869335) on `main` -> success
-- GitHub Actions `Public Release CI` run [26846677092](https://github.com/silentposture/clawdesk/actions/runs/26846677092) on `oss-launch-prep` -> success
+- GitHub Actions `Hidden Window Gate` run [26847013000](https://github.com/silentposture/clawdesk/actions/runs/26847013000) on `main` -> success
+- GitHub Actions `Hidden Window Gate` run [26846862868](https://github.com/silentposture/clawdesk/actions/runs/26846862868) on `oss-launch-prep` -> success
+- GitHub Actions `Public Release CI` run [26847012999](https://github.com/silentposture/clawdesk/actions/runs/26847012999) on `main` -> success
+- GitHub Actions `Public Release CI` run [26846863161](https://github.com/silentposture/clawdesk/actions/runs/26846863161) on `oss-launch-prep` -> success
 - `bash scripts/check-public-release.sh` -> `PASS: public release surface looks clean.`
 - `npm audit --omit=dev --json` -> 0 vulnerabilities
 - `git diff --check` -> no formatting errors in the current public-launch document set
