@@ -1,41 +1,19 @@
-# ClawDesk Support Contact
+# Historical Planning Draft
 
-Version: 0.1.0
-Last updated: 2026-05-14
+This document is retained for provenance only. It does not define the current OSS support policy.
 
-Developer / publisher: Alisonsoftware
+# Support Contact
 
-Support email: alison.ai.tech.studio@gmail.com
+Current public support placeholder:
 
-## Current Beta Status
+- Email: `support@clawdesk.example`
+- URL: `https://clawdesk.example/support`
 
-The public support contact for the Windows Beta is `alison.ai.tech.studio@gmail.com`.
+The public OSS launch should not claim 24/7 support, enterprise SLA, managed deployment, or guaranteed response time unless those services are actually published.
 
-ClawDesk must not claim 24/7 support, enterprise SLA, managed deployment, or guaranteed response time until a real support email, helpdesk URL, and support scope are published.
-
-## Release Requirement
-
-Before `beta-direct` release, configure at least one of:
-
-- `CLAWDESK_SUPPORT_EMAIL`
-- `CLAWDESK_SUPPORT_URL`
-
-The download page, FAQ, checkout page, refund policy, and in-app legal center should all point to the same published support channel.
-
-## Support Scope Draft
-
-The first Windows direct-download Beta support scope should cover:
+Support scope should stay limited to:
 
 - Installer download and signature/hash verification questions.
-- License activation and refund/cancellation entitlement downgrade issues.
-- Diagnostic export review.
-- Account/provider setup guidance.
+- Release and debug-bundle guidance.
+- Issue triage and redaction guidance.
 
-The Beta support scope should not promise:
-
-- 24/7 response.
-- Enterprise SLA.
-- Managed deployment.
-- Legal, tax, financial, investment, medical, or security consulting.
-
-Autoresponder copy template: `docs/support/AUTO_REPLY_TEMPLATE.txt`.

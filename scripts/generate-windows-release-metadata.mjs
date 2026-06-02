@@ -122,8 +122,8 @@ const metadata = {
   channel: "beta-direct",
   version: packageJson.version,
   updatedDate: new Date().toISOString().slice(0, 10),
-  developer: "Alisonsoftware",
-  supportEmail: "alison.ai.tech.studio@gmail.com",
+  developer: "ClawDesk Contributors",
+  supportEmail: "support@clawdesk.example",
   installer: {
     fileName: installer.name,
     relativePath: installer.relativePath.replace(/\\/g, "/"),

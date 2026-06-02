@@ -26,7 +26,7 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
-    "publisher": "Alisonsoftware",
+    "publisher": "ClawDesk Contributors",
     "category": "Productivity",
     "resources": {
       "../docs/legal/INSTALLER_TERMS.md": "legal/INSTALLER_TERMS.md",

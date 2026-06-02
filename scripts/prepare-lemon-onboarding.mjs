@@ -71,27 +71,26 @@ Please find the requested information below:
 
 1) Product examples / demo
 - Product: ClawDesk (Windows desktop AI workspace, OpenClaw-compatible workflow)
-- Website: https://naviaworks.net/
-- Product page draft: https://naviaworks.net/clawdesk
+- Website: https://clawdesk.example/
+- Product page draft: https://clawdesk.example/clawdesk
 - Product category: downloadable Windows desktop productivity / AI workspace software
 - Demo evidence package prepared locally:
   ${outDir}
 
 2) Business URL / where we plan to sell
-- Business website: https://naviaworks.net/
-- Planned product page: https://naviaworks.net/clawdesk
+- Business website: https://clawdesk.example/
+- Planned product page: https://clawdesk.example/clawdesk
 
 Additional summary
 - Target users: individual developers, independent workers, and small teams using Windows 11.
 - Core capabilities: local workspace operations, guarded agent actions, model/provider setup, license handling, diagnostics export.
 - Delivery: direct-download signed Windows NSIS installer.
 - Payments and license keys: Lemon Squeezy hosted checkout and license key flow.
-- Support contact: alison.ai.tech.studio@gmail.com
+- Support contact: support@clawdesk.example
 
 Best regards,
-Huang Kuo Ling
-Alisonsoftware
-Support: alison.ai.tech.studio@gmail.com
+ClawDesk Maintainers
+Support: support@clawdesk.example
 `;
 
   await fs.writeFile(path.join(outDir, "lemon-reply-email.txt"), reply, "utf8");
@@ -104,9 +103,9 @@ Use this checklist after Lemon Squeezy approves the store.
 
 - Product name: ClawDesk
 - Product type: Digital product / Software
-- Delivery: Windows x64 NSIS installer download from https://naviaworks.net/
-- Support email: alison.ai.tech.studio@gmail.com
-- Public publisher/developer: Alisonsoftware
+- Delivery: Windows x64 NSIS installer download from https://clawdesk.example/
+- Support email: support@clawdesk.example
+- Public publisher/developer: ClawDesk Contributors
 
 ## Variants
 
@@ -136,7 +135,7 @@ Do not put Lemon API keys in the desktop app. If an API key is needed, keep it s
 Production URL:
 
 \`\`\`text
-https://api.naviaworks.net/webhooks/lemon
+https://api.clawdesk.example/webhooks/license
 \`\`\`
 
 Enable events:
@@ -163,7 +162,7 @@ The local production verification confirms unsigned webhooks are rejected, valid
   await fs.writeFile(path.join(outDir, "lemon-product-setup.md"), productSetup, "utf8");
 
   const webhookEvents = {
-    webhookUrl: "https://api.naviaworks.net/webhooks/lemon",
+    webhookUrl: "https://api.clawdesk.example/webhooks/license",
     events: [
       "order_created",
       "subscription_created",
@@ -201,8 +200,8 @@ npm run beta:readiness
 Generated at: ${new Date().toISOString()}
 
 ## Website
-- https://naviaworks.net/
-- https://naviaworks.net/clawdesk
+- https://clawdesk.example/
+- https://clawdesk.example/clawdesk
 
 ## Screenshots
 ${copied.length > 0 ? copied.map((name) => `- ${name}`).join("\n") : "- (none copied)"}

@@ -26,7 +26,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "publisher": "Alisonsoftware",
+    "publisher": "ClawDesk Contributors",
     "category": "Productivity",
     "resources": {
       "../sidecars/mock-gateway/server.mjs": "sidecars/mock-gateway/server.mjs",

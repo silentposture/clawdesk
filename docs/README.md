@@ -1,23 +1,23 @@
 # Documentation Index
 
-This is the English-first documentation entry point for ClawDesk Windows.
+This directory contains the public OSS documentation for ClawDesk.
 
-## Primary docs
+## Core docs
 
-- `OPENAI_TRIAL_REQUEST.md` - English request pack for any invite-based ChatGPT Pro trial
-- `backend-architecture-simulated-deploy.md` - backend architecture and simulated deployment overview
-- `windows/WINDOWS_SIGNING_SETUP.md` - Windows signing setup
-- `windows/WINDOWS_HIDDEN_WINDOW_POLICY.md` - hidden-window launch policy
+- [Architecture](architecture.md)
+- [Security model](security-model.md)
+- [Agent bridge](agent-bridge.md)
+- [Transport](transport.md)
+- [Troubleshooting](troubleshooting.md)
+- [Release process](release-process.md)
+- [MVP scope](mvp.md)
+- [Public release audit](audit/public-release-audit.md)
+- [Roadmap issues](roadmap-issues.md)
+- [Codex OSS application draft](codex-for-oss-application.md)
 
-## Legacy planning docs
+## Legacy docs
 
-- `download/FAQ.md` - historical download and support FAQ from the paid beta planning track
-- `legal/INSTALLER_TERMS.md` - historical installer and usage terms from the paid beta planning track
-- `legal/OPENCLAW_MIT_NOTICE.md` - upstream compatibility and attribution notice
-- `legal/EULA.md`, `legal/REFUND_POLICY.md`, `legal/DEVELOPER_DISCLOSURE.md`, and related files - historical commercial planning drafts retained for provenance
-- If a legacy planning doc conflicts with `README.md`, `LICENSE`, or `CONTRIBUTING.md`, the current free noncommercial open-source policy wins.
+- The `download/`, `legal/`, `payments/`, `support/`, and `archive/` folders contain older planning material.
+- Those files are preserved for provenance only and must not override the current README, LICENSE, SECURITY, CONTRIBUTING, ROADMAP, and CHANGELOG policy.
+- If a legacy doc conflicts with the current OSS launch docs, the current docs win.
 
-## Historical notes
-
-- `archive/` contains legacy meeting notes and summaries. These files are kept for reference only and may still contain older Chinese copy.
-- Legacy Chinese documents will be migrated over time; new documentation should be written in English first.

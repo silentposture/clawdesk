@@ -27,7 +27,7 @@ async function validateStoreConfig() {
   const config = await readJson("src-tauri/tauri.microsoftstore.conf.json");
   const resources = resourceKeys(config);
   assert(config.productName === "ClawDesk", "Store config productName must be ClawDesk.");
-  assert(config.bundle?.publisher === "Alisonsoftware", "Store config bundle.publisher must be Alisonsoftware.");
+  assert(config.bundle?.publisher === "ClawDesk Contributors", "Store config bundle.publisher must be ClawDesk Contributors.");
   assert(config.bundle?.targets?.includes("nsis"), "Store config must target nsis for Microsoft Store offline installer submission.");
   assert(config.bundle?.windows?.webviewInstallMode?.type === "offlineInstaller", "Store config must embed WebView2 offlineInstaller.");
   assert(config.bundle?.windows?.digestAlgorithm?.toLowerCase() === "sha256", "Store config must use SHA-256 digest.");
@@ -49,7 +49,7 @@ async function validateMacosConfig() {
   const config = await readJson("src-tauri/tauri.macos.conf.json");
   const resources = resourceKeys(config);
   assert(config.productName === "ClawDesk", "macOS config productName must be ClawDesk.");
-  assert(config.bundle?.publisher === "Alisonsoftware", "macOS config bundle.publisher must be Alisonsoftware.");
+  assert(config.bundle?.publisher === "ClawDesk Contributors", "macOS config bundle.publisher must be ClawDesk Contributors.");
   assert(config.bundle?.targets?.includes("app"), "macOS config must target app.");
   assert(config.bundle?.targets?.includes("dmg"), "macOS config must target dmg.");
   assert(config.bundle?.macOS?.dmg, "macOS config must define dmg layout.");

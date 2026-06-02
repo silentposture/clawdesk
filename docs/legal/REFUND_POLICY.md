@@ -1,3 +1,7 @@
+# Historical Planning Draft
+
+This document is a legacy commercial planning note. It is retained for provenance only and does not describe the current free, noncommercial, open-source policy. See `README.md`, `LICENSE`, and `CONTRIBUTING.md` for the active policy.
+
 # ClawDesk Beta Refund Policy Draft
 
 This draft is for operational readiness and must be reviewed before paid sale.

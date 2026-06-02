@@ -26,7 +26,7 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
-    "publisher": "Alisonsoftware",
+    "publisher": "ClawDesk Contributors",
     "homepage": "https://clawdesk.local",
     "category": "Productivity",
     "resources": {

@@ -25,9 +25,9 @@ interface LegalNotice {
   purpose: string;
 }
 
-const LEGAL_DEVELOPER_NAME = "Alisonsoftware";
+const LEGAL_DEVELOPER_NAME = "ClawDesk Contributors";
 const LEGAL_PRODUCT_NAME = "ClawDesk";
-const SUPPORT_EMAIL = "alison.ai.tech.studio@gmail.com";
+const SUPPORT_EMAIL = "support@clawdesk.example";
 
 export function LegalPanel({ gatewayBaseUrl, legalConsent, onClose }: LegalPanelProps): JSX.Element {
   const { t } = useI18n();
