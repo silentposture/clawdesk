@@ -5,12 +5,17 @@ This snapshot records the current public-release posture of ClawDesk. Refresh it
 ## Repository state
 
 - Public GitHub repository: `https://github.com/silentposture/clawdesk.git`
-- Current launch-prep branch: `oss-launch-prep`
-- Latest known commit on this branch: `71a94a0`
-- Anonymous GitHub access check: successful `git ls-remote` against the repository returned `HEAD` and `refs/heads/oss-launch-prep`
+- Current public refs: `main` and `oss-launch-prep`
+- Latest known commit on these refs: `61fe2da`
+- Anonymous GitHub access check: successful `git ls-remote` against the repository returned `HEAD`, `refs/heads/main`, and `refs/heads/oss-launch-prep`
 
 ## Public-release evidence
 
+- `npm run legal:manifest` -> regenerated `src/lib/legalConsentManifest.ts` for commit `61fe2da`
+- `npm run legal:notices` -> regenerated `docs/legal/THIRD_PARTY_NOTICES.md` for commit `61fe2da`
+- `npm run preflight` -> `PASS`
+- GitHub Actions `Hidden Window Gate` run [26845630852](https://github.com/silentposture/clawdesk/actions/runs/26845630852) on `main` -> success
+- GitHub Actions `Hidden Window Gate` run [26845630131](https://github.com/silentposture/clawdesk/actions/runs/26845630131) on `oss-launch-prep` -> success
 - `bash scripts/check-public-release.sh` -> `PASS: public release surface looks clean.`
 - `npm audit --omit=dev --json` -> 0 vulnerabilities
 - `git diff --check` -> no formatting errors in the current public-launch document set
