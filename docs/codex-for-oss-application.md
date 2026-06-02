@@ -49,9 +49,14 @@ ClawDesk is an experimental AI-agent-first desktop orchestration layer for guard
 
 ## Readiness checklist
 
-- [ ] README, LICENSE, SECURITY, CONTRIBUTING, CODE_OF_CONDUCT, ROADMAP, and CHANGELOG are current.
-- [ ] The public-release audit is current.
-- [ ] The blocker list is empty or explicitly accepted.
-- [ ] The release CI is lightweight and auditable.
-- [ ] No private data remains in public-facing files.
+- [x] README, LICENSE, SECURITY, CONTRIBUTING, CODE_OF_CONDUCT, ROADMAP, and CHANGELOG are current.
+- [x] The public-release audit is current.
+- [x] The blocker list is empty or explicitly accepted.
+- [x] The release CI is lightweight and auditable.
+- [x] No private data remains in public-facing files.
 
+## Evidence snapshot
+
+- [Public OSS evidence snapshot](public-oss-evidence.md)
+- Anonymous GitHub access to `https://github.com/silentposture/clawdesk.git` has been verified from this workspace.
+- The public-release scan, dependency audit, and current branch state are recorded in the evidence snapshot and should be refreshed before any external request.

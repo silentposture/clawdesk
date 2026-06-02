@@ -29,6 +29,7 @@ Official references:
 - Source integrity verified with strict i18n audit and test coverage.
 - Multi-editor contribution workflow through `CONTRIBUTING.md`.
 - English-first UI and documentation entry points.
+- Public-release evidence snapshot: [public-oss-evidence.md](public-oss-evidence.md)
 
 ## Submission-ready request
 
