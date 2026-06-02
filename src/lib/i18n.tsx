@@ -21,8 +21,8 @@ export interface I18nContextState {
 }
 
 const STORAGE_KEY = "clawdesk_locale_preference";
-const DEFAULT_LOCALE: LocaleCode = "zh-TW";
-const DEFAULT_PREFERENCE: LocalePreference = "system";
+const DEFAULT_LOCALE: LocaleCode = "en-US";
+const DEFAULT_PREFERENCE: LocalePreference = "en-US";
 
 const locales: Record<LocaleCode, MessageMap> = {
   "zh-TW": {
@@ -2050,7 +2050,7 @@ export function buildSupportedLocales(locale: LocaleCode): Array<{ value: Locale
 
 export const I18nContext = createContext<I18nContextState>({
   locale: DEFAULT_LOCALE,
-  preference: "system",
+  preference: DEFAULT_PREFERENCE,
   t: createFormatter(DEFAULT_LOCALE),
   setLocale: () => undefined,
   supportedLocales: buildSupportedLocales(DEFAULT_LOCALE),

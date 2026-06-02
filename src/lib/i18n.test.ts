@@ -7,9 +7,9 @@ import {
 } from "./i18n";
 
 describe("i18n locale resolution", () => {
-  it("defaults new installs to the operating system language", () => {
-    expect(normalizeLocalePreference(null)).toBe("system");
-    expect(normalizeLocalePreference("unsupported")).toBe("system");
+  it("defaults new installs to English", () => {
+    expect(normalizeLocalePreference(null)).toBe("en-US");
+    expect(normalizeLocalePreference("unsupported")).toBe("en-US");
   });
 
   it("maps common operating system locales to supported app languages", () => {
