@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useReducer, useRef, useState } from "react";
+import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import {
   Bot,
   BrainCircuit,
@@ -6,10 +6,13 @@ import {
   CircleAlert,
   CircleCheck,
   ClipboardCheck,
+  Code2,
   Copyright,
   Database,
   Film,
   FolderLock,
+  Gauge,
+  ImagePlus,
   KeyRound,
   Laptop,
   LockKeyhole,
@@ -18,16 +21,24 @@ import {
   PlugZap,
   Send,
   Settings2,
+  Sidebar,
+  Scale,
+  ShieldAlert,
+  SquareSplitHorizontal,
   Stethoscope,
   User,
   UserRoundCog,
   UsersRound,
   Workflow,
+  X,
 } from "lucide-react";
 import { CanvasRenderer } from "./components/CanvasRenderer";
 import { AccountsPanel } from "./components/AccountsPanel";
 import { AgentsPanel } from "./components/AgentsPanel";
 import { ChannelsPanel } from "./components/ChannelsPanel";
+import { CodingWorkspacePanel } from "./components/CodingWorkspacePanel";
+import { ComparisonPanel } from "./components/ComparisonPanel";
+import { ContextBudgetPanel } from "./components/ContextBudgetPanel";
 import { DiagnosticsPanel } from "./components/DiagnosticsPanel";
 import { ErgonomicsPanel } from "./components/ErgonomicsPanel";
 import { LearningPanel } from "./components/LearningPanel";
@@ -38,10 +49,11 @@ import { MediaPanel } from "./components/MediaPanel";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { IdentityPanel } from "./components/IdentityPanel";
 import { McpPanel } from "./components/McpPanel";
-import { OpenClawSettingsPanel } from "./components/OpenClawSettingsPanel";
+import { CompatSettingsPanel } from "./components/CompatSettingsPanel";
 import { PermissionModal } from "./components/PermissionModal";
 import { ProviderPanel } from "./components/ProviderPanel";
 import { QuickSetupModal } from "./components/QuickSetupModal";
+import { SafetyQueuePanel } from "./components/SafetyQueuePanel";
 import { SecurityPanel } from "./components/SecurityPanel";
 import { Tooltip } from "./components/Tooltip";
 import { WorkflowPanel } from "./components/WorkflowPanel";
@@ -59,7 +71,7 @@ import {
   type GatewayInfo,
 } from "./lib/tauri";
 import { initialWorkspaceState, selectedProject, workspaceReducer } from "./lib/workspaces";
-import { useI18n } from "./lib/i18n";
+import { type LocalePreference, useI18n } from "./lib/i18n";
 import {
   readLegalConsentRecord,
   parseLegalConsentRecord,
@@ -72,11 +84,38 @@ interface ChatMessage {
   role: "user" | "agent";
   content: string;
   done?: boolean;
+  attachments?: ComposerAttachment[];
 }
+
+interface ComposerAttachment {
+  id: string;
+  name: string;
+  mimeType: string;
+  previewUrl: string;
+  dataUrl: string;
+  sizeBytes: number;
+}
+
+type ConnectGateway = (preferredGateway?: GatewayInfo) => Promise<void>;
 
 const conversationId = "demo-conversation";
 
 const maxMessages = 80;
+const quickSetupCompletedKey = "clawdesk.quickSetup.completed";
+
+function readQuickSetupCompleted(): boolean {
+  if (typeof localStorage === "undefined") return false;
+  return localStorage.getItem(quickSetupCompletedKey) === "true";
+}
+
+function writeQuickSetupCompleted(): void {
+  if (typeof localStorage === "undefined") return;
+  localStorage.setItem(quickSetupCompletedKey, "true");
+}
+
+function shouldShowQuickSetup(): boolean {
+  return Boolean(readLegalConsentRecord()) && !readQuickSetupCompleted();
+}
 
 export default function App(): JSX.Element {
   const { t, setLocale, preference, supportedLocales } = useI18n();
@@ -100,17 +139,23 @@ export default function App(): JSX.Element {
   const [mediaPanelOpen, setMediaPanelOpen] = useState(false);
   const [learningPanelOpen, setLearningPanelOpen] = useState(false);
   const [securityPanelOpen, setSecurityPanelOpen] = useState(false);
-  const [openClawSettingsOpen, setOpenClawSettingsOpen] = useState(false);
+  const [compatSettingsOpen, setCompatSettingsOpen] = useState(false);
   const [licensePanelOpen, setLicensePanelOpen] = useState(false);
   const [legalPanelOpen, setLegalPanelOpen] = useState(false);
   const [diagnosticsPanelOpen, setDiagnosticsPanelOpen] = useState(false);
   const [memoryPanelOpen, setMemoryPanelOpen] = useState(false);
   const [agentsPanelOpen, setAgentsPanelOpen] = useState(false);
   const [ergonomicsPanelOpen, setErgonomicsPanelOpen] = useState(false);
+  const [comparisonPanelOpen, setComparisonPanelOpen] = useState(false);
+  const [codingWorkspacePanelOpen, setCodingWorkspacePanelOpen] = useState(false);
+  const [contextBudgetPanelOpen, setContextBudgetPanelOpen] = useState(false);
+  const [safetyQueuePanelOpen, setSafetyQueuePanelOpen] = useState(false);
   const [identityPanelOpen, setIdentityPanelOpen] = useState(false);
   const [legalConsent, setLegalConsent] = useState<LegalConsentRecord | undefined>(() => readLegalConsentRecord());
-  const [quickSetupOpen, setQuickSetupOpen] = useState(() => Boolean(readLegalConsentRecord()));
+  const [quickSetupOpen, setQuickSetupOpen] = useState(() => shouldShowQuickSetup());
   const [providerPanelOpen, setProviderPanelOpen] = useState(false);
+  const [leftPaneCollapsed, setLeftPaneCollapsed] = useState(false);
+  const [rightPaneCollapsed, setRightPaneCollapsed] = useState(false);
   const [providerSession, setProviderSession] = useState<ProviderSession>(defaultProviderSession);
   const [identitySession, setIdentitySession] = useState<IdentitySession>(defaultIdentitySession());
   const [sandboxPolicy, setSandboxPolicy] = useState<SandboxPolicy>(defaultSandboxPolicy);
@@ -119,6 +164,12 @@ export default function App(): JSX.Element {
   const wsRef = useRef<WebSocket>();
   const deltaBufferRef = useRef<Map<string, string>>(new Map());
   const rafRef = useRef<number>();
+  const reconnectTimerRef = useRef<number>();
+  const reconnectAttemptRef = useRef(0);
+  const connectGatewayRef = useRef<ConnectGateway>();
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const messageListRef = useRef<HTMLElement>(null);
+  const [attachments, setAttachments] = useState<ComposerAttachment[]>([]);
 
   const surface = useMemo(() => getActiveSurface(canvasState), [canvasState]);
   const activeProject = useMemo(() => selectedProject(workspaceState), [workspaceState]);
@@ -126,27 +177,47 @@ export default function App(): JSX.Element {
   useEffect(() => {
     let cancelled = false;
 
-    async function boot() {
+    async function connectGatewaySocket(preferredGateway?: GatewayInfo) {
       try {
-        const info = await ensureGateway();
+        const info = preferredGateway ?? (await ensureGateway());
         if (cancelled) return;
         setGateway(info);
-        setGatewayStatus("ready");
         void refreshProviderSession(info.baseUrl);
         void refreshIdentitySession(info.baseUrl);
 
+        wsRef.current?.close();
         const ws = new WebSocket(info.wsUrl);
         wsRef.current = ws;
+        ws.onopen = () => {
+          reconnectAttemptRef.current = 0;
+          setGatewayStatus("ready");
+        };
         ws.onmessage = (message) => handleGatewayEvent(parseGatewayEvent(String(message.data)));
-        ws.onclose = () => setGatewayStatus("offline");
+        ws.onclose = () => {
+          if (cancelled) return;
+          setGatewayStatus("offline");
+          const delayMs = Math.min(5000, 500 * 2 ** reconnectAttemptRef.current);
+          reconnectAttemptRef.current += 1;
+          window.clearTimeout(reconnectTimerRef.current);
+          reconnectTimerRef.current = window.setTimeout(() => {
+            void connectGatewaySocket();
+          }, delayMs);
+        };
         ws.onerror = () => setGatewayStatus("degraded");
       } catch (error) {
+        if (cancelled) return;
         setGatewayStatus("degraded");
+        window.clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = window.setTimeout(() => {
+          void connectGatewaySocket();
+        }, 1500);
         console.error(error);
       }
     }
 
-    boot();
+    connectGatewayRef.current = connectGatewaySocket;
+
+    void connectGatewaySocket();
 
     return () => {
       cancelled = true;
@@ -154,6 +225,10 @@ export default function App(): JSX.Element {
       if (rafRef.current) {
         window.cancelAnimationFrame(rafRef.current);
       }
+      if (reconnectTimerRef.current) {
+        window.clearTimeout(reconnectTimerRef.current);
+      }
+      connectGatewayRef.current = undefined;
       wsRef.current?.close();
     };
   }, []);
@@ -168,7 +243,7 @@ export default function App(): JSX.Element {
         if (cancelled || !verified) return;
         writeLegalConsentRecord(verified);
         setLegalConsent(verified);
-        setQuickSetupOpen(true);
+        setQuickSetupOpen(!readQuickSetupCompleted());
       } catch {
         // Browser fallback already uses localStorage.
       }
@@ -184,8 +259,21 @@ export default function App(): JSX.Element {
   useEffect(() => {
     if (!identitySession.authenticated) {
       setIdentityPanelOpen(true);
+    } else {
+      setIdentityPanelOpen(false);
     }
   }, [identitySession.authenticated]);
+
+  useEffect(() => {
+    const container = messageListRef.current;
+    if (!container) return;
+    const scrollToBottom = () => {
+      container.scrollTop = container.scrollHeight;
+    };
+    scrollToBottom();
+    const frame = window.requestAnimationFrame(scrollToBottom);
+    return () => window.cancelAnimationFrame(frame);
+  }, [messages]);
 
   function trimMessages(items: ChatMessage[]): ChatMessage[] {
     return items.length > maxMessages ? items.slice(items.length - maxMessages) : items;
@@ -227,7 +315,7 @@ export default function App(): JSX.Element {
   async function refreshProviderSession(baseUrl = gateway?.baseUrl) {
     if (!baseUrl) return;
     try {
-      const response = await fetch(`${baseUrl}/auth/session`);
+      const response = await fetch(`${baseUrl}/provider/status`);
       if (response.ok) {
         setProviderSession((await response.json()) as ProviderSession);
       }
@@ -282,26 +370,96 @@ export default function App(): JSX.Element {
     }
   }
 
+  async function readImageAttachment(file: File): Promise<ComposerAttachment | null> {
+    if (!file.type.startsWith("image/")) return null;
+    const previewUrl = await new Promise<string>((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result ?? ""));
+      reader.onerror = () => reject(reader.error);
+      reader.readAsDataURL(file);
+    }).catch(() => "");
+    if (!previewUrl) return null;
+    return {
+      id: `${Date.now()}-${file.name}`,
+      name: file.name || "pasted-image.png",
+      mimeType: file.type,
+      previewUrl,
+      dataUrl: previewUrl,
+      sizeBytes: file.size,
+    };
+  }
+
+  async function appendImageAttachments(files: File[]) {
+    const nextAttachments = (await Promise.all(files.map((file) => readImageAttachment(file)))).filter(
+      (item): item is ComposerAttachment => Boolean(item),
+    );
+    if (nextAttachments.length === 0) return;
+    setAttachments((current) => [...current, ...nextAttachments].slice(-6));
+  }
+
+  function removeAttachment(id: string) {
+    setAttachments((current) => current.filter((item) => item.id !== id));
+  }
+
+  async function handleAttachmentSelection(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+    await appendImageAttachments(files);
+    event.target.value = "";
+  }
+
+  async function handleComposerPaste(event: React.ClipboardEvent<HTMLInputElement>) {
+    const files = Array.from(event.clipboardData.files ?? []);
+    if (files.length === 0) return;
+    event.preventDefault();
+    await appendImageAttachments(files);
+  }
+
   async function submitPrompt(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const text = prompt.trim();
-    if (!text || !gateway || !identitySession.authenticated) return;
+    if ((!text && attachments.length === 0) || !gateway || !identitySession.authenticated) return;
+
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+      try {
+        const info = await ensureGateway();
+        await connectGatewayRef.current?.(info);
+      } catch {
+        setGatewayStatus("degraded");
+      }
+    }
 
     const userMessage: ChatMessage = {
       id: `user-${Date.now()}`,
       role: "user",
-      content: text,
+      content: text || "已附加圖片",
       done: true,
+      attachments,
     };
 
     setMessages((current) => trimMessages([...current, userMessage]));
     setPrompt("");
+    setAttachments([]);
 
     await fetch(`${gateway.baseUrl}/chat`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ conversationId, prompt: text }),
+      body: JSON.stringify({
+        conversationId,
+        prompt: text,
+        attachments: userMessage.attachments?.map((item) => ({
+          name: item.name,
+          mimeType: item.mimeType,
+          dataUrl: item.dataUrl,
+          sizeBytes: item.sizeBytes,
+        })),
+      }),
     });
+  }
+
+  function submitPromptFromKeyboard(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key !== "Enter" || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    event.currentTarget.form?.requestSubmit();
   }
 
   async function decidePermission(allowed: boolean) {
@@ -335,7 +493,12 @@ export default function App(): JSX.Element {
       // Browser fallback and localStorage still preserve the consent record.
     }
     setLegalConsent(record);
-    setQuickSetupOpen(true);
+    setQuickSetupOpen(!readQuickSetupCompleted());
+  }
+
+  function completeQuickSetup() {
+    writeQuickSetupCompleted();
+    setQuickSetupOpen(false);
   }
 
   const gatewayStatusLabelMap: Record<"starting" | "ready" | "degraded" | "offline", string> = {
@@ -350,9 +513,21 @@ export default function App(): JSX.Element {
     "browser-dev": t("app.session.gatewayMode.browser-dev"),
   };
 
+  const shellClassName = [
+    "app-shell",
+    leftPaneCollapsed ? "left-collapsed" : "",
+    rightPaneCollapsed ? "right-collapsed" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
+  const shellStyle: CSSProperties = {
+    "--left-pane-width": `${leftPaneCollapsed ? 40 : 280}px`,
+    "--right-pane-width": `${rightPaneCollapsed ? 40 : 420}px`,
+  } as React.CSSProperties;
+
   return (
-    <main className="app-shell">
-      <WorkspacePanel state={workspaceState} dispatch={dispatchWorkspace} />
+    <main className={shellClassName} style={shellStyle}>
+      {!leftPaneCollapsed ? <WorkspacePanel state={workspaceState} dispatch={dispatchWorkspace} /> : <aside className="workspace-pane-collapsed" />}
       <aside className="conversation-pane">
         <header className="topbar">
           <div className="brand" data-tauri-drag-region>
@@ -362,12 +537,30 @@ export default function App(): JSX.Element {
               <span>{activeProject?.name ?? t("app.subtitle")}</span>
             </div>
           </div>
-          <div className="topbar-actions">
-            <label className="locale-switcher" aria-label={t("app.localeSelector")}>
+            <div className="topbar-actions">
+              <button
+                className={`icon-button ${leftPaneCollapsed ? "active" : ""}`}
+                type="button"
+                aria-label={leftPaneCollapsed ? t("app.sidebar.left.expand") : t("app.sidebar.left.collapse")}
+                title={leftPaneCollapsed ? t("app.sidebar.left.expand") : t("app.sidebar.left.collapse")}
+                onClick={() => setLeftPaneCollapsed((current) => !current)}
+              >
+                <Sidebar size={18} />
+              </button>
+              <button
+                className={`icon-button ${rightPaneCollapsed ? "active" : ""}`}
+                type="button"
+                aria-label={rightPaneCollapsed ? t("app.sidebar.right.expand") : t("app.sidebar.right.collapse")}
+                title={rightPaneCollapsed ? t("app.sidebar.right.expand") : t("app.sidebar.right.collapse")}
+                onClick={() => setRightPaneCollapsed((current) => !current)}
+              >
+                <SquareSplitHorizontal size={18} />
+              </button>
+              <label className="locale-switcher" aria-label={t("app.localeSelector")}>
               <select
                 value={preference}
                 onChange={(event) => {
-                  setLocale(event.target.value as "system" | "zh-TW" | "en-US" | "ja-JP");
+                  setLocale(event.target.value as LocalePreference);
                 }}
               >
                 {supportedLocales.map((item) => (
@@ -571,12 +764,60 @@ export default function App(): JSX.Element {
               <span>{t("app.button.ergonomics")}</span>
             </button>
           </Tooltip>
+          <Tooltip text={t("app.section.comparison.desc")}>
+            <button
+              className="session-button"
+              type="button"
+              data-testid="session-button-comparison"
+              onClick={() => setComparisonPanelOpen(true)}
+              disabled={!identitySession.authenticated}
+            >
+              <Scale size={16} />
+              <span>{t("app.button.comparison")}</span>
+            </button>
+          </Tooltip>
+          <Tooltip text={t("app.section.coding.desc")}>
+            <button
+              className="session-button"
+              type="button"
+              data-testid="session-button-coding"
+              onClick={() => setCodingWorkspacePanelOpen(true)}
+              disabled={!identitySession.authenticated}
+            >
+              <Code2 size={16} />
+              <span>{t("app.button.coding")}</span>
+            </button>
+          </Tooltip>
+          <Tooltip text={t("app.section.context.desc")}>
+            <button
+              className="session-button"
+              type="button"
+              data-testid="session-button-context"
+              onClick={() => setContextBudgetPanelOpen(true)}
+              disabled={!identitySession.authenticated}
+            >
+              <Gauge size={16} />
+              <span>{t("app.button.context")}</span>
+            </button>
+          </Tooltip>
+          <Tooltip text={t("app.section.safetyQueue.desc")}>
+            <button
+              className="session-button"
+              type="button"
+              data-testid="session-button-safety-queue"
+              onClick={() => setSafetyQueuePanelOpen(true)}
+              disabled={!identitySession.authenticated}
+            >
+              <ShieldAlert size={16} />
+              <span>{t("app.button.safetyQueue")}</span>
+            </button>
+          </Tooltip>
           <Tooltip text={t("app.section.compatibility.desc")}>
             <button
               className="session-button"
               type="button"
               data-testid="session-button-compatibility"
-              onClick={() => setOpenClawSettingsOpen(true)}
+              onClick={() => setCompatSettingsOpen(true)}
               disabled={!identitySession.authenticated}
             >
               <Settings2 size={16} />
@@ -607,30 +848,70 @@ export default function App(): JSX.Element {
           </button>
         </section>
 
-        <section className="message-list" aria-live="polite">
+        <section className="message-list" aria-live="polite" ref={messageListRef}>
           {messages.map((message) => (
             <article className={`message ${message.role}`} key={message.id}>
               <span>{message.role === "user" ? t("app.status.you") : t("app.brand")}</span>
               <p>{message.content}</p>
+              {message.attachments && message.attachments.length > 0 ? (
+                <div className="message-attachments">
+                  {message.attachments.map((attachment) => (
+                    <figure className="message-attachment" key={attachment.id}>
+                      <img src={attachment.previewUrl} alt={attachment.name} />
+                      <figcaption>{attachment.name}</figcaption>
+                    </figure>
+                  ))}
+                </div>
+              ) : null}
             </article>
           ))}
         </section>
 
+        <input
+          ref={fileInputRef}
+          className="composer-file-input"
+          type="file"
+          accept="image/*"
+          multiple
+          onChange={handleAttachmentSelection}
+        />
         <form className="composer" onSubmit={submitPrompt}>
+          {attachments.length > 0 ? (
+            <div className="composer-attachments">
+              {attachments.map((attachment) => (
+                <figure className="composer-attachment" key={attachment.id}>
+                  <img src={attachment.previewUrl} alt={attachment.name} />
+                  <figcaption>{attachment.name}</figcaption>
+                  <button className="icon-button attachment-remove" type="button" onClick={() => removeAttachment(attachment.id)}>
+                    <X size={14} />
+                  </button>
+                </figure>
+              ))}
+            </div>
+          ) : null}
+          <button className="secondary-button composer-attach-button" type="button" onClick={() => fileInputRef.current?.click()}>
+            <ImagePlus size={16} />
+          </button>
           <input
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
             placeholder={t("app.prompt.placeholder")}
+            onKeyDown={submitPromptFromKeyboard}
+            onPaste={(event) => void handleComposerPaste(event)}
           />
-          <button className="send-button" type="submit" disabled={!prompt.trim() || !gateway || !identitySession.authenticated}>
+          <button className="send-button" type="submit" disabled={(!prompt.trim() && attachments.length === 0) || !gateway || !identitySession.authenticated}>
             <Send size={17} />
           </button>
         </form>
       </aside>
 
-      <section className="canvas-pane">
-        <CanvasRenderer surface={surface} />
-      </section>
+      {!rightPaneCollapsed ? (
+        <section className="canvas-pane">
+          <CanvasRenderer surface={surface} />
+        </section>
+      ) : (
+        <section className="canvas-pane-collapsed" />
+      )}
 
       <footer className="status-bar">
         <div className={`status-pill ${gatewayStatus}`}>
@@ -663,7 +944,13 @@ export default function App(): JSX.Element {
       {workflowPanelOpen ? <WorkflowPanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setWorkflowPanelOpen(false)} /> : null}
       {mediaPanelOpen ? <MediaPanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setMediaPanelOpen(false)} /> : null}
       {learningPanelOpen ? <LearningPanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setLearningPanelOpen(false)} /> : null}
-      {licensePanelOpen ? <LicensePanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setLicensePanelOpen(false)} /> : null}
+      {licensePanelOpen ? (
+        <LicensePanel
+          gatewayBaseUrl={gateway?.baseUrl}
+          identityEmail={identitySession.email}
+          onClose={() => setLicensePanelOpen(false)}
+        />
+      ) : null}
       {legalPanelOpen ? (
         <LegalPanel
           gatewayBaseUrl={gateway?.baseUrl}
@@ -681,12 +968,18 @@ export default function App(): JSX.Element {
       {memoryPanelOpen ? <MemoryPanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setMemoryPanelOpen(false)} /> : null}
       {agentsPanelOpen ? <AgentsPanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setAgentsPanelOpen(false)} /> : null}
       {ergonomicsPanelOpen ? <ErgonomicsPanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setErgonomicsPanelOpen(false)} /> : null}
+      {comparisonPanelOpen ? <ComparisonPanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setComparisonPanelOpen(false)} /> : null}
+      {codingWorkspacePanelOpen ? (
+        <CodingWorkspacePanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setCodingWorkspacePanelOpen(false)} />
+      ) : null}
+      {contextBudgetPanelOpen ? <ContextBudgetPanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setContextBudgetPanelOpen(false)} /> : null}
+      {safetyQueuePanelOpen ? <SafetyQueuePanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setSafetyQueuePanelOpen(false)} /> : null}
       {quickSetupOpen && legalConsent ? (
         <QuickSetupModal
           policy={sandboxPolicy}
           onPolicyChange={setSandboxPolicy}
           onOpenLicense={() => setLicensePanelOpen(true)}
-          onClose={() => setQuickSetupOpen(false)}
+          onClose={completeQuickSetup}
         />
       ) : null}
       {identityPanelOpen ? (
@@ -700,11 +993,11 @@ export default function App(): JSX.Element {
       {securityPanelOpen ? (
         <SecurityPanel policy={sandboxPolicy} onPolicyChange={setSandboxPolicy} onClose={() => setSecurityPanelOpen(false)} />
       ) : null}
-      {openClawSettingsOpen ? (
-        <OpenClawSettingsPanel
+      {compatSettingsOpen ? (
+        <CompatSettingsPanel
           policy={sandboxPolicy}
           onPolicyChange={setSandboxPolicy}
-          onClose={() => setOpenClawSettingsOpen(false)}
+          onClose={() => setCompatSettingsOpen(false)}
         />
       ) : null}
       {providerPanelOpen ? (

@@ -22,6 +22,7 @@ import {
 import { useEffect, useMemo, useState } from "react";
 import type { McpActionPreview, McpConnector, McpTool } from "../lib/mcp";
 import { planMcpAction, summarizeConnector } from "../lib/mcp";
+import { useI18n } from "../lib/i18n";
 
 interface McpPanelProps {
   gatewayBaseUrl?: string;
@@ -63,13 +64,14 @@ const appIcons: Record<McpTool["app"], typeof FileText> = {
   Supabase: Server,
 };
 
-const riskLabel: Record<McpTool["risk"], string> = {
-  low: "低",
-  medium: "中",
-  high: "高",
+const riskLabelKeys: Record<McpTool["risk"], string> = {
+  low: "risk.low",
+  medium: "risk.medium",
+  high: "risk.high",
 };
 
 export function McpPanel({ gatewayBaseUrl, onClose }: McpPanelProps): JSX.Element {
+  const { t } = useI18n();
   const [connectors, setConnectors] = useState<McpConnector[]>([]);
   const [selectedConnectorId, setSelectedConnectorId] = useState("microsoft-office");
   const [target, setTarget] = useState("~/Documents/ClawDesk");
@@ -97,7 +99,7 @@ export function McpPanel({ gatewayBaseUrl, onClose }: McpPanelProps): JSX.Elemen
       setConnectors(payload.connectors);
       setSelectedConnectorId(payload.connectors[0]?.id ?? "microsoft-office");
     } catch {
-      setError("無法讀取 MCP 連接器清單。");
+      setError(t("mcp.loadError"));
     } finally {
       setBusy(false);
     }
@@ -116,7 +118,7 @@ export function McpPanel({ gatewayBaseUrl, onClose }: McpPanelProps): JSX.Elemen
       if (!response.ok) throw new Error("bad response");
       await loadConnectors();
     } catch {
-      setError("MCP 連接器啟用失敗。");
+      setError(t("mcp.connectError"));
       setBusy(false);
     }
   }
@@ -135,7 +137,7 @@ export function McpPanel({ gatewayBaseUrl, onClose }: McpPanelProps): JSX.Elemen
       if (!response.ok) throw new Error("bad response");
       setPreview((await response.json()) as McpActionPreview);
     } catch {
-      setError("無法建立 MCP 動作預覽。");
+      setError(t("mcp.previewError"));
     } finally {
       setBusy(false);
     }
@@ -146,10 +148,10 @@ export function McpPanel({ gatewayBaseUrl, onClose }: McpPanelProps): JSX.Elemen
       <section className="mcp-panel" role="dialog" aria-modal="true" aria-labelledby="mcp-title">
         <header className="provider-header">
           <div>
-            <h2 id="mcp-title">MCP 連接器中心</h2>
-            <p>先以本機 mock adapter 建立文書、開發、工程、雲端與瀏覽器能力邊界，正式整合時可替換為各服務的 MCP server 或 API。</p>
+            <h2 id="mcp-title">{t("mcp.title")}</h2>
+            <p>{t("mcp.subtitle")}</p>
           </div>
-          <button className="icon-button" type="button" aria-label="關閉" onClick={onClose}>
+          <button className="icon-button" type="button" aria-label={t("common.close")} onClick={onClose}>
             <X size={18} />
           </button>
         </header>
@@ -182,7 +184,7 @@ export function McpPanel({ gatewayBaseUrl, onClose }: McpPanelProps): JSX.Elemen
                     <p>{selectedConnector.description}</p>
                     {selectedConnector.protocols?.length ? (
                       <small>
-                        協定：{selectedConnector.protocols.map((protocol) => protocol.name).join("、")}
+                        {t("mcp.protocols", { value: selectedConnector.protocols.map((protocol) => protocol.name).join("、") })}
                       </small>
                     ) : null}
                   </div>
@@ -192,12 +194,12 @@ export function McpPanel({ gatewayBaseUrl, onClose }: McpPanelProps): JSX.Elemen
                     disabled={busy || selectedConnector.status === "connected"}
                     onClick={() => connect(selectedConnector.id)}
                   >
-                    {selectedConnector.status === "connected" ? "已啟用" : "啟用"}
+                    {selectedConnector.status === "connected" ? t("mcp.enabled") : t("mcp.enable")}
                   </button>
                 </div>
 
                 <label className="mcp-target">
-                  <span>目標路徑 / 資源</span>
+                  <span>{t("mcp.target")}</span>
                   <input value={target} onChange={(event) => setTarget(event.target.value)} />
                 </label>
 
@@ -210,13 +212,13 @@ export function McpPanel({ gatewayBaseUrl, onClose }: McpPanelProps): JSX.Elemen
                           <Icon size={18} />
                           <span>
                             <strong>{tool.name}</strong>
-                            <small>{tool.app} · 風險 {riskLabel[tool.risk]}</small>
+                            <small>{tool.app} · {t("mcp.risk", { risk: t(riskLabelKeys[tool.risk]) })}</small>
                           </span>
                         </div>
                         <p>{tool.description}</p>
                         <button className="secondary-button" type="button" onClick={() => runPreview(tool)} disabled={busy}>
                           <Search size={15} />
-                          預覽動作
+                          {t("mcp.previewAction")}
                         </button>
                       </article>
                     );
@@ -225,20 +227,24 @@ export function McpPanel({ gatewayBaseUrl, onClose }: McpPanelProps): JSX.Elemen
 
                 {preview ? (
                   <div className="mcp-preview">
-                    <span>動作預覽</span>
+                    <span>{t("mcp.previewTitle")}</span>
                     <strong>{preview.title}</strong>
                     <p>{preview.summary}</p>
                     {preview.protocol ? (
                       <small>
-                        協定：{preview.protocol.name} ({preview.protocol.auth})，傳輸 {preview.protocol.transport}
+                        {t("mcp.protocolDetail", {
+                          name: preview.protocol.name,
+                          auth: preview.protocol.auth,
+                          transport: preview.protocol.transport,
+                        })}
                       </small>
                     ) : null}
-                    <small>{preview.requiresApproval ? "需要使用者授權後才會執行" : "低風險受信任工作區動作"}</small>
+                    <small>{preview.requiresApproval ? t("mcp.approvalRequired") : t("mcp.lowRiskTrusted")}</small>
                   </div>
                 ) : null}
               </>
             ) : (
-              <div className="mcp-empty">尚未載入 MCP 連接器。</div>
+              <div className="mcp-empty">{t("mcp.empty")}</div>
             )}
             {error ? <p className="panel-error">{error}</p> : null}
           </section>

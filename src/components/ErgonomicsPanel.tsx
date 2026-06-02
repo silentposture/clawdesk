@@ -1,6 +1,7 @@
 import { Activity, Keyboard, MousePointer2, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { aggregateErgonomicsScore, type ErgonomicsCheck } from "../lib/ergonomics";
+import { useI18n } from "../lib/i18n";
 import { Tooltip } from "./Tooltip";
 
 interface ErgonomicsPanelProps {
@@ -9,6 +10,7 @@ interface ErgonomicsPanelProps {
 }
 
 export function ErgonomicsPanel({ gatewayBaseUrl, onClose }: ErgonomicsPanelProps): JSX.Element {
+  const { t } = useI18n();
   const [checks, setChecks] = useState<ErgonomicsCheck[]>([]);
   const [score, setScore] = useState(0);
   const [runVersion, setRunVersion] = useState(0);
@@ -56,10 +58,10 @@ export function ErgonomicsPanel({ gatewayBaseUrl, onClose }: ErgonomicsPanelProp
       <section className="ergonomics-panel" role="dialog" aria-modal="true" aria-labelledby="ergonomics-title">
         <header className="provider-header">
           <div>
-            <h2 id="ergonomics-title">GUI 人體工學驗證儀表</h2>
-            <p>用自動化 smoke tests 追蹤主要任務路徑、鍵盤可達、文字不溢出、tooltip 與危險操作提示。</p>
+            <h2 id="ergonomics-title">{t("ergonomics.title")}</h2>
+            <p>{t("ergonomics.subtitle")}</p>
           </div>
-          <button className="icon-button" type="button" aria-label="關閉" onClick={onClose}>
+          <button className="icon-button" type="button" aria-label={t("common.close")} onClick={onClose}>
             <X size={18} />
           </button>
         </header>
@@ -67,17 +69,17 @@ export function ErgonomicsPanel({ gatewayBaseUrl, onClose }: ErgonomicsPanelProp
           <Activity size={28} />
           <div>
             <h3 data-run-version={runVersion}>{score}</h3>
-            <p>ergonomics score · 第 {runVersion} 次</p>
+            <p>{t("ergonomics.score", { run: runVersion })}</p>
           </div>
-          <Tooltip text="重新執行本機 mock GUI smoke，檢查任務步數、視窗尺寸、tooltip 與風險提示。">
+          <Tooltip text={t("ergonomics.runTooltip")}>
             <button
               className="primary-button"
               type="button"
               data-testid="ergonomics-run"
-              aria-label="執行人體工學驗證"
+              aria-label={t("ergonomics.run")}
               onClick={runSmoke}
             >
-              執行驗證
+              {t("ergonomics.run")}
             </button>
           </Tooltip>
         </section>
@@ -86,8 +88,13 @@ export function ErgonomicsPanel({ gatewayBaseUrl, onClose }: ErgonomicsPanelProp
             <article className="agent-card" key={check.id}>
               {check.keyboardReachable ? <Keyboard size={21} /> : <MousePointer2 size={21} />}
               <h3>{check.taskName}</h3>
-              <p>{check.viewport} · {check.steps} 步 · score {check.score}</p>
-              <small>文字不溢出：{check.noTextOverflow ? "通過" : "需修正"} · tooltip：{Math.round(check.tooltipCoverage * 100)}%</small>
+              <p>{t("ergonomics.taskSummary", { viewport: check.viewport, steps: check.steps, score: check.score })}</p>
+              <small>
+                {t("ergonomics.overflowTooltip", {
+                  status: check.noTextOverflow ? t("common.pass") : t("common.needsFix"),
+                  coverage: Math.round(check.tooltipCoverage * 100),
+                })}
+              </small>
             </article>
           ))}
         </section>

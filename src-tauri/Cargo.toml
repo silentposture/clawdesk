@@ -1,12 +1,13 @@
 [package]
-name = "openclaw-desktop"
+name = "clawdesk-desktop"
 version = "0.1.0"
-description = "ClawDesk OpenClaw-compatible GUI desktop MVP"
+license = "MIT"
+description = "ClawDesk desktop AI workspace MVP"
 authors = ["ClawDesk Contributors"]
 edition = "2021"
 
 [lib]
-name = "openclaw_desktop_lib"
+name = "clawdesk_desktop_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

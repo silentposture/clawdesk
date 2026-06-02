@@ -1,3 +1,3 @@
 fn main() {
-    openclaw_desktop_lib::run();
+    clawdesk_desktop_lib::run();
 }

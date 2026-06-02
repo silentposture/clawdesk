@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
+import net from "node:net";
 import path from "node:path";
 
 const reportDir = path.join(process.cwd(), "artifacts", "preflight");
@@ -12,6 +13,18 @@ const requiredPaths = [
   "scripts/generate-legal-consent.mjs",
   "scripts/generate-third-party-notices.mjs",
   "scripts/generate-sbom.mjs",
+  "scripts/generate-windows-release-metadata.mjs",
+  "scripts/audit-i18n-literals.mjs",
+  "scripts/enforce-hidden-window-policy.mjs",
+  "scripts/beta-readiness-report.mjs",
+  "scripts/beta-direct-env-doctor.mjs",
+  "scripts/prepare-beta-handoff.mjs",
+  "scripts/prepare-gateway-deploy-package.mjs",
+  "scripts/gateway-public-doctor.mjs",
+  "scripts/production-gateway-doctor.mjs",
+  "scripts/verify-production-gateway-compose.mjs",
+  "scripts/verify-lemon-production.mjs",
+  "scripts/prepare-website-release.mjs",
   "scripts/sign-win-installer.mjs",
   "scripts/validate-release-configs.mjs",
   "scripts/smoke-gui.mjs",
@@ -33,11 +46,17 @@ const requiredPaths = [
   "docs/legal/OPENCLAW_MIT_NOTICE.md",
   "docs/legal/OPENCLAW_UPSTREAM_LICENSE.md",
   "docs/legal/THIRD_PARTY_NOTICES.md",
-    "docs/upstream/OPENCLAW_IMPORT.md",
-    "docs/upstream/OPENCLAW_FEATURE_PARITY.md",
-    "docs/upstream/OPENCLAW_RUNTIME_ADAPTER.md",
-    "docs/upstream/openclaw-feature-parity.json",
+  "docs/payments/LEMON_SQUEEZY_SETUP.md",
+  "docs/upstream/OPENCLAW_IMPORT.md",
+  "docs/upstream/OPENCLAW_FEATURE_PARITY.md",
+  "docs/upstream/OPENCLAW_RUNTIME_ADAPTER.md",
+  "docs/upstream/openclaw-feature-parity.json",
   "docs/windows/WINDOWS_CERTIFICATION_PLAN.md",
+  "docs/windows/WINDOWS_SIGNING_SETUP.md",
+  "docs/deploy/PRODUCTION_GATEWAY_DIRECT_BETA.md",
+  "docker-compose.production-gateway.yml",
+  "docker-compose.production-gateway.proxy.yml",
+  "infra/nginx.production-gateway.conf",
 ];
 const commands = ["node", "npm", "cargo"];
 const ports = [18890, 18790, 5173];
@@ -48,6 +67,7 @@ function run(command, args) {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     shell: false,
+    windowsHide: process.platform === "win32",
   });
 }
 
@@ -93,22 +113,23 @@ async function pathStatus(relativePath) {
   }
 }
 
-function portStatus(port) {
+async function portStatus(port) {
   if (process.platform === "win32") {
-    const result = run("powershell.exe", [
-      "-NoProfile",
-      "-Command",
-      `Get-NetTCPConnection -LocalPort ${port} -State Listen -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique`,
-    ]);
-    const pids = (result.stdout || "")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter(Boolean);
-    return {
-      port,
-      listening: pids.length > 0,
-      processes: pids.map((pid) => ({ command: "windows-listener", pid })),
-    };
+    return new Promise((resolve) => {
+      const socket = net.createConnection({ host: "127.0.0.1", port });
+      const finish = (listening) => {
+        socket.destroy();
+        resolve({
+          port,
+          listening,
+          processes: listening ? [{ command: "windows-listener", pid: "unknown" }] : [],
+        });
+      };
+      socket.setTimeout(750);
+      socket.once("connect", () => finish(true));
+      socket.once("timeout", () => finish(false));
+      socket.once("error", () => finish(false));
+    });
   }
 
   const result = run("bash", ["-lc", `lsof -nP -iTCP:${port} -sTCP:LISTEN | tail -n +2`]);
@@ -131,17 +152,25 @@ async function main() {
 
   const commandChecks = commands.map(commandVersion);
   const fileChecks = await Promise.all(requiredPaths.map(pathStatus));
-  const portChecks = ports.map(portStatus);
+  const portChecks = await Promise.all(ports.map(portStatus));
   const legalManifestCheck = run("node", ["scripts/generate-legal-consent.mjs", "--check"]);
   const thirdPartyNoticesCheck = run("node", ["scripts/generate-third-party-notices.mjs", "--check"]);
+  const i18nAuditCheck = run("node", ["scripts/audit-i18n-literals.mjs", "--strict"]);
+  const hiddenWindowPolicyCheck = run("node", ["scripts/enforce-hidden-window-policy.mjs"]);
   const releaseConfigCheck = run("node", ["scripts/validate-release-configs.mjs"]);
+  const hiddenTaskAuditCheck = process.platform === "win32"
+    ? run("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/audit-scheduled-tasks.ps1"])
+    : { status: 0, stdout: "skipped: non-windows", stderr: "" };
 
   const failures = [
     ...commandChecks.filter((item) => !item.ok).map((item) => `missing-command:${item.command}`),
     ...fileChecks.filter((item) => !item.ok).map((item) => `missing-path:${item.path}`),
     ...(legalManifestCheck.status === 0 ? [] : ["stale-legal-consent-manifest"]),
     ...(thirdPartyNoticesCheck.status === 0 ? [] : ["stale-third-party-notices"]),
+    ...(i18nAuditCheck.status === 0 ? [] : ["hardcoded-ui-literals"]),
+    ...(hiddenWindowPolicyCheck.status === 0 ? [] : ["hidden-window-policy-violation"]),
     ...(releaseConfigCheck.status === 0 ? [] : ["invalid-release-configs"]),
+    ...(hiddenTaskAuditCheck.status === 0 ? [] : ["hidden-task-window-rule-violation"]),
   ];
 
   const report = {
@@ -158,10 +187,25 @@ async function main() {
       ok: thirdPartyNoticesCheck.status === 0,
       stderr: thirdPartyNoticesCheck.stderr.trim(),
     },
+    i18nAudit: {
+      ok: i18nAuditCheck.status === 0,
+      stdout: i18nAuditCheck.stdout.trim(),
+      stderr: i18nAuditCheck.stderr.trim(),
+    },
+    hiddenWindowPolicy: {
+      ok: hiddenWindowPolicyCheck.status === 0,
+      stdout: hiddenWindowPolicyCheck.stdout.trim(),
+      stderr: hiddenWindowPolicyCheck.stderr.trim(),
+    },
     releaseConfigs: {
       ok: releaseConfigCheck.status === 0,
       stdout: releaseConfigCheck.stdout.trim(),
       stderr: releaseConfigCheck.stderr.trim(),
+    },
+    hiddenTaskAudit: {
+      ok: hiddenTaskAuditCheck.status === 0,
+      stdout: hiddenTaskAuditCheck.stdout.trim(),
+      stderr: hiddenTaskAuditCheck.stderr.trim(),
     },
     ports: portChecks,
     warnings: portChecks
@@ -185,3 +229,5 @@ async function main() {
 }
 
 await main();
+
+

@@ -6,7 +6,7 @@
 
 - `mock-gateway`（Node）
   - 身分（註冊 / 登入 / SSO mock / Email 驗證）
-  - 授權（Paddle + Keygen mock 事件）
+  - 授權（Lemon Squeezy mock 事件）
   - MCP 目錄與權限預覽
   - 訊息串流 (`/chat`, WebSocket `/events`)
   - 工作流、Agent、記憶、診斷、人體工學驗證 API
@@ -16,7 +16,7 @@
 可按用途選擇：
 
 - `mock-gateway`（1 服務）：可完成桌面端基本功能驗證
-- `backend-auth`（2 服務）：模擬獨立認證授權服務（Paddle/Keygen）
+- `backend-auth`（2 服務）：模擬獨立認證授權服務（Lemon Squeezy）
 - `mock-mail`（3 服務）：模擬寄件/收件流程（Email 驗證）
 - `reverse-proxy`（4 服務）：模擬外部對外入口
 
@@ -41,7 +41,7 @@
 
 - 身分：註冊、信箱確認、登入、SSO 入口、會話查詢、SSO 提供者清單
 - 授權：key 啟用、離線票券、ticket 驗證、device binding、tamper 回報
-- webhook：`/webhooks/paddle`、`/webhooks/keygen` mock
+- webhook：`/webhooks/lemon` mock
 - 更新權益：`/updates/check`、`/updates/history`
 - 法務與診斷：`/legal/documents`、`/legal/notices`、`/diagnostics/create-report`
 - 產品：`/machine/fingerprint`
@@ -52,7 +52,7 @@
 
 1. Gateway API（事件、工作流、MCP Adapter Proxy）
 2. 身分認證服務（Email/SSO、密碼、會話）
-3. 授權服務（Paddle webhook + Keygen adapter + license 狀態）
+3. 授權服務（Lemon Squeezy webhook + license 狀態）
 4. 企業帳號 / 組織服務（多人權限）
 5. 通知與 Webhook 服務（信件、Slack、Teams 等）
 6. 觀測與日誌（監控、診斷封包、稽核）

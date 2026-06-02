@@ -6,7 +6,13 @@ const cwd = process.cwd();
 const bundleDir = path.join(cwd, "src-tauri", "target", "release", "bundle", "dmg");
 
 function run(command, args) {
-  return spawnSync(command, args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], shell: false });
+  return spawnSync(command, args, {
+    cwd,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    shell: false,
+    windowsHide: process.platform === "win32",
+  });
 }
 
 if (process.platform !== "darwin") {

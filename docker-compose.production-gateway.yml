@@ -1,0 +1,47 @@
+services:
+  clawdesk-backend:
+    image: node:22-alpine
+    working_dir: /workspace
+    command: ["sh", "-c", "node backend/server.mjs"]
+    env_file:
+      - .env.production
+    environment:
+      CLAWDESK_BACKEND_PORT: "19120"
+      CLAWDESK_BACKEND_STATE_FILE: "/data/backend-state.json"
+      CLAWDESK_BACKEND_ADAPTER_MODE: "${CLAWDESK_BACKEND_ADAPTER_MODE:-production}"
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=256"
+    volumes:
+      - .:/workspace:ro
+      - clawdesk-backend-state:/data
+    restart: unless-stopped
+    networks:
+      - clawdesk-prod
+
+  clawdesk-gateway:
+    image: node:22-alpine
+    working_dir: /workspace
+    command: ["sh", "-c", "node backend/production-gateway-sim.mjs"]
+    env_file:
+      - .env.production
+    environment:
+      CLAWDESK_PRODUCTION_GATEWAY_PORT: "19130"
+      CLAWDESK_BACKEND_BASE_URL: "http://clawdesk-backend:19120"
+      NODE_ENV: production
+      NODE_OPTIONS: "--max-old-space-size=256"
+    ports:
+      - "19130:19130"
+    volumes:
+      - .:/workspace:ro
+    depends_on:
+      - clawdesk-backend
+    restart: unless-stopped
+    networks:
+      - clawdesk-prod
+
+volumes:
+  clawdesk-backend-state:
+
+networks:
+  clawdesk-prod:
+    driver: bridge

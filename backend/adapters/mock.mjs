@@ -1,7 +1,5 @@
 import {
-  mapKeygenEventToLicenseMutation,
   mapLemonEventToEntitlementMutation,
-  mapPaddleEventToLicenseMutation,
   summarizeProductionEnv,
 } from "../contracts.mjs";
 
@@ -22,18 +20,15 @@ export function createMockAdapters({ env = process.env } = {}) {
       productionEnv: summarizeProductionEnv(env),
       warnings: ["mock adapters are for local simulation only"],
     },
-    paddle: {
+    lemon: {
       verifyWebhookSignature() {
-        return { ok: true, mode: "mock", reason: "signature verification bypassed in mock mode" };
+        return { ok: true, mode: "mock", reason: "Lemon Squeezy signature verification bypassed in mock mode" };
       },
-      mapWebhookEvent: mapPaddleEventToLicenseMutation,
-    },
-    keygen: {
-      mapWebhookEvent: mapKeygenEventToLicenseMutation,
+      mapWebhookEvent: mapLemonEventToEntitlementMutation,
       validateOfflineTicket({ parsed, machineFingerprintHash }) {
-        if (!parsed) return { ok: false, statusCode: 400, error: "Invalid offline ticket" };
+        if (!parsed) return { ok: false, statusCode: 400, error: "Invalid offline entitlement" };
         if (!parsed.signatureMatch) {
-          return { ok: false, statusCode: 400, error: "Ticket signature invalid", faultCode: "CLWD-LIC-1001" };
+          return { ok: false, statusCode: 400, error: "Entitlement signature invalid", faultCode: "CLWD-LEM-1001" };
         }
         const machineMatched =
           !machineFingerprintHash ||
@@ -45,12 +40,6 @@ export function createMockAdapters({ env = process.env } = {}) {
           statusCode: machineMatched ? 200 : 426,
         };
       },
-    },
-    lemon: {
-      verifyWebhookSignature() {
-        return { ok: true, mode: "mock", reason: "Lemon Squeezy signature verification bypassed in mock mode" };
-      },
-      mapWebhookEvent: mapLemonEventToEntitlementMutation,
     },
     identity: {
       ssoProviders() {

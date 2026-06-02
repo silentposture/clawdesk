@@ -22,10 +22,16 @@ export interface LegalConsentSummary {
 const secretPatterns = [
   /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi,
   /\bsk-[A-Za-z0-9_-]{12,}\b/g,
+  /\bsk-ant-[A-Za-z0-9_-]{8,}\b/g,
+  /\bsk-or-v1-[A-Za-z0-9_-]{8,}\b/g,
+  /\bgsk_[A-Za-z0-9_-]{8,}\b/g,
+  /\bxai-[A-Za-z0-9_-]{8,}\b/g,
+  /\bAIza[A-Za-z0-9_-]{8,}\b/g,
   /\bCLWD-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}\b/g,
+  /\bCLWD-BETA-[A-Z0-9]{4}-[A-Z0-9]{4}\b/g,
   /\/Users\/[^/\s]+\/[^\s]+/g,
   /[A-Z]:\\(?:[^\\\s]+\\)*[^\\\s]+/gi,
-  /\bpaddle_customer_[A-Za-z0-9_-]+\b/g,
+  /\b(?:paddle_customer|lem_customer|lemon_customer)_[A-Za-z0-9_-]+\b/g,
 ];
 
 export function isFaultCode(code: string): boolean {
@@ -52,7 +58,7 @@ export function createDiagnosticReport(input: {
     createdAt,
     appVersion: "0.1.0",
     systemSummary: "Windows 11 x64, memory 16-32GB bucket, disk 100GB+ bucket",
-    licenseSummary: "provider=keygen status=active customer=[HASHED]",
+    licenseSummary: "provider=lemon-license status=active customer=[HASHED]",
     gatewaySummary: "mock sidecar healthy",
     recentErrors,
     redactionStatus: recentErrors.join("\n") === input.recentErrors.join("\n") && description === input.userDescription ? "clean" : "redacted",

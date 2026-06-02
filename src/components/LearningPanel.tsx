@@ -1,6 +1,7 @@
 import { BrainCircuit, ListChecks, MousePointerClick, Square, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { defaultLearningSession, type LearningSession, type ObservedActionKind } from "../lib/learning";
+import { useI18n } from "../lib/i18n";
 import { Tooltip } from "./Tooltip";
 
 interface LearningPanelProps {
@@ -39,6 +40,7 @@ const demoActions: Array<{
 ];
 
 export function LearningPanel({ gatewayBaseUrl, onClose }: LearningPanelProps): JSX.Element {
+  const { t } = useI18n();
   const [session, setSession] = useState<LearningSession>(defaultLearningSession);
   const [demoIndex, setDemoIndex] = useState(0);
   const [draftName, setDraftName] = useState<string>();
@@ -55,7 +57,7 @@ export function LearningPanel({ gatewayBaseUrl, onClose }: LearningPanelProps): 
       if (!response.ok) throw new Error("bad response");
       setSession((await response.json()) as LearningSession);
     } catch {
-      setError("無法讀取學習模式狀態。");
+      setError(t("learning.loadError"));
     }
   }
 
@@ -69,7 +71,7 @@ export function LearningPanel({ gatewayBaseUrl, onClose }: LearningPanelProps): 
       setSession((await response.json()) as LearningSession);
       setDemoIndex(0);
     } catch {
-      setError("無法啟動學習模式。");
+      setError(t("learning.startError"));
     }
   }
 
@@ -86,7 +88,7 @@ export function LearningPanel({ gatewayBaseUrl, onClose }: LearningPanelProps): 
       setSession((await response.json()) as LearningSession);
       setDemoIndex((current) => current + 1);
     } catch {
-      setError("無法加入觀察步驟，請確認學習模式已啟動。");
+      setError(t("learning.observeError"));
     }
   }
 
@@ -99,8 +101,14 @@ export function LearningPanel({ gatewayBaseUrl, onClose }: LearningPanelProps): 
       setSession(payload.session);
       setDraftName(payload.workflow?.name);
     } catch {
-      setError("無法停止學習模式或建立草稿。");
+      setError(t("learning.stopError"));
     }
+  }
+
+  function statusLabel() {
+    if (session.status === "recording") return t("learning.status.recording");
+    if (session.status === "draft-ready") return t("learning.status.draftReady");
+    return t("learning.status.idle");
   }
 
   return (
@@ -108,10 +116,10 @@ export function LearningPanel({ gatewayBaseUrl, onClose }: LearningPanelProps): 
       <section className="learning-panel" role="dialog" aria-modal="true" aria-labelledby="learning-title">
         <header className="provider-header">
           <div>
-            <h2 id="learning-title">學習模式與工作流拆解</h2>
-            <p>觀察人類一般操作，拆成可審核步驟，再建立自動化工作流草稿；不記錄密碼，不直接執行。</p>
+            <h2 id="learning-title">{t("learning.title")}</h2>
+            <p>{t("learning.subtitle")}</p>
           </div>
-          <button className="icon-button" type="button" aria-label="關閉" onClick={onClose}>
+          <button className="icon-button" type="button" aria-label={t("common.close")} onClick={onClose}>
             <X size={18} />
           </button>
         </header>
@@ -119,44 +127,44 @@ export function LearningPanel({ gatewayBaseUrl, onClose }: LearningPanelProps): 
         <div className="learning-layout">
           <section className="learning-card">
             <BrainCircuit size={24} />
-            <h3>目前狀態：{session.status === "recording" ? "正在觀察" : session.status === "draft-ready" ? "草稿已建立" : "尚未啟用"}</h3>
+            <h3>{t("learning.status", { status: statusLabel() })}</h3>
             <ul>
-              <li>必須人工按下開始，才會觀察操作。</li>
-              <li>密碼、token、付款資料與私密欄位不記錄。</li>
-              <li>螢幕影像只做授權後摘要，不保存原始畫面。</li>
-              <li>停止後只產生工作流草稿，啟用前仍需人工確認。</li>
+              <li>{t("learning.rule.start")}</li>
+              <li>{t("learning.rule.private")}</li>
+              <li>{t("learning.rule.screen")}</li>
+              <li>{t("learning.rule.draft")}</li>
             </ul>
             <div className="learning-actions">
-              <Tooltip text="開始觀察一般操作，將點擊、開啟 app、檔案動作拆成步驟。">
+              <Tooltip text={t("learning.startTooltip")}>
                 <button className="primary-button" type="button" disabled={session.status === "recording"} onClick={startLearning}>
                   <MousePointerClick size={16} />
-                  開始學習
+                  {t("learning.start")}
                 </button>
               </Tooltip>
               <button className="secondary-button" type="button" disabled={session.status !== "recording"} onClick={observeNextAction}>
-                加入示範步驟
+                {t("learning.observe")}
               </button>
               <button className="secondary-button" type="button" disabled={session.status !== "recording"} onClick={stopLearning}>
                 <Square size={14} />
-                停止並建立草稿
+                {t("learning.stop")}
               </button>
             </div>
           </section>
 
           <section className="learning-card">
             <ListChecks size={24} />
-            <h3>已拆解步驟</h3>
-            {session.actions.length === 0 ? <p className="empty-note">尚未觀察到操作。</p> : null}
+            <h3>{t("learning.steps")}</h3>
+            {session.actions.length === 0 ? <p className="empty-note">{t("learning.noActions")}</p> : null}
             <div className="learning-step-list">
               {session.actions.map((action, index) => (
                 <article key={action.id}>
-                  <span>步驟 {index + 1}</span>
+                  <span>{t("learning.step", { index: index + 1 })}</span>
                   <strong>{action.description}</strong>
                   <small>{action.app} · {action.kind} · {action.target}</small>
                 </article>
               ))}
             </div>
-            {draftName ? <p className="panel-success">已建立：{draftName}</p> : null}
+            {draftName ? <p className="panel-success">{t("learning.created", { name: draftName })}</p> : null}
             {error ? <p className="panel-error">{error}</p> : null}
           </section>
         </div>

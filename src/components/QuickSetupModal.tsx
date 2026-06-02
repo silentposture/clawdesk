@@ -67,8 +67,8 @@ export function QuickSetupModal({ policy, onPolicyChange, onOpenLicense, onClose
 
           <div className="setup-card">
             <KeyRound size={22} />
-            <strong>Beta license</strong>
-            <p>啟用 7 天試用或貼上 Lemon Squeezy license key。</p>
+            <strong>{t("app.quickSetup.licenseTitle")}</strong>
+            <p>{t("app.quickSetup.licenseBody")}</p>
             <button
               className="secondary-button"
               type="button"
@@ -77,7 +77,7 @@ export function QuickSetupModal({ policy, onPolicyChange, onOpenLicense, onClose
                 onOpenLicense?.();
               }}
             >
-              開啟授權
+              {t("app.quickSetup.openLicense")}
             </button>
           </div>
 

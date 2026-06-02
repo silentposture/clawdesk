@@ -5,8 +5,14 @@ artifacts/
 src-tauri/target/
 .vs/
 .clawdesk-local-stack/
+ClawDesk-MAC/
 .DS_Store
 *.log
 .clawdesk-mock/
 .clawdesk-backend/
 src-tauri/binaries/mock-gateway-*
+.env
+.env.*
+!.env.example
+!.env.mock.example
+!.env.production.example

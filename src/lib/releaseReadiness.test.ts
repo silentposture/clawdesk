@@ -25,21 +25,31 @@ describe("release readiness matrix", () => {
     });
     const blockedIds = matrix.filter((item) => item.status === "blocked").map((item) => item.id);
 
-    expect(blockedIds).toContain("paddle");
+    expect(blockedIds).toContain("lemon-squeezy");
     expect(blockedIds).toContain("production-gateway");
-    expect(blockedIds).toContain("keygen");
     expect(blockedIds).toContain("sso");
     expect(blockedIds).toContain("windows-signing-env");
     expect(blockedIds).toContain("mock-resources");
     expect(summarizeReleaseReadiness(matrix).overall).toBe("production-blocked");
   });
 
+  it("blocks beta-direct when gateway, Lemon, SSO, signing, or mock isolation is missing", () => {
+    const matrix = buildReleaseReadinessMatrix({
+      ...defaultMockCandidateReadiness,
+      betaDirect: true,
+    });
+    const blockedIds = matrix.filter((item) => item.status === "blocked").map((item) => item.id);
+    expect(blockedIds).toContain("lemon-squeezy");
+    expect(blockedIds).toContain("production-gateway");
+    expect(blockedIds).toContain("sso");
+    expect(blockedIds).toContain("windows-signing-env");
+  });
+
   it("reports production ready when all hard requirements are satisfied", () => {
     const matrix = buildReleaseReadinessMatrix({
       legalManifestCurrent: true,
       hasProductionGateway: true,
-      hasPaddleCredentials: true,
-      hasKeygenCredentials: true,
+      hasLemonCredentials: true,
       hasSsoCredentials: true,
       hasWindowsSigningEnv: true,
       hasTrustedSigningEnv: false,

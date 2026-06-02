@@ -1,6 +1,7 @@
 import { Activity, CheckCircle2, CircleDot, Gauge, ListChecks, Table2 } from "lucide-react";
 import type { CanvasComponent } from "../lib/events";
 import type { CanvasSurface } from "../lib/canvas";
+import { useI18n } from "../lib/i18n";
 
 interface CanvasRendererProps {
   surface?: CanvasSurface;
@@ -122,12 +123,13 @@ function renderComponent(component: CanvasComponent, surface: CanvasSurface): JS
 }
 
 export function CanvasRenderer({ surface }: CanvasRendererProps): JSX.Element {
+  const { t } = useI18n();
   if (!surface || !surface.rootId) {
     return (
       <div className="empty-canvas">
         <Activity size={28} />
-        <h2>Live Canvas</h2>
-        <p>結構化結果、授權要求與生成式工作區畫面會顯示在這裡。</p>
+        <h2>{t("canvas.emptyTitle")}</h2>
+        <p>{t("canvas.emptyBody")}</p>
       </div>
     );
   }

@@ -2,6 +2,7 @@ import { CalendarClock, Play, Workflow, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ScheduledWorkflow, WorkflowTemplate } from "../lib/workflows";
 import { buildWorkflowFromTemplate, workflowNeedsApproval } from "../lib/workflows";
+import { useI18n } from "../lib/i18n";
 import { Tooltip } from "./Tooltip";
 
 interface WorkflowPanelProps {
@@ -10,6 +11,7 @@ interface WorkflowPanelProps {
 }
 
 export function WorkflowPanel({ gatewayBaseUrl, onClose }: WorkflowPanelProps): JSX.Element {
+  const { t } = useI18n();
   const [templates, setTemplates] = useState<WorkflowTemplate[]>([]);
   const [workflows, setWorkflows] = useState<ScheduledWorkflow[]>([]);
   const [scheduleValue, setScheduleValue] = useState("09:00");
@@ -31,7 +33,7 @@ export function WorkflowPanel({ gatewayBaseUrl, onClose }: WorkflowPanelProps): 
       setTemplates(payload.templates);
       setWorkflows(payload.workflows);
     } catch {
-      setError("無法讀取工作流與排程。");
+      setError(t("workflow.loadError"));
     } finally {
       setBusy(false);
     }
@@ -51,7 +53,7 @@ export function WorkflowPanel({ gatewayBaseUrl, onClose }: WorkflowPanelProps): 
       if (!response.ok) throw new Error("bad response");
       await loadWorkflows();
     } catch {
-      setError("建立工作流失敗。");
+      setError(t("workflow.createError"));
       setBusy(false);
     }
   }
@@ -61,19 +63,19 @@ export function WorkflowPanel({ gatewayBaseUrl, onClose }: WorkflowPanelProps): 
       <section className="workflow-panel" role="dialog" aria-modal="true" aria-labelledby="workflow-title">
         <header className="provider-header">
           <div>
-            <h2 id="workflow-title">自動化排程與工作流</h2>
-            <p>用範本建立可審核的流程；任何跨專案或高風險步驟仍會進入人工授權。</p>
+            <h2 id="workflow-title">{t("workflow.title")}</h2>
+            <p>{t("workflow.subtitle")}</p>
           </div>
-          <button className="icon-button" type="button" aria-label="關閉" onClick={onClose}>
+          <button className="icon-button" type="button" aria-label={t("common.close")} onClick={onClose}>
             <X size={18} />
           </button>
         </header>
 
         <div className="workflow-layout">
           <section className="workflow-column">
-            <h3>工作流範本</h3>
+            <h3>{t("workflow.templates")}</h3>
             <label className="setup-field compact">
-              <span>排程時間</span>
+              <span>{t("workflow.scheduleTime")}</span>
               <input value={scheduleValue} onChange={(event) => setScheduleValue(event.target.value)} />
             </label>
             {templates.map((template) => (
@@ -82,11 +84,13 @@ export function WorkflowPanel({ gatewayBaseUrl, onClose }: WorkflowPanelProps): 
                 <div>
                   <strong>{template.name}</strong>
                   <p>{template.description}</p>
-                  <small>{template.steps.length} 個步驟 · {workflowNeedsApproval(template) ? "含授權步驟" : "低風險"}</small>
+                  <small>
+                    {t("workflow.stepCount", { count: template.steps.length })} · {workflowNeedsApproval(template) ? t("workflow.requiresApproval") : t("workflow.lowRisk")}
+                  </small>
                 </div>
-                <Tooltip text="建立後先是草稿，可檢查每個步驟，再啟用排程。">
+                <Tooltip text={t("workflow.createTooltip")}>
                   <button className="secondary-button" type="button" disabled={busy} onClick={() => createWorkflow(template)}>
-                    建立
+                    {t("workflow.create")}
                   </button>
                 </Tooltip>
               </article>
@@ -94,19 +98,19 @@ export function WorkflowPanel({ gatewayBaseUrl, onClose }: WorkflowPanelProps): 
           </section>
 
           <section className="workflow-column">
-            <h3>目前排程</h3>
-            {workflows.length === 0 ? <p className="empty-note">尚未建立工作流。</p> : null}
+            <h3>{t("workflow.current")}</h3>
+            {workflows.length === 0 ? <p className="empty-note">{t("workflow.empty")}</p> : null}
             {workflows.map((workflow) => (
               <article className="workflow-card scheduled" key={workflow.id}>
                 <CalendarClock size={19} />
                 <div>
                   <strong>{workflow.name}</strong>
                   <p>{workflow.scheduleText}</p>
-                  <small>{workflow.status} · 下一次：{workflow.nextRun}</small>
+                  <small>{workflow.status} · {t("workflow.nextRun", { value: workflow.nextRun })}</small>
                 </div>
                 <button className="secondary-button" type="button" disabled={workflow.status !== "active"}>
                   <Play size={14} />
-                  執行
+                  {t("workflow.run")}
                 </button>
               </article>
             ))}

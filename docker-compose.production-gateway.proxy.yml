@@ -1,0 +1,15 @@
+services:
+  clawdesk-proxy:
+    image: nginx:1.27-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/nginx.production-gateway.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./infra/certbot-www:/var/www/certbot:ro
+      - /etc/letsencrypt:/etc/letsencrypt:ro
+    depends_on:
+      - clawdesk-gateway
+    restart: unless-stopped
+    networks:
+      - clawdesk-prod

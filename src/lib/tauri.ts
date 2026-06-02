@@ -223,11 +223,23 @@ export interface ProviderCredentialSummary {
   authMode: ProviderAuthMode;
   hasSecret: boolean;
   secretLabel?: string;
+  secretRef?: string;
   accountEmail?: string;
   endpoint?: string;
   model?: string;
   storage: "windows-dpapi" | "portable-dev";
   updatedAtEpochMs: number;
+}
+
+export interface ProviderCredentialDeleteResult {
+  deleted: boolean;
+  summaries: ProviderCredentialSummary[];
+}
+
+export interface MachineIdentityRecord {
+  hwid: string;
+  instanceId: string;
+  source: string;
 }
 
 export async function writeProviderCredentialToApp(
@@ -240,4 +252,32 @@ export async function writeProviderCredentialToApp(
 export async function readProviderCredentialSummariesFromApp(): Promise<ProviderCredentialSummary[]> {
   if (!hasTauriRuntime()) return [];
   return invoke<ProviderCredentialSummary[]>("read_provider_credential_summaries");
+}
+
+export async function deleteProviderCredentialFromApp(
+  providerId: ProviderId,
+): Promise<ProviderCredentialDeleteResult | undefined> {
+  if (!hasTauriRuntime()) return undefined;
+  return invoke<ProviderCredentialDeleteResult>("delete_provider_credential", { providerId });
+}
+
+export async function readLicenseCacheFromApp<T>(): Promise<T | undefined> {
+  if (!hasTauriRuntime()) return undefined;
+  const raw = await invoke<string | null>("read_license_cache");
+  return raw ? (JSON.parse(raw) as T) : undefined;
+}
+
+export async function writeLicenseCacheToApp(record: unknown): Promise<void> {
+  if (!hasTauriRuntime()) return;
+  await invoke("write_license_cache", { recordJson: JSON.stringify(record) });
+}
+
+export async function deleteLicenseCacheFromApp(): Promise<boolean> {
+  if (!hasTauriRuntime()) return false;
+  return invoke<boolean>("delete_license_cache");
+}
+
+export async function getMachineIdentityFromApp(): Promise<MachineIdentityRecord | undefined> {
+  if (!hasTauriRuntime()) return undefined;
+  return invoke<MachineIdentityRecord>("get_machine_identity");
 }

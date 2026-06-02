@@ -8,13 +8,17 @@ use std::{
     time::Duration,
 };
 use tauri::Manager;
-#[cfg(all(windows, test))]
+#[cfg(windows)]
 use windows_sys::Win32::Security::Cryptography::CryptUnprotectData;
 #[cfg(windows)]
 use windows_sys::Win32::{
     Foundation::LocalFree,
     Security::Cryptography::{CryptProtectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB},
 };
+#[cfg(windows)]
+use std::os::windows::process::CommandExt;
+#[cfg(windows)]
+const CREATE_NO_WINDOW: u32 = 0x08000000;
 
 const MOCK_PORT: u16 = 18890;
 const BUILD_PROFILE: Option<&str> = option_env!("CLAWDESK_BUILD_PROFILE");
@@ -62,6 +66,7 @@ struct ProviderCredentialRecord {
     auth_mode: String,
     encrypted_secret: Option<String>,
     secret_label: Option<String>,
+    secret_ref: Option<String>,
     account_email: Option<String>,
     endpoint: Option<String>,
     model: Option<String>,
@@ -75,11 +80,34 @@ struct ProviderCredentialSummary {
     auth_mode: String,
     has_secret: bool,
     secret_label: Option<String>,
+    secret_ref: Option<String>,
     account_email: Option<String>,
     endpoint: Option<String>,
     model: Option<String>,
     storage: String,
     updated_at_epoch_ms: u128,
+}
+
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ProviderCredentialDeleteResult {
+    deleted: bool,
+    summaries: Vec<ProviderCredentialSummary>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ProtectedLicenseCacheRecord {
+    encrypted_payload: String,
+    updated_at_epoch_ms: u128,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct MachineIdentityRecord {
+    hwid: String,
+    instance_id: String,
+    source: String,
 }
 
 #[derive(Default)]
@@ -254,6 +282,18 @@ fn provider_credentials_path(app: &tauri::AppHandle) -> Result<PathBuf, String> 
     Ok(provider_credentials_path_from_config_dir(config_dir))
 }
 
+fn license_cache_path_from_config_dir(config_dir: PathBuf) -> PathBuf {
+    config_dir.join("license-cache.json")
+}
+
+fn license_cache_path(app: &tauri::AppHandle) -> Result<PathBuf, String> {
+    let config_dir = app
+        .path()
+        .app_config_dir()
+        .map_err(|error| format!("Failed to resolve app config dir: {error}"))?;
+    Ok(license_cache_path_from_config_dir(config_dir))
+}
+
 fn now_epoch_ms() -> u128 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -261,8 +301,76 @@ fn now_epoch_ms() -> u128 {
         .unwrap_or(0)
 }
 
-fn validate_provider_credential_input(input: &ProviderCredentialInput) -> Result<(), String> {
-    let provider_id = input.provider_id.trim();
+fn fnv1a64_hex(value: &str) -> String {
+    let mut hash: u64 = 0xcbf29ce484222325;
+    for byte in value.as_bytes() {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
+}
+
+#[cfg(windows)]
+fn read_windows_machine_guid() -> Result<String, String> {
+    let output = Command::new("reg")
+        .args([
+            "query",
+            r"HKLM\SOFTWARE\Microsoft\Cryptography",
+            "/v",
+            "MachineGuid",
+        ])
+        .output()
+        .map_err(|error| format!("Failed to query MachineGuid: {error}"))?;
+
+    if !output.status.success() {
+        return Err(format!(
+            "MachineGuid query failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        ));
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        if line.contains("MachineGuid") {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if let Some(value) = parts.last() {
+                let trimmed = value.trim();
+                if !trimmed.is_empty() {
+                    return Ok(trimmed.to_string());
+                }
+            }
+        }
+    }
+
+    Err("MachineGuid not found".to_string())
+}
+
+#[cfg(not(windows))]
+fn read_windows_machine_guid() -> Result<String, String> {
+    Err("MachineGuid unavailable on this platform".to_string())
+}
+
+fn read_machine_identity() -> MachineIdentityRecord {
+    let machine_guid = read_windows_machine_guid().unwrap_or_else(|_| "portable-dev-machine".to_string());
+    let computer_name = std::env::var("COMPUTERNAME")
+        .or_else(|_| std::env::var("HOSTNAME"))
+        .unwrap_or_else(|_| "unknown-host".to_string());
+    let source = if machine_guid == "portable-dev-machine" {
+        "fallback-host".to_string()
+    } else {
+        "windows-machineguid".to_string()
+    };
+    let hwid_seed = format!("clawdesk|{machine_guid}|{computer_name}");
+    let instance_seed = format!("clawdesk-instance|{machine_guid}|{computer_name}");
+
+    MachineIdentityRecord {
+        hwid: format!("mfp_{}", fnv1a64_hex(&hwid_seed)),
+        instance_id: format!("clawdesk-{}", fnv1a64_hex(&instance_seed)),
+        source,
+    }
+}
+
+fn validate_provider_id(provider_id: &str) -> Result<(), String> {
     if provider_id.is_empty() || provider_id.len() > 80 {
         return Err("Provider id is required".to_string());
     }
@@ -272,8 +380,42 @@ fn validate_provider_credential_input(input: &ProviderCredentialInput) -> Result
     {
         return Err("Provider id contains unsupported characters".to_string());
     }
+    Ok(())
+}
+
+fn optional_trimmed(value: &Option<String>) -> Option<String> {
+    value
+        .as_ref()
+        .map(|item| item.trim().to_string())
+        .filter(|item| !item.is_empty())
+}
+
+fn validate_provider_credential_input(input: &ProviderCredentialInput) -> Result<(), String> {
+    validate_provider_id(input.provider_id.trim())?;
     match input.auth_mode.trim() {
-        "api-key" | "oauth" | "local-endpoint" | "mock" => Ok(()),
+        "api-key" => {
+            if optional_trimmed(&input.secret).is_none() {
+                return Err("API key provider requires a secret".to_string());
+            }
+            Ok(())
+        }
+        "oauth" => {
+            let email = optional_trimmed(&input.account_email)
+                .ok_or_else(|| "OAuth provider requires an account email".to_string())?;
+            if !email.contains('@') {
+                return Err("OAuth account email is invalid".to_string());
+            }
+            Ok(())
+        }
+        "local-endpoint" => {
+            let endpoint = optional_trimmed(&input.endpoint)
+                .ok_or_else(|| "Local endpoint provider requires an endpoint".to_string())?;
+            if !endpoint.starts_with("http://") && !endpoint.starts_with("https://") {
+                return Err("Provider endpoint must start with http:// or https://".to_string());
+            }
+            Ok(())
+        }
+        "mock" => Ok(()),
         _ => Err("Unsupported provider auth mode".to_string()),
     }
 }
@@ -293,11 +435,14 @@ fn mask_secret(secret: &str) -> String {
     }
 }
 
+fn provider_secret_ref(provider_id: &str, auth_mode: &str, updated_at_epoch_ms: u128) -> String {
+    format!("clawdesk-local://provider/{provider_id}/{auth_mode}/{updated_at_epoch_ms}")
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
-#[cfg(test)]
 fn hex_decode(value: &str) -> Result<Vec<u8>, String> {
     let trimmed = value.trim();
     if trimmed.len() % 2 != 0 {
@@ -347,7 +492,6 @@ fn protect_secret(secret: &str) -> Result<String, String> {
 }
 
 #[cfg(windows)]
-#[cfg(test)]
 fn unprotect_secret(encrypted_hex: &str) -> Result<String, String> {
     let mut encrypted = hex_decode(encrypted_hex)?;
     let mut input = CRYPT_INTEGER_BLOB {
@@ -387,7 +531,6 @@ fn protect_secret(secret: &str) -> Result<String, String> {
 }
 
 #[cfg(not(windows))]
-#[cfg(test)]
 fn unprotect_secret(encrypted_hex: &str) -> Result<String, String> {
     String::from_utf8(hex_decode(encrypted_hex)?)
         .map_err(|error| format!("Provider credential is not valid UTF-8: {error}"))
@@ -424,6 +567,7 @@ fn summarize_provider_credential(record: &ProviderCredentialRecord) -> ProviderC
         auth_mode: record.auth_mode.clone(),
         has_secret: record.encrypted_secret.is_some(),
         secret_label: record.secret_label.clone(),
+        secret_ref: record.secret_ref.clone(),
         account_email: record.account_email.clone(),
         endpoint: record.endpoint.clone(),
         model: record.model.clone(),
@@ -453,11 +597,19 @@ fn write_provider_credential_to_path(
         None => None,
     };
     let secret_label = secret.map(mask_secret);
+    let updated_at_epoch_ms = now_epoch_ms();
+    let provider_id = input.provider_id.trim().to_string();
+    let auth_mode = input.auth_mode.trim().to_string();
     let record = ProviderCredentialRecord {
-        provider_id: input.provider_id.trim().to_string(),
-        auth_mode: input.auth_mode.trim().to_string(),
+        provider_id: provider_id.clone(),
+        auth_mode: auth_mode.clone(),
         encrypted_secret,
         secret_label,
+        secret_ref: Some(provider_secret_ref(
+            &provider_id,
+            &auth_mode,
+            updated_at_epoch_ms,
+        )),
         account_email: input
             .account_email
             .map(|value| value.trim().to_string())
@@ -470,7 +622,7 @@ fn write_provider_credential_to_path(
             .model
             .map(|value| value.trim().to_string())
             .filter(|value| !value.is_empty()),
-        updated_at_epoch_ms: now_epoch_ms(),
+        updated_at_epoch_ms,
     };
 
     records.retain(|item| item.provider_id != record.provider_id);
@@ -491,6 +643,21 @@ fn read_provider_credential_summaries_from_path(
     })
 }
 
+fn delete_provider_credential_from_path(
+    path: PathBuf,
+    provider_id: &str,
+) -> Result<ProviderCredentialDeleteResult, String> {
+    let normalized_provider_id = provider_id.trim();
+    validate_provider_id(normalized_provider_id)?;
+    let mut records = read_provider_credentials_from_path(path.clone())?;
+    let before = records.len();
+    records.retain(|item| item.provider_id != normalized_provider_id);
+    let deleted = records.len() != before;
+    write_provider_credentials_to_path(path, &records)?;
+    let summaries = records.iter().map(summarize_provider_credential).collect();
+    Ok(ProviderCredentialDeleteResult { deleted, summaries })
+}
+
 fn read_legal_consent_from_path(path: PathBuf) -> Result<Option<LegalConsentRecord>, String> {
     if !path.exists() {
         return Ok(None);
@@ -500,6 +667,43 @@ fn read_legal_consent_from_path(path: PathBuf) -> Result<Option<LegalConsentReco
     serde_json::from_str::<LegalConsentRecord>(&raw)
         .map(Some)
         .map_err(|error| format!("Failed to parse legal consent record: {error}"))
+}
+
+fn write_license_cache_to_path(path: PathBuf, record_json: &str) -> Result<(), String> {
+    serde_json::from_str::<serde_json::Value>(record_json)
+        .map_err(|error| format!("License cache must be valid JSON: {error}"))?;
+    let encrypted_payload = protect_secret(record_json)?;
+    let record = ProtectedLicenseCacheRecord {
+        encrypted_payload,
+        updated_at_epoch_ms: now_epoch_ms(),
+    };
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|error| format!("Failed to create app config dir: {error}"))?;
+    }
+    let raw = serde_json::to_string_pretty(&record)
+        .map_err(|error| format!("Failed to serialize license cache: {error}"))?;
+    fs::write(path, raw).map_err(|error| format!("Failed to write license cache: {error}"))
+}
+
+fn read_license_cache_from_path(path: PathBuf) -> Result<Option<String>, String> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path)
+        .map_err(|error| format!("Failed to read license cache: {error}"))?;
+    let record = serde_json::from_str::<ProtectedLicenseCacheRecord>(&raw)
+        .map_err(|error| format!("Failed to parse license cache: {error}"))?;
+    Ok(Some(unprotect_secret(&record.encrypted_payload)?))
+}
+
+fn delete_license_cache_from_path(path: PathBuf) -> Result<bool, String> {
+    if !path.exists() {
+        return Ok(false);
+    }
+    fs::remove_file(path)
+        .map_err(|error| format!("Failed to delete license cache: {error}"))?;
+    Ok(true)
 }
 
 fn write_legal_consent_to_path(path: PathBuf, record: &LegalConsentRecord) -> Result<(), String> {
@@ -560,14 +764,21 @@ fn spawn_mock_gateway(app: &tauri::AppHandle) -> Result<Child, String> {
         .unwrap_or_else(|| script.to_string_lossy().to_string());
 
     write_smoke_log(&format!("spawning mock gateway: {script_arg}"));
-    Command::new("node")
+    let mut command = Command::new("node");
+    command
         .arg(script_arg)
+        .env("CLAWDESK_MOCK_PORT", MOCK_PORT.to_string())
         .env("OPENCLAW_MOCK_PORT", MOCK_PORT.to_string())
         .env("NODE_ENV", "production")
         .env("NODE_OPTIONS", "--max-old-space-size=128")
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::null());
+    #[cfg(windows)]
+    {
+        command.creation_flags(CREATE_NO_WINDOW);
+    }
+    command
         .spawn()
         .map_err(|error| format!("Failed to spawn mock gateway: {error}"))
 }
@@ -758,6 +969,34 @@ fn read_provider_credential_summaries(
     read_provider_credential_summaries_from_path(provider_credentials_path(&app)?)
 }
 
+#[tauri::command]
+fn delete_provider_credential(
+    app: tauri::AppHandle,
+    provider_id: String,
+) -> Result<ProviderCredentialDeleteResult, String> {
+    delete_provider_credential_from_path(provider_credentials_path(&app)?, &provider_id)
+}
+
+#[tauri::command]
+fn read_license_cache(app: tauri::AppHandle) -> Result<Option<String>, String> {
+    read_license_cache_from_path(license_cache_path(&app)?)
+}
+
+#[tauri::command]
+fn write_license_cache(app: tauri::AppHandle, record_json: String) -> Result<(), String> {
+    write_license_cache_to_path(license_cache_path(&app)?, &record_json)
+}
+
+#[tauri::command]
+fn delete_license_cache(app: tauri::AppHandle) -> Result<bool, String> {
+    delete_license_cache_from_path(license_cache_path(&app)?)
+}
+
+#[tauri::command]
+fn get_machine_identity() -> MachineIdentityRecord {
+    read_machine_identity()
+}
+
 pub fn run() {
     let app = tauri::Builder::default()
         .manage(SharedGatewayState::default())
@@ -770,7 +1009,12 @@ pub fn run() {
             write_legal_consent,
             save_legal_export,
             write_provider_credential,
-            read_provider_credential_summaries
+            read_provider_credential_summaries,
+            delete_provider_credential,
+            read_license_cache,
+            write_license_cache,
+            delete_license_cache,
+            get_machine_identity
         ])
         .setup(|app| {
             if env_flag("CLAWDESK_SMOKE_BOOT_GATEWAY") {
@@ -968,9 +1212,15 @@ mod tests {
         assert_eq!(summary.provider_id, "openai-api");
         assert!(summary.has_secret);
         assert_eq!(summary.secret_label.as_deref(), Some("sk-t…7890"));
+        assert!(summary
+            .secret_ref
+            .as_deref()
+            .unwrap_or_default()
+            .starts_with("clawdesk-local://provider/openai-api/api-key/"));
 
         let raw = fs::read_to_string(path.clone()).expect("credential file should exist");
         assert!(!raw.contains("sk-test-1234567890"));
+        assert!(!raw.contains("clawdesk-provider-credential-test"));
         let records =
             read_provider_credentials_from_path(path.clone()).expect("records should read");
         let encrypted = records[0]
@@ -983,6 +1233,30 @@ mod tests {
         );
 
         let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn license_cache_round_trip_uses_protected_storage() {
+        let base = std::env::temp_dir().join(format!(
+            "clawdesk-license-cache-test-{}",
+            std::process::id()
+        ));
+        let path = base.join("license-cache.json");
+        let raw_json = r#"{"productKey":"clawdesk","certificateJson":"signed-license","instanceId":"device-1"}"#;
+
+        write_license_cache_to_path(path.clone(), raw_json).expect("license cache should write");
+        let disk = fs::read_to_string(path.clone()).expect("license cache file should exist");
+        assert!(!disk.contains("signed-license"));
+        assert!(!disk.contains("\"certificateJson\""));
+
+        let restored = read_license_cache_from_path(path.clone())
+            .expect("license cache should read")
+            .expect("license cache payload should exist");
+        assert_eq!(restored, raw_json);
+
+        let deleted = delete_license_cache_from_path(path.clone()).expect("license cache should delete");
+        assert!(deleted);
+        assert!(!path.exists());
     }
 
     #[test]
@@ -1002,5 +1276,84 @@ mod tests {
         };
 
         assert!(write_provider_credential_to_path(path, input).is_err());
+    }
+
+    #[test]
+    fn provider_credential_requires_auth_specific_fields() {
+        let base = std::env::temp_dir().join(format!(
+            "clawdesk-provider-credential-validation-test-{}",
+            std::process::id()
+        ));
+        let path = base.join("provider-credentials.json");
+
+        assert!(write_provider_credential_to_path(
+            path.clone(),
+            ProviderCredentialInput {
+                provider_id: "openai-api".to_string(),
+                auth_mode: "api-key".to_string(),
+                secret: None,
+                account_email: None,
+                endpoint: None,
+                model: None,
+            },
+        )
+        .is_err());
+
+        assert!(write_provider_credential_to_path(
+            path.clone(),
+            ProviderCredentialInput {
+                provider_id: "chatgpt-pro".to_string(),
+                auth_mode: "oauth".to_string(),
+                secret: None,
+                account_email: Some("not-email".to_string()),
+                endpoint: None,
+                model: None,
+            },
+        )
+        .is_err());
+
+        assert!(write_provider_credential_to_path(
+            path,
+            ProviderCredentialInput {
+                provider_id: "local-model".to_string(),
+                auth_mode: "local-endpoint".to_string(),
+                secret: None,
+                account_email: None,
+                endpoint: Some("file:///tmp/socket".to_string()),
+                model: None,
+            },
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn provider_credential_can_be_deleted_by_provider_id() {
+        let base = std::env::temp_dir().join(format!(
+            "clawdesk-provider-credential-delete-test-{}",
+            std::process::id()
+        ));
+        let path = base.join("provider-credentials.json");
+        write_provider_credential_to_path(
+            path.clone(),
+            ProviderCredentialInput {
+                provider_id: "openai-api".to_string(),
+                auth_mode: "api-key".to_string(),
+                secret: Some("sk-test-delete-1234567890".to_string()),
+                account_email: None,
+                endpoint: None,
+                model: Some("gpt-5.2".to_string()),
+            },
+        )
+        .expect("credential should write");
+
+        let result = delete_provider_credential_from_path(path.clone(), "openai-api")
+            .expect("credential should delete");
+        assert!(result.deleted);
+        assert!(result.summaries.is_empty());
+
+        let raw = fs::read_to_string(path.clone()).expect("credential file should still exist");
+        assert!(!raw.contains("sk-test-delete-1234567890"));
+
+        let _ = fs::remove_file(path);
     }
 }

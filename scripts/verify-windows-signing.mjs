@@ -3,6 +3,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 const cwd = process.cwd();
+const requireSigntool = process.argv.includes("--require-signtool");
 
 function commandInvocation(command, args) {
   if (process.platform !== "win32") return { command, args };
@@ -18,6 +19,7 @@ function run(command, args) {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     shell: false,
+    windowsHide: process.platform === "win32",
   });
 }
 
@@ -65,8 +67,8 @@ const signtoolPath = signtool.status === 0
   ? signtool.stdout.split(/\r?\n/).map((line) => line.trim()).find((line) => line.toLowerCase().endsWith("signtool.exe"))
   : await windowsKitSignTool();
 if (!signtoolPath) {
-  console.log(JSON.stringify({ result: "SKIP", reason: "signtool.exe not found", installer }, null, 2));
-  process.exit(0);
+  console.log(JSON.stringify({ result: requireSigntool ? "FAIL" : "SKIP", reason: "signtool.exe not found", installer }, null, 2));
+  process.exit(requireSigntool ? 1 : 0);
 }
 
 const verify = run(signtoolPath, ["verify", "/pa", "/v", installer]);
@@ -79,3 +81,5 @@ const result = {
 };
 console.log(JSON.stringify(result, null, 2));
 if (verify.status !== 0) process.exitCode = 1;
+
+

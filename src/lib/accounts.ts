@@ -138,7 +138,7 @@ export function createLoginDraft(provider: AccountProvider, email: string): Acco
     provider,
     email,
     role: "editor",
-    projectIds: ["openclaw-desktop"],
+    projectIds: ["clawdesk-desktop"],
     softwareTargets: [],
     scopes: providerScopes(provider).map((scope) => scope.id),
   };

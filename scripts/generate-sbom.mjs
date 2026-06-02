@@ -21,6 +21,7 @@ function run(command, args, options = {}) {
     encoding: "utf8",
     stdio: options.stdio ?? ["ignore", "pipe", "pipe"],
     shell: false,
+    windowsHide: process.platform === "win32",
   });
 }
 
@@ -78,7 +79,7 @@ async function main() {
   await writeJson("cargo-sbom.json", {
     bomFormat: "CycloneDX-compatible",
     specVersion: "1.5",
-    metadata: { component: { name: "openclaw-desktop", version: "0.1.0" } },
+    metadata: { component: { name: "clawdesk-desktop", version: "0.1.0" } },
     components: packages.map((pkg) => ({ type: "library", name: pkg.name, version: pkg.version ?? "unknown" })),
     generationWarning: "cargo-cyclonedx is not required locally; this artifact is generated from Cargo.lock.",
   });
@@ -88,3 +89,5 @@ async function main() {
 }
 
 await main();
+
+

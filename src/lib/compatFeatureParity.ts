@@ -1,34 +1,41 @@
-export type OpenClawParityStatus = "covered" | "partial" | "mock" | "deferred" | "not-applicable";
+export type CompatParityStatus = "covered" | "partial" | "mock" | "deferred" | "not-applicable";
+export type CompatParityRiskLevel = "low" | "medium" | "high" | "blocked";
 
-export interface OpenClawFeatureParityItem {
+export interface CompatFeatureParityItem {
   id: string;
   domain: string;
   upstreamPaths: string[];
   upstreamFileCount?: number;
   localSurface: string;
-  status: OpenClawParityStatus;
+  status: CompatParityStatus;
   windowsAction: string;
   difference: string;
+  riskLevel?: CompatParityRiskLevel;
+  testEndpoint?: string;
+  targetMilestone?: "windows-beta" | "signed-beta" | "production-gateway" | "post-beta";
 }
 
-export const openClawFeatureParitySnapshot = {
+export const compatFeatureParitySnapshot = {
   repository: "https://github.com/openclaw/openclaw",
-  commit: "d4484158d9291820d7af236d4277704da019f609",
+  commit: "278e3eabf29dd8ff31d633907525bda35ec6474a",
   license: "MIT",
   scannedAt: "2026-05-14",
-  sourceFileCount: 14886,
+  sourceFileCount: 14940,
 } as const;
 
-export const openClawFeatureParity: OpenClawFeatureParityItem[] = [
+export const compatFeatureParity: CompatFeatureParityItem[] = [
   {
     id: "model-auth-openai",
     domain: "模型連線與 OpenAI 登入",
     upstreamPaths: ["src/agents/model-auth.ts", "src/agents/auth-profiles/*", "src/plugin-sdk/provider-auth.ts"],
-    upstreamFileCount: 1588,
+    upstreamFileCount: 1597,
     localSurface: "src/lib/providers.ts, ProviderPanel, /auth/openai-api-key, /auth/openai-codex/oauth-login",
     status: "partial",
-    windowsAction: "把 mock credential state 改接 Windows Credential Manager，保留 OpenAI API key 與 OpenAI/Codex OAuth 兩種模式。",
-    difference: "已納入 provider/auth 契約與 UI，尚未執行真實 OAuth token refresh 或 encrypted credential store。",
+    windowsAction: "保留 OpenAI API key 與 OpenAI/Codex OAuth 兩種模式；下一步接真實 token refresh 與 production Gateway secret refs。",
+    difference: "已納入 provider/auth 契約、UI 與 Tauri DPAPI-protected credential vault；尚未執行真實 OAuth token refresh。",
+    riskLevel: "high",
+    testEndpoint: "/compat/runtime/auth-plan",
+    targetMilestone: "signed-beta",
   },
   {
     id: "provider-catalog",
@@ -37,38 +44,50 @@ export const openClawFeatureParity: OpenClawFeatureParityItem[] = [
     upstreamFileCount: 17,
     localSurface: "src/lib/providers.ts, /llm-providers",
     status: "partial",
-    windowsAction: "匯入 OpenClaw provider index normalized metadata，建立 Windows-safe allowlist。",
+    windowsAction: "匯入 provider index normalized metadata，建立 Windows-safe allowlist。",
     difference: "本機已有主要 provider 清單，但尚未完整支援 upstream live catalog/cache/cost/context window。",
+    riskLevel: "medium",
+    testEndpoint: "/llm-providers",
+    targetMilestone: "windows-beta",
   },
   {
     id: "gateway-protocol",
     domain: "Gateway protocol / WebSocket / RPC",
     upstreamPaths: ["src/gateway/*"],
-    upstreamFileCount: 697,
+    upstreamFileCount: 698,
     localSurface: "sidecars/mock-gateway/server.mjs, backend/production-gateway-sim.mjs",
     status: "mock",
     windowsAction: "建立 signed Windows sidecar 啟動器，逐步替換 mock Gateway endpoint。",
     difference: "目前對齊健康檢查、chat、permission、identity、license、provider endpoint；未納入 upstream gateway auth hardening 與完整 RPC。",
+    riskLevel: "high",
+    testEndpoint: "/gateway-adapter/contract",
+    targetMilestone: "production-gateway",
   },
   {
     id: "agents-runtime",
     domain: "Agents runtime / subagents / harness",
     upstreamPaths: ["src/agents/*"],
-    upstreamFileCount: 1588,
+    upstreamFileCount: 1597,
     localSurface: "AgentsPanel, workflows, mock project agents",
     status: "mock",
     windowsAction: "先導入 agent session model、model selection、failover、tool approval contract。",
     difference: "GUI 有 agent 管理與 mock 任務，尚未執行 upstream embedded runner / harness。",
+    riskLevel: "high",
+    testEndpoint: "/coding-workspace",
+    targetMilestone: "production-gateway",
   },
   {
     id: "plugins-sdk",
     domain: "Plugin SDK / tools",
     upstreamPaths: ["src/plugin-sdk/*", "packages/plugin-sdk/*"],
-    upstreamFileCount: 556,
+    upstreamFileCount: 558,
     localSurface: "McpPanel, provider catalog, local tool previews",
     status: "partial",
     windowsAction: "建立 Windows plugin sandbox policy，優先支援 provider-auth、web-search、tool approval。",
     difference: "本機有 UI 與 mock MCP connector；未載入 upstream plugin runtime 或 package boundary。",
+    riskLevel: "high",
+    testEndpoint: "/safety-policy",
+    targetMilestone: "signed-beta",
   },
   {
     id: "extensions",
@@ -79,6 +98,9 @@ export const openClawFeatureParity: OpenClawFeatureParityItem[] = [
     status: "mock",
     windowsAction: "先選 Teams/Gmail/Slack/LINE/Telegram 等 Windows 直售 Beta 需要的 connector 做 allowlist。",
     difference: "upstream extension 數量大；本機目前只納入 mock catalog 與權限預覽。",
+    riskLevel: "high",
+    testEndpoint: "/mcp/connectors",
+    targetMilestone: "signed-beta",
   },
   {
     id: "channels",
@@ -89,16 +111,22 @@ export const openClawFeatureParity: OpenClawFeatureParityItem[] = [
     status: "partial",
     windowsAction: "把 channel auth、allowlist、draft-only sending 納入 Windows safe defaults。",
     difference: "本機有跨平台 channel UI，尚未執行 upstream channel runtime / webhook delivery。",
+    riskLevel: "high",
+    testEndpoint: "/channels",
+    targetMilestone: "signed-beta",
   },
   {
     id: "cron-workflows",
     domain: "Cron / workflow automation",
     upstreamPaths: ["src/cron/*"],
-    upstreamFileCount: 172,
+    upstreamFileCount: 173,
     localSurface: "WorkflowsPanel, mock schedules",
     status: "mock",
     windowsAction: "映射到 Windows Task Scheduler 或 app-owned local scheduler。",
     difference: "本機有 workflow CRUD mock；未接 upstream isolated-agent cron runner。",
+    riskLevel: "medium",
+    testEndpoint: "/workflows",
+    targetMilestone: "post-beta",
   },
   {
     id: "memory",
@@ -109,6 +137,9 @@ export const openClawFeatureParity: OpenClawFeatureParityItem[] = [
     status: "mock",
     windowsAction: "先支援本機 SQLite/JSON 記憶，後續再接 embeddings provider。",
     difference: "本機只有記憶 UI 與 mock items，沒有 upstream batch embeddings / LanceDB path。",
+    riskLevel: "medium",
+    testEndpoint: "/memory/items",
+    targetMilestone: "post-beta",
   },
   {
     id: "security-auth",
@@ -117,18 +148,24 @@ export const openClawFeatureParity: OpenClawFeatureParityItem[] = [
     upstreamFileCount: 120,
     localSurface: "ProviderPanel, diagnostics redaction, release guard",
     status: "partial",
-    windowsAction: "用 Windows Credential Manager 實作 SecretRef/credential profile。",
-    difference: "已避免明文顯示與診斷外洩；尚未實作 profile store、token refresh lock、portable auth policy。",
+    windowsAction: "把 DPAPI credential vault 接上 production Gateway SecretRef，並視企業需求補 Windows Credential Manager native API。",
+    difference: "已避免明文顯示、支援本機憑證摘要/清除與診斷 redaction；尚未實作 production SecretRef/token refresh lock。",
+    riskLevel: "blocked",
+    testEndpoint: "/safety-policy",
+    targetMilestone: "signed-beta",
   },
   {
     id: "config-schema",
     domain: "Config schema / guided setup",
     upstreamPaths: ["src/config/*", "src/commands/*"],
-    upstreamFileCount: 975,
-    localSurface: "OpenClawSettingsPanel, src/lib/openclawSettings.ts",
+    upstreamFileCount: 979,
+    localSurface: "SettingsPanel, src/lib/compatSettings.ts",
     status: "partial",
-    windowsAction: "補匯入/匯出 openclaw config JSON，並加 Windows-safe validation。",
+    windowsAction: "補匯入/匯出相容 config JSON，並加 Windows-safe validation。",
     difference: "GUI 已把設定映射成導引；尚未完整讀寫 upstream schema。",
+    riskLevel: "medium",
+    testEndpoint: "/compat/feature-parity",
+    targetMilestone: "post-beta",
   },
   {
     id: "ui-control",
@@ -139,6 +176,9 @@ export const openClawFeatureParity: OpenClawFeatureParityItem[] = [
     status: "partial",
     windowsAction: "把 upstream model picker、auth status、login gate 行為導入現有 ProviderPanel。",
     difference: "本機 GUI 已有桌面版 layout；未直接使用 upstream Lit UI/TUI。",
+    riskLevel: "medium",
+    testEndpoint: "/product-comparison",
+    targetMilestone: "windows-beta",
   },
   {
     id: "media-understanding",
@@ -149,6 +189,9 @@ export const openClawFeatureParity: OpenClawFeatureParityItem[] = [
     status: "mock",
     windowsAction: "接 Windows media pipeline 或 ffmpeg sidecar，保留 provider allowlist。",
     difference: "目前僅能力宣告與 mock workflow，未接 upstream provider runtime。",
+    riskLevel: "medium",
+    testEndpoint: "/media/capabilities",
+    targetMilestone: "post-beta",
   },
   {
     id: "tts-talk",
@@ -159,6 +202,8 @@ export const openClawFeatureParity: OpenClawFeatureParityItem[] = [
     status: "deferred",
     windowsAction: "首發 Beta 不阻塞；後續接 Windows audio capture 與 OpenAI-compatible speech provider。",
     difference: "本機尚未提供語音輸入/輸出 runtime。",
+    riskLevel: "medium",
+    targetMilestone: "post-beta",
   },
   {
     id: "pairing-device",
@@ -169,6 +214,8 @@ export const openClawFeatureParity: OpenClawFeatureParityItem[] = [
     status: "deferred",
     windowsAction: "先支援本機 loopback；第二階段再做手機/節點 pairing。",
     difference: "Windows Beta 不先做 mobile node pairing。",
+    riskLevel: "medium",
+    targetMilestone: "post-beta",
   },
   {
     id: "macos-ios-android",
@@ -179,6 +226,8 @@ export const openClawFeatureParity: OpenClawFeatureParityItem[] = [
     status: "not-applicable",
     windowsAction: "不納入 Windows 首發 installer，只保留 protocol/UX 參考。",
     difference: "平台不同；只擷取可跨平台的 gateway/auth/model contract。",
+    riskLevel: "low",
+    targetMilestone: "post-beta",
   },
   {
     id: "sdk",
@@ -189,6 +238,8 @@ export const openClawFeatureParity: OpenClawFeatureParityItem[] = [
     status: "deferred",
     windowsAction: "Beta 穩定後提供 ClawDesk local API SDK 或直接相容 upstream SDK。",
     difference: "目前以桌面 app 內部 contract 為主，尚未發布 SDK。",
+    riskLevel: "medium",
+    targetMilestone: "post-beta",
   },
   {
     id: "windows-release",
@@ -199,11 +250,14 @@ export const openClawFeatureParity: OpenClawFeatureParityItem[] = [
     status: "partial",
     windowsAction: "完成 Authenticode/Trusted Signing、SBOM、NOTICE、installer smoke。",
     difference: "本機 Windows packaging 已超前 upstream 通用 CLI，但簽章/認證仍保留未完成。",
+    riskLevel: "blocked",
+    testEndpoint: "npm run release:guard -- --beta-direct",
+    targetMilestone: "signed-beta",
   },
 ];
 
-export function summarizeOpenClawFeatureParity(items = openClawFeatureParity) {
-  return items.reduce<Record<OpenClawParityStatus, number>>(
+export function summarizeCompatFeatureParity(items = compatFeatureParity) {
+  return items.reduce<Record<CompatParityStatus, number>>(
     (acc, item) => {
       acc[item.status] += 1;
       return acc;

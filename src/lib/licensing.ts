@@ -1,5 +1,5 @@
-export type PaymentProvider = "paddle" | "lemon-squeezy";
-export type LicenseProvider = "keygen" | "lemon-license";
+export type PaymentProvider = "lemon-squeezy";
+export type LicenseProvider = "lemon-license";
 
 export type LicensePlan =
   | "hobby"
@@ -80,7 +80,7 @@ export interface LicenseTamperEvent {
   reason: string;
   detectedAt: string;
   localAction: "downgrade-to-hobby" | "clear-offline-ticket";
-  serverAction: "report-to-keygen" | "manual-review";
+  serverAction: "report-to-lemon" | "manual-review";
   faultCode: string;
 }
 
@@ -101,32 +101,19 @@ export interface LicenseStatus {
 }
 
 export const pricingPlans: PricingPlan[] = [
-  { id: "hobby", name: "Hobby", priceUsd: 0, cadence: "free", description: "本機基礎功能與安全沙盒。" },
-  { id: "trial", name: "Beta Trial", priceUsd: 0, cadence: "free", description: "7 天或 30 次本機試用，不需信用卡。" },
-  { id: "pro-monthly", name: "Pro Monthly", priceUsd: 19, cadence: "monthly", description: "個人完整桌面 Agent，每月訂閱。" },
-  { id: "pro-yearly", name: "Pro Yearly", priceUsd: 190, cadence: "yearly", description: "個人完整桌面 Agent，年繳優惠。" },
-  { id: "lifetime-local", name: "Lifetime Local", priceUsd: 249, cadence: "one-time", description: "永久本機 Pro，含 12 個月支援更新。" },
-  { id: "team", name: "Team", priceUsd: 40, cadence: "monthly", description: "多人協作與座席管理，按人計費。" },
-  { id: "enterprise", name: "Enterprise", priceUsd: 50000, cadence: "contract", description: "企業合約、稽核與私有部署支援。" },
-  { id: "byok-managed", name: "BYOK Managed", priceUsd: 30, cadence: "monthly", description: "自帶金鑰的受管執行個體。" },
+  { id: "trial", name: "Free Trial", priceUsd: 0, cadence: "free", description: "7 天或 30 次本機試用，不需信用卡。" },
+  { id: "pro-yearly", name: "Pro Yearly", priceUsd: 79, cadence: "yearly", description: "個人完整桌面 Agent，年繳方案。" },
+  { id: "lifetime-local", name: "Lifetime", priceUsd: 99, cadence: "one-time", description: "永久本機 Pro，含 12 個月支援更新。" },
 ];
 
 export const betaPricingPlans: PricingPlan[] = [
-  { id: "trial", name: "Beta Trial", priceUsd: 0, cadence: "free", description: "7 天或 30 次本機啟動/對話測試。" },
-  { id: "pro-yearly", name: "Early Pro Yearly", priceUsd: 79, cadence: "yearly", description: "早期 Windows direct-download Beta 主力方案。" },
-  { id: "lifetime-local", name: "Early Lifetime", priceUsd: 99, cadence: "one-time", description: "買斷含 12 個月更新維護；早鳥可降至 USD 69。" },
+  { id: "trial", name: "Free Trial", priceUsd: 0, cadence: "free", description: "7 天或 30 次本機啟動/對話測試。" },
+  { id: "pro-yearly", name: "Pro Yearly", priceUsd: 79, cadence: "yearly", description: "Windows direct-download Beta 主力方案。" },
+  { id: "lifetime-local", name: "Lifetime", priceUsd: 99, cadence: "one-time", description: "買斷含 12 個月更新維護。" },
 ];
-
-export function normalizeKeygenKey(input: string): string {
-  return input.trim().toUpperCase().replace(/\s+/g, "-");
-}
 
 export function normalizeLemonLicenseKey(input: string): string {
   return input.trim().replace(/\s+/g, "-");
-}
-
-export function isMockKeygenKey(input: string): boolean {
-  return /^CLWD-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(normalizeKeygenKey(input));
 }
 
 export function isMockLemonLicenseKey(input: string): boolean {
@@ -197,67 +184,6 @@ export function downgradeEntitlementToSafeMode(reason: string, now = new Date().
   };
 }
 
-export function createMockLicensePayload(encodedKey: string, now = new Date().toISOString()): EncryptedLicenseKey {
-  const normalized = normalizeKeygenKey(encodedKey);
-  const plan: LicensePlan = normalized.includes("LIFE") ? "lifetime-local" : normalized.includes("TEAM") ? "team" : "pro-yearly";
-  const supportUpdatesUntil = plan === "lifetime-local" ? "2027-05-12" : "2027-05-12";
-  return {
-    keyId: `kg_${normalized.slice(5, 10).toLowerCase()}`,
-    encodedKey: normalized,
-    signatureStatus: isMockKeygenKey(normalized) ? "valid" : "invalid",
-    payloadHash: `sha256:${normalized.slice(-5).toLowerCase()}-${plan}`,
-    plan,
-    status: normalized.includes("REVOK") ? "revoked" : isMockKeygenKey(normalized) ? "active" : "tampered",
-    supportUpdatesUntil,
-    expiresAt: plan === "lifetime-local" ? undefined : "2027-05-12",
-    deviceLimit: plan === "team" ? 10 : 3,
-  };
-}
-
-export function activateMockLicense(
-  encodedKey: string,
-  fingerprint: MachineFingerprint,
-  existingMachines: MachineActivation[] = [],
-  now = new Date().toISOString(),
-): LicenseStatus {
-  const payload = createMockLicensePayload(encodedKey, now);
-
-  if (payload.signatureStatus !== "valid" || payload.status === "revoked") {
-    return createFreeStatus(payload.status === "revoked" ? "KEYGEN_REVOKED" : "KEYGEN_INVALID_SIGNATURE");
-  }
-
-  const activeMachines = existingMachines.filter((machine) => !machine.revokedAt);
-  const alreadyActive = activeMachines.some((machine) => machine.fingerprintHash === fingerprint.fingerprintHash);
-  if (!alreadyActive && activeMachines.length >= payload.deviceLimit) {
-    return createFreeStatus("KEYGEN_MACHINE_LIMIT_EXCEEDED");
-  }
-
-  const machine: MachineActivation = {
-    machineId: `win_${fingerprint.fingerprintHash.slice(-8)}`,
-    fingerprintHash: fingerprint.fingerprintHash,
-    deviceName: "Windows 11 x64 workstation",
-    platform: "Windows x64 MSVC",
-    activatedAt: now,
-    lastSeenAt: now,
-  };
-
-  const machines = alreadyActive ? existingMachines : [...existingMachines, machine];
-  return {
-    paymentProvider: "paddle",
-    licenseProvider: "keygen",
-    plan: payload.plan,
-    status: "active",
-    seats: payload.plan === "team" ? 10 : 1,
-    supportUpdatesUntil: payload.supportUpdatesUntil,
-    eligibleLatestVersion: "1.4.0",
-    offlineGraceUntil: "2026-06-11",
-    features: ["pro-agent", "local-memory", "workflow-builder", "mcp-connectors", "diagnostics"],
-    deviceLimit: payload.deviceLimit,
-    machines,
-    lastValidationCode: "KEYGEN_VALID",
-  };
-}
-
 export function activateMockLemonLicense(
   encodedKey: string,
   fingerprint: MachineFingerprint,
@@ -301,8 +227,8 @@ export function activateMockLemonLicense(
 
 export function createFreeStatus(validationCode = "HOBBY_MODE"): LicenseStatus {
   return {
-    paymentProvider: "paddle",
-    licenseProvider: "keygen",
+    paymentProvider: "lemon-squeezy",
+    licenseProvider: "lemon-license",
     plan: "hobby",
     status: validationCode.includes("TAMPER") ? "tampered" : validationCode.includes("REVOK") ? "revoked" : "free",
     seats: 1,
@@ -325,7 +251,7 @@ export function detectLicenseTamper(original: EncryptedLicenseKey, candidate: En
     reason: `受保護授權欄位被修改：${changedField}`,
     detectedAt: now,
     localAction: "downgrade-to-hobby",
-    serverAction: "report-to-keygen",
+    serverAction: "report-to-lemon",
     faultCode: "CLWD-LIC-1001",
   };
 }

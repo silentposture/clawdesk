@@ -1,16 +1,16 @@
 import { describe, expect, it } from "vitest";
 import {
-  openClawRuntimeContract,
+  compatRuntimeContract,
   resolveRuntimeAuthPlan,
   runtimeReadinessSummary,
-} from "./openclawRuntime";
+} from "./compatRuntime";
 
-describe("OpenClaw Windows runtime adapter contract", () => {
+describe("Compatible Windows runtime adapter contract", () => {
   it("tracks executable runtime surfaces against the upstream commit", () => {
-    expect(openClawRuntimeContract.upstream.commit).toHaveLength(40);
-    expect(openClawRuntimeContract.target).toContain("Windows");
-    expect(openClawRuntimeContract.eventTypes).toContain("permission.request");
-    expect(openClawRuntimeContract.surfaces.length).toBeGreaterThanOrEqual(8);
+    expect(compatRuntimeContract.upstream.commit).toHaveLength(40);
+    expect(compatRuntimeContract.target).toContain("Windows");
+    expect(compatRuntimeContract.eventTypes).toContain("permission.request");
+    expect(compatRuntimeContract.surfaces.length).toBeGreaterThanOrEqual(8);
   });
 
   it("summarizes contract-compatible, mock-backed, and deferred surfaces", () => {
@@ -25,12 +25,14 @@ describe("OpenClaw Windows runtime adapter contract", () => {
       authMode: "api-key",
       endpoint: "/auth/openai-api-key",
       credentialPolicy: "masked-in-memory",
+      secretRefPolicy: "gateway-secret-ref",
       canUseNow: true,
     });
     expect(resolveRuntimeAuthPlan("openai-codex")).toMatchObject({
       authMode: "oauth",
       endpoint: "/auth/openai-codex/oauth-login",
       credentialPolicy: "account-token-stub",
+      secretRefPolicy: "gateway-secret-ref",
       canUseNow: true,
     });
   });

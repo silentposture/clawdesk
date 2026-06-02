@@ -20,8 +20,7 @@ export interface ReleaseReadinessSummary {
 export interface ReleaseReadinessInput {
   legalManifestCurrent: boolean;
   hasProductionGateway: boolean;
-  hasPaddleCredentials: boolean;
-  hasKeygenCredentials: boolean;
+  hasLemonCredentials: boolean;
   hasSsoCredentials: boolean;
   hasWindowsSigningEnv: boolean;
   hasTrustedSigningEnv: boolean;
@@ -32,6 +31,7 @@ export interface ReleaseReadinessInput {
   hasGuardedProductionScripts: boolean;
   hasMockResourcesInProduction: boolean;
   hasInstallerArtifact: boolean;
+  betaDirect?: boolean;
   strictProduction?: boolean;
   storeReadiness?: boolean;
   macosReadiness?: boolean;
@@ -40,8 +40,7 @@ export interface ReleaseReadinessInput {
 export const defaultMockCandidateReadiness: ReleaseReadinessInput = {
   legalManifestCurrent: true,
   hasProductionGateway: false,
-  hasPaddleCredentials: false,
-  hasKeygenCredentials: false,
+  hasLemonCredentials: false,
   hasSsoCredentials: false,
   hasWindowsSigningEnv: false,
   hasTrustedSigningEnv: false,
@@ -57,7 +56,7 @@ export const defaultMockCandidateReadiness: ReleaseReadinessInput = {
 
 function blockedWhenStrict(input: ReleaseReadinessInput, condition: boolean): ReleaseReadinessStatus {
   if (condition) return "ready";
-  return input.strictProduction ? "blocked" : "warning";
+  return input.strictProduction || input.betaDirect ? "blocked" : "warning";
 }
 
 function blockedForTarget(enabled: boolean | undefined, condition: boolean): ReleaseReadinessStatus {
@@ -104,22 +103,13 @@ export function buildReleaseReadinessMatrix(input: ReleaseReadinessInput): Relea
       nextAction: "執行 npm run sbom。",
     },
     {
-      id: "paddle",
+      id: "lemon-squeezy",
       category: "payment",
-      label: "Paddle 金流環境",
-      status: blockedWhenStrict(input, input.hasPaddleCredentials),
-      current: input.hasPaddleCredentials ? "已設定 production credentials" : "目前僅 mock",
-      required: "正式版需 PADDLE_API_KEY 與 PADDLE_WEBHOOK_SECRET。",
-      nextAction: "在正式後端環境設定 Paddle credential，桌面端不得保存信用卡資料。",
-    },
-    {
-      id: "keygen",
-      category: "licensing",
-      label: "Keygen 授權環境",
-      status: blockedWhenStrict(input, input.hasKeygenCredentials),
-      current: input.hasKeygenCredentials ? "已設定 Keygen account/product/signing" : "目前僅 mock",
-      required: "正式版需 KEYGEN_ACCOUNT_ID、KEYGEN_PRODUCT_ID、KEYGEN_SIGNING_PUBLIC_KEY。",
-      nextAction: "建立 Keygen product/policy，接上 license validation 與 offline ticket。",
+      label: "Lemon Squeezy 金流與授權",
+      status: blockedWhenStrict(input, input.hasLemonCredentials),
+      current: input.hasLemonCredentials ? "已設定 Lemon Squeezy production credentials" : "目前僅 mock",
+      required: "正式版唯一付款/授權供應商為 Lemon Squeezy，需 webhook secret、store id、product id 與 variant id。",
+      nextAction: "完成 Lemon Squeezy seller onboarding，設定 LEMON_SQUEEZY_*，桌面端不得保存信用卡資料。",
     },
     {
       id: "sso",
@@ -134,7 +124,7 @@ export function buildReleaseReadinessMatrix(input: ReleaseReadinessInput): Relea
       id: "windows-signing-env",
       category: "windows",
       label: "Windows 簽章環境",
-      status: blockedForTarget(input.strictProduction || input.storeReadiness, input.hasWindowsSigningEnv || input.hasTrustedSigningEnv),
+      status: blockedForTarget(input.strictProduction || input.storeReadiness || input.betaDirect, input.hasWindowsSigningEnv || input.hasTrustedSigningEnv),
       current: input.hasTrustedSigningEnv ? "已設定 Trusted Signing env" : input.hasWindowsSigningEnv ? "已設定 Windows signing credential" : "尚未設定",
       required: "正式 Windows installer / Microsoft Store candidate 需要受信任簽章。",
       nextAction: "設定 WINDOWS_SIGNING_* 或 AZURE_TRUSTED_SIGNING_*。",

@@ -2,6 +2,7 @@ import { Bug, Download, Send, ShieldCheck, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import { createDiagnosticReport, type DiagnosticReport } from "../lib/diagnostics";
 import type { LegalConsentRecord } from "../lib/legalConsent";
+import { useI18n } from "../lib/i18n";
 import { Tooltip } from "./Tooltip";
 
 interface DiagnosticsPanelProps {
@@ -11,24 +12,25 @@ interface DiagnosticsPanelProps {
 }
 
 export function DiagnosticsPanel({ gatewayBaseUrl, legalConsent, onClose }: DiagnosticsPanelProps): JSX.Element {
+  const { t } = useI18n();
   const [checklist, setChecklist] = useState<string[]>([]);
   const [report, setReport] = useState<DiagnosticReport>();
   const [description, setDescription] = useState("");
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const fallbackChecklist = [
-    "不含 Email",
-    "不含完整路徑",
-    "不含完整金鑰",
-    "不含 API key",
-    "不含聊天內容",
-    "不含螢幕截圖",
+    t("diagnostics.noEmail"),
+    t("diagnostics.noFullPath"),
+    t("diagnostics.noFullKey"),
+    t("diagnostics.noApiKey"),
+    t("diagnostics.noChat"),
+    t("diagnostics.noScreenshot"),
   ];
   const releaseStatus = [
-    { label: "Release channel", value: "beta-direct Windows x64 NSIS" },
-    { label: "Installer signature", value: "signtool / release guard 驗證" },
-    { label: "Gateway", value: gatewayBaseUrl ? "connected" : "offline fallback" },
-    { label: "Payment/license", value: "Lemon Squeezy hosted checkout + license key" },
+    { label: t("diagnostics.releaseChannel"), value: "beta-direct Windows x64 NSIS" },
+    { label: t("diagnostics.installerSignature"), value: t("diagnostics.signatureValue") },
+    { label: t("diagnostics.gateway"), value: gatewayBaseUrl ? t("diagnostics.connected") : t("diagnostics.offlineFallback") },
+    { label: t("diagnostics.paymentLicense"), value: t("diagnostics.paymentValue") },
   ];
 
   useEffect(() => {
@@ -65,7 +67,7 @@ export function DiagnosticsPanel({ gatewayBaseUrl, legalConsent, onClose }: Diag
         faultCode: "CLWD-GW-2001",
         recentErrors: ["Gateway diagnostics summary unavailable"],
       })));
-      setError("無法讀取 Gateway 診斷摘要，已改用本機去識別化摘要。");
+      setError(t("diagnostics.gatewayFallback"));
     }
   }
 
@@ -83,10 +85,10 @@ export function DiagnosticsPanel({ gatewayBaseUrl, legalConsent, onClose }: Diag
       });
       const payload = (await response.json()) as { report?: DiagnosticReport; error?: string };
       if (!response.ok || !payload?.report) {
-        throw new Error(payload?.error || "產生診斷包失敗");
+        throw new Error(payload?.error || t("diagnostics.createFailed"));
       }
       setReport(payload.report);
-      setMessage("診斷包已在本機產生，尚未上傳。");
+      setMessage(t("diagnostics.created"));
       setError(undefined);
     } catch (error) {
       setReport(attachLegalConsentSummary(createDiagnosticReport({
@@ -95,7 +97,7 @@ export function DiagnosticsPanel({ gatewayBaseUrl, legalConsent, onClose }: Diag
         legalConsentSummary: legalConsentSummary(),
         userDescription: description,
       })));
-      setMessage("Gateway 暫時無法回應，已改用本機產生診斷包，尚未上傳。");
+      setMessage(t("diagnostics.gatewayLocal"));
       setError(undefined);
     }
   }
@@ -107,7 +109,7 @@ export function DiagnosticsPanel({ gatewayBaseUrl, legalConsent, onClose }: Diag
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ report }),
     });
-    if (response.ok) setMessage("已模擬送出故障回報。正式版仍會在送出前要求使用者確認。");
+    if (response.ok) setMessage(t("diagnostics.submitted"));
   }
 
   function exportForSupport() {
@@ -121,7 +123,7 @@ export function DiagnosticsPanel({ gatewayBaseUrl, legalConsent, onClose }: Diag
     anchor.click();
     anchor.remove();
     URL.revokeObjectURL(url);
-    setMessage("已匯出客服診斷包；內容仍維持去識別化。");
+    setMessage(t("diagnostics.exported"));
   }
 
   return (
@@ -129,45 +131,45 @@ export function DiagnosticsPanel({ gatewayBaseUrl, legalConsent, onClose }: Diag
       <section className="diagnostics-panel" role="dialog" aria-modal="true" aria-labelledby="diagnostics-title">
         <header className="provider-header">
           <div>
-            <h2 id="diagnostics-title">故障回報</h2>
-            <p>自動整理非個資診斷摘要，但不自動上傳；使用者確認後才送出或匯出。</p>
+            <h2 id="diagnostics-title">{t("diagnostics.title")}</h2>
+            <p>{t("diagnostics.subtitle")}</p>
           </div>
-          <button className="icon-button" type="button" aria-label="關閉" onClick={onClose}>
+          <button className="icon-button" type="button" aria-label={t("common.close")} onClick={onClose}>
             <X size={18} />
           </button>
         </header>
         <div className="commercial-grid">
           <section className="commercial-card">
             <Bug size={23} />
-            <h3>問題描述</h3>
-            <textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder="簡單描述發生什麼事，請勿貼密碼、金鑰或個人資料。" />
+            <h3>{t("diagnostics.problem")}</h3>
+            <textarea value={description} onChange={(event) => setDescription(event.target.value)} placeholder={t("diagnostics.placeholder")} />
             <div className="panel-actions">
-              <Tooltip text="只在本機建立診斷包，內容會先去識別化。">
+              <Tooltip text={t("diagnostics.createTooltip")}>
                 <button className="primary-button" type="button" onClick={createReport}>
-                  產生診斷包
+                  {t("diagnostics.create")}
                 </button>
               </Tooltip>
               <button className="secondary-button" type="button" disabled={!report} onClick={submitReport}>
                 <Send size={16} />
-                手動送出
+                {t("diagnostics.submit")}
               </button>
               <button className="secondary-button" type="button" disabled={!report} onClick={exportForSupport}>
                 <Download size={16} />
-                匯出給客服
+                {t("diagnostics.exportSupport")}
               </button>
             </div>
             {report ? <pre className="diagnostic-preview">{JSON.stringify(report, null, 2)}</pre> : null}
           </section>
           <section className="commercial-card">
             <ShieldCheck size={23} />
-            <h3>隱私檢查清單</h3>
+            <h3>{t("diagnostics.privacy")}</h3>
             <ul>
               {checklist.map((item) => <li key={item}>{item}</li>)}
             </ul>
           </section>
           <section className="commercial-card">
             <ShieldCheck size={23} />
-            <h3>Beta 發佈狀態</h3>
+            <h3>{t("diagnostics.betaStatus")}</h3>
             <dl className="status-list">
               {releaseStatus.map((item) => (
                 <div key={item.label}><dt>{item.label}</dt><dd>{item.value}</dd></div>

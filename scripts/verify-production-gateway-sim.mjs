@@ -3,6 +3,7 @@ import { randomUUID } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
+import { createCheckRecorder, summarizeChecks } from "./lib/verify-report.mjs";
 
 const backendPort = Number(process.env.CLAWDESK_PROD_SIM_BACKEND_PORT ?? 19120);
 const gatewayPort = Number(process.env.CLAWDESK_PROD_SIM_GATEWAY_PORT ?? 19130);
@@ -11,33 +12,14 @@ const gatewayUrl = `http://127.0.0.1:${gatewayPort}`;
 const gatewayWsUrl = `ws://127.0.0.1:${gatewayPort}/events`;
 const reportDir = path.join(process.cwd(), "artifacts", "production-gateway-sim");
 const reportFile = path.join(reportDir, `${new Date().toISOString().replace(/[:.]/g, "_")}-report.json`);
-const checks = [];
-
-function pass(name, details) {
-  checks.push({ name, ok: true, details });
-  console.log(`PASS ${name}`);
-}
-
-function fail(name, error) {
-  const message = error instanceof Error ? error.message : String(error);
-  checks.push({ name, ok: false, error: message });
-  console.log(`FAIL ${name}: ${message}`);
-}
-
-async function check(name, fn) {
-  try {
-    const details = await fn();
-    pass(name, details);
-  } catch (error) {
-    fail(name, error);
-  }
-}
+const { checks, pass, fail, check } = createCheckRecorder();
 
 function spawnService(command, args, env = {}) {
   const child = spawn(command, args, {
     cwd: process.cwd(),
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: process.platform === "win32",
   });
   child.stderr.on("data", (chunk) => process.stderr.write(chunk));
   return child;
@@ -121,8 +103,8 @@ async function pidsFor(pattern) {
     const result = spawn("powershell.exe", [
       "-NoProfile",
       "-Command",
-      `Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -match '${escaped}' } | Select-Object -ExpandProperty ProcessId`,
-    ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "ignore"] });
+      `Get-CimInstance Win32_Process | Where-Object { $_.ProcessId -ne $PID -and $_.CommandLine -match '${escaped}' } | Select-Object -ExpandProperty ProcessId`,
+    ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "ignore"], windowsHide: true });
     let stdout = "";
     result.stdout.on("data", (chunk) => {
       stdout += chunk.toString();
@@ -131,7 +113,7 @@ async function pidsFor(pattern) {
     return stdout.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
   }
 
-  const result = spawn("pgrep", ["-f", pattern], { cwd: process.cwd(), stdio: ["ignore", "pipe", "ignore"] });
+  const result = spawn("pgrep", ["-f", pattern], { cwd: process.cwd(), stdio: ["ignore", "pipe", "ignore"], windowsHide: process.platform === "win32" });
   let stdout = "";
   result.stdout.on("data", (chunk) => {
     stdout += chunk.toString();
@@ -140,9 +122,31 @@ async function pidsFor(pattern) {
   return stdout.split("\n").map((line) => line.trim()).filter(Boolean);
 }
 
+async function killPids(pids) {
+  if (pids.length === 0) return;
+  if (process.platform === "win32") {
+    for (const pid of pids) {
+      spawn("powershell.exe", ["-NoProfile", "-Command", `Stop-Process -Id ${Number(pid)} -Force -ErrorAction SilentlyContinue`], {
+        cwd: process.cwd(),
+        stdio: ["ignore", "ignore", "ignore"],
+        windowsHide: true,
+      });
+    }
+    await delay(250);
+    return;
+  }
+  for (const pid of pids) {
+    spawn("kill", ["-9", pid], { cwd: process.cwd(), stdio: ["ignore", "ignore", "ignore"], windowsHide: process.platform === "win32" });
+  }
+  await delay(150);
+}
+
 let backend;
 let gateway;
 try {
+  const staleSidecarPids = await pidsFor("sidecars/mock-gateway/server.mjs");
+  await killPids(staleSidecarPids.filter((pid) => pid !== String(process.pid)));
+
   const stateDir = path.join(process.cwd(), ".clawdesk-local-stack");
   await fs.mkdir(stateDir, { recursive: true });
   backend = spawnService(process.execPath, ["backend/server.mjs"], {
@@ -166,16 +170,26 @@ try {
     if (health.payload.sidecar !== false) throw new Error("gateway must not be sidecar");
     if (JSON.stringify(health.payload).includes("clawdesk-mock-gateway")) throw new Error("health leaked mock gateway identity");
     return health.payload;
-  });
+  }, "mixed");
 
   await check("production Gateway contract exposes desktop streaming surface", async () => {
     const contract = await request(gatewayUrl, "/contract");
     if (!contract.ok) throw new Error(`contract ${contract.status}`);
     const keys = new Set(contract.payload.endpoints.map((endpoint) => `${endpoint.method}:${endpoint.path}`));
-    for (const key of ["GET:/events", "POST:/chat", "POST:/permission-result", "GET:/identity/session", "POST:/license/activate-key"]) {
+    for (const key of [
+      "GET:/events",
+      "POST:/chat",
+      "POST:/permission-result",
+      "GET:/identity/session",
+      "POST:/license/activate-key",
+      "POST:/provider/secret-ref/issue",
+      "POST:/provider/token-refresh",
+      "GET:/provider/openai/runtime-contract",
+      "POST:/provider/openai/chat-test",
+    ]) {
       if (!keys.has(key)) throw new Error(`missing ${key}`);
     }
-  });
+  }, "mixed");
 
   const email = `prod-sim-${randomUUID().slice(0, 8)}@example.com`;
   const password = "Password123!";
@@ -193,19 +207,55 @@ try {
     if (!login.ok || !login.payload.authenticated) throw new Error("login failed");
     const session = await request(gatewayUrl, "/identity/session");
     if (!session.ok || session.payload.email !== email) throw new Error("session failed");
-  });
+  }, "legacy");
 
-  await check("Keygen/Paddle license bridge activates through production Gateway", async () => {
+  await check("Lemon Squeezy license bridge activates through production Gateway", async () => {
     const fp = await request(gatewayUrl, "/machine/fingerprint");
     if (!fp.ok || !fp.payload.fingerprintHash) throw new Error("fingerprint missing");
     const activated = await request(gatewayUrl, "/license/activate-key", {
       method: "POST",
-      body: { licenseKey: "CLWD-PRO-YEARLY-2026-DEV" },
+      body: { licenseKey: "CLWD-BETA-PRO1-2026" },
     });
     if (!activated.ok || activated.payload.status.status !== "active") throw new Error("activation failed");
     const status = await request(gatewayUrl, "/license/status");
-    if (!status.ok || status.payload.status.licenseProvider !== "keygen") throw new Error("license status failed");
-  });
+    if (!status.ok || status.payload.status.licenseProvider !== "lemon-license") throw new Error("license status failed");
+  }, "legacy");
+
+  await check("provider SecretRef and token refresh bridge through production Gateway", async () => {
+    const contract = await request(gatewayUrl, "/provider/secret-ref/contract");
+    if (!contract.ok || contract.payload.rawSecretResponse !== false) throw new Error("secret ref contract failed");
+    const issued = await request(gatewayUrl, "/provider/secret-ref/issue", {
+      method: "POST",
+      body: {
+        providerId: "openai-codex",
+        authMode: "oauth",
+        accountEmail: "prod-codex@example.com",
+        model: "gpt-5.3-codex",
+      },
+    });
+    if (!issued.ok || !issued.payload.secretRef?.startsWith("psr_")) throw new Error("secret ref issue failed");
+    if (JSON.stringify(issued.payload).includes("prod-codex@example.com")) throw new Error("secret ref leaked account email");
+    const refreshed = await request(gatewayUrl, "/provider/token-refresh", {
+      method: "POST",
+      body: { providerId: "openai-codex", secretRef: issued.payload.secretRef },
+    });
+    if (!refreshed.ok || refreshed.payload.status !== "refreshed") throw new Error("token refresh failed");
+    if (!refreshed.payload.accessTokenRef?.startsWith("ptr_")) throw new Error("token reference missing");
+
+    const runtimeContract = await request(gatewayUrl, "/provider/openai/runtime-contract");
+    if (!runtimeContract.ok || runtimeContract.payload.apiStyle !== "responses-api") throw new Error("OpenAI runtime contract failed");
+    const runtimeChat = await request(gatewayUrl, "/provider/openai/chat-test", {
+      method: "POST",
+      body: {
+        providerId: "openai-api",
+        apiKey: "sk-test-1234567890",
+        model: "gpt-5.2",
+        prompt: "ClawDesk production gateway runtime probe",
+      },
+    });
+    if (!runtimeChat.ok || runtimeChat.payload.status !== "dry-run") throw new Error("OpenAI runtime dry-run failed");
+    if (JSON.stringify(runtimeChat.payload).includes("sk-test-1234567890")) throw new Error("OpenAI runtime leaked raw key");
+  }, "mixed");
 
   await check("WebSocket stream and permission roundtrip use production Gateway", async () => {
     const events = await collectEvents("驗證 production Gateway simulator");
@@ -213,7 +263,7 @@ try {
     if (!types.has("gateway.status") || !types.has("agent.message.done") || !types.has("canvas.patch")) {
       throw new Error("required stream events missing");
     }
-  });
+  }, "mixed");
 
   await check("production simulation does not launch desktop mock sidecar", async () => {
     const sidecarPids = await pidsFor("sidecars/mock-gateway/server.mjs");
@@ -221,10 +271,11 @@ try {
     const filtered = sidecarPids.filter((pid) => pid !== ownPid);
     if (filtered.length > 0) throw new Error(`mock sidecar running: ${filtered.join(",")}`);
     return { sidecarPids: filtered };
-  });
+  }, "mixed");
 } finally {
   await stop(gateway);
   await stop(backend);
+  const counts = summarizeChecks(checks);
   const report = {
     service: "verify-production-gateway-sim",
     createdAt: new Date().toISOString(),
@@ -232,7 +283,8 @@ try {
     backendUrl,
     result: checks.every((check) => check.ok) ? "PASS" : "FAIL",
     checks,
-    counts: { total: checks.length, failed: checks.filter((check) => !check.ok).length },
+    counts: { total: counts.total, failed: counts.failed },
+    surfaces: counts.surfaces,
   };
   await fs.mkdir(reportDir, { recursive: true });
   await fs.writeFile(reportFile, `${JSON.stringify(report, null, 2)}\n`, "utf8");

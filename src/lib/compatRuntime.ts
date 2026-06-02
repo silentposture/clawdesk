@@ -1,9 +1,9 @@
 import { gatewayEventTypes } from "./events";
-import { llmProviderCatalog, openClawUpstreamSnapshot, type ProviderId } from "./providers";
+import { compatUpstreamSnapshot, llmProviderCatalog, type ProviderId } from "./providers";
 
 export type RuntimeImplementationStatus = "contract-compatible" | "mock-backed" | "deferred";
 
-export interface OpenClawRuntimeSurface {
+export interface CompatRuntimeSurface {
   id: string;
   upstreamPaths: string[];
   status: RuntimeImplementationStatus;
@@ -17,17 +17,18 @@ export interface RuntimeAuthPlan {
   authMode: "api-key" | "oauth" | "local-endpoint" | "mock";
   endpoint: string;
   credentialPolicy: "masked-in-memory" | "account-token-stub" | "loopback-only" | "no-secret";
+  secretRefPolicy: "local-dpapi" | "gateway-secret-ref" | "none";
   upstreamSource: string;
   canUseNow: boolean;
 }
 
-export const openClawRuntimeSurfaces: OpenClawRuntimeSurface[] = [
+export const compatRuntimeSurfaces: CompatRuntimeSurface[] = [
   {
     id: "provider-auth",
     upstreamPaths: ["src/agents/model-auth.ts", "src/agents/model-auth-env.ts", "src/agents/auth-profiles/*"],
     status: "contract-compatible",
-    windowsAdapter: "Provider auth plans map OpenClaw API key, OAuth, local endpoint, and mock modes to desktop-safe endpoints. Tauri desktop stores provider secrets with Windows DPAPI.",
-    remainingWork: "Replace OAuth account stubs with real token refresh and optional Windows Credential Manager integration.",
+    windowsAdapter: "Provider auth plans map API key, OAuth, local endpoint, and mock modes to desktop-safe endpoints. Tauri desktop stores provider secrets in a DPAPI-protected credential vault and exposes masked summaries only. OpenAI API key mode now has a Responses API validation/chat-test runtime contract.",
+    remainingWork: "Replace OAuth account stubs with real token refresh and, if required for enterprise policy, migrate the DPAPI vault to native Windows Credential Manager APIs.",
   },
   {
     id: "provider-catalog",
@@ -47,7 +48,7 @@ export const openClawRuntimeSurfaces: OpenClawRuntimeSurface[] = [
     id: "agent-session-runtime",
     upstreamPaths: ["src/agents/*", "src/gateway/agent-*.ts", "src/gateway/chat-*.ts"],
     status: "mock-backed",
-    windowsAdapter: "Session and agent UX use deterministic local mock flows for Windows Beta validation.",
+    windowsAdapter: "Session and agent UX use deterministic local mock flows for Windows Beta validation; OpenAI API provider exposes a minimal live-capable Responses API probe before full agent loop migration.",
     remainingWork: "Embed or launch upstream runner with Windows process supervision and cancellation.",
   },
   {
@@ -62,7 +63,7 @@ export const openClawRuntimeSurfaces: OpenClawRuntimeSurface[] = [
     upstreamPaths: ["src/config/*", "src/commands/*"],
     status: "contract-compatible",
     windowsAdapter: "Guided settings and release config are mapped to Windows-first profile sections.",
-    remainingWork: "Add import/export compatibility with upstream OpenClaw config files.",
+    remainingWork: "Add import/export compatibility with upstream config files.",
   },
   {
     id: "memory-workflows",
@@ -80,16 +81,16 @@ export const openClawRuntimeSurfaces: OpenClawRuntimeSurface[] = [
   },
 ];
 
-export const openClawRuntimeContract = {
-  upstream: openClawUpstreamSnapshot,
+export const compatRuntimeContract = {
+  upstream: compatUpstreamSnapshot,
   adapterMode: "windows-sidecar-contract",
   target: "Windows 11 x64 MSVC",
   eventTypes: [...gatewayEventTypes],
-  surfaces: openClawRuntimeSurfaces,
+  surfaces: compatRuntimeSurfaces,
 } as const;
 
 export function runtimeReadinessSummary() {
-  return openClawRuntimeSurfaces.reduce<Record<RuntimeImplementationStatus, number>>(
+  return compatRuntimeSurfaces.reduce<Record<RuntimeImplementationStatus, number>>(
     (summary, surface) => {
       summary[surface.status] += 1;
       return summary;
@@ -111,6 +112,7 @@ export function resolveRuntimeAuthPlan(providerId: ProviderId): RuntimeAuthPlan 
       authMode: provider.authMode,
       endpoint: provider.id === "chatgpt-pro" ? "/auth/chatgpt-pro/oauth-login" : "/auth/openai-codex/oauth-login",
       credentialPolicy: "account-token-stub",
+      secretRefPolicy: "gateway-secret-ref",
       upstreamSource: provider.upstreamSource ?? "src/agents/model-auth.ts",
       canUseNow: true,
     };
@@ -123,6 +125,7 @@ export function resolveRuntimeAuthPlan(providerId: ProviderId): RuntimeAuthPlan 
       authMode: provider.authMode,
       endpoint: "/auth/local-model",
       credentialPolicy: "loopback-only",
+      secretRefPolicy: "local-dpapi",
       upstreamSource: provider.upstreamSource ?? "src/agents/models-config.providers.*",
       canUseNow: true,
     };
@@ -135,6 +138,7 @@ export function resolveRuntimeAuthPlan(providerId: ProviderId): RuntimeAuthPlan 
       authMode: provider.authMode,
       endpoint: "/auth/mock",
       credentialPolicy: "no-secret",
+      secretRefPolicy: "none",
       upstreamSource: "sidecars/mock-gateway/server.mjs",
       canUseNow: true,
     };
@@ -146,6 +150,7 @@ export function resolveRuntimeAuthPlan(providerId: ProviderId): RuntimeAuthPlan 
     authMode: provider.authMode,
     endpoint: provider.id === "openai" || provider.id === "openai-api" ? "/auth/openai-api-key" : "/auth/provider",
     credentialPolicy: "masked-in-memory",
+    secretRefPolicy: "gateway-secret-ref",
     upstreamSource: provider.upstreamSource ?? "src/agents/model-auth-env.ts",
     canUseNow: true,
   };

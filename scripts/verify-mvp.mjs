@@ -1,7 +1,7 @@
 import { spawn } from "node:child_process";
 import { once } from "node:events";
 
-const port = Number(process.env.OPENCLAW_VERIFY_PORT ?? 18890);
+const port = Number(process.env.CLAWDESK_VERIFY_PORT ?? process.env.OPENCLAW_VERIFY_PORT ?? 18890);
 const baseUrl = `http://127.0.0.1:${port}`;
 const wsUrl = `ws://127.0.0.1:${port}/events`;
 const checks = [];
@@ -71,7 +71,7 @@ async function postJson(path, body = {}) {
   return { response, payload };
 }
 
-async function collectStreamEvents() {
+async function collectStreamEvents({ conversationId = "verify", prompt = "自動驗證串流、Canvas 與權限流程", requirePermission = true } = {}) {
   const ws = new WebSocket(wsUrl);
   const events = [];
   await new Promise((resolve, reject) => {
@@ -88,8 +88,8 @@ async function collectStreamEvents() {
   });
 
   const { response } = await postJson("/chat", {
-    conversationId: "verify",
-    prompt: "自動驗證串流、Canvas 與權限流程",
+    conversationId,
+    prompt,
   });
   if (response.status !== 202) throw new Error(`chat returned ${response.status}`);
 
@@ -98,8 +98,8 @@ async function collectStreamEvents() {
     const interval = setInterval(() => {
       const hasDone = events.some((event) => event.type === "agent.message.done");
       const hasCanvas = events.some((event) => event.type === "canvas.patch");
-      const permission = events.find((event) => event.type === "permission.request");
-      if (hasDone && hasCanvas && permission) {
+      const permission = events.some((event) => event.type === "permission.request");
+      if (hasDone && hasCanvas && (requirePermission ? permission : true)) {
         clearInterval(interval);
         clearTimeout(timer);
         resolve();
@@ -107,17 +107,26 @@ async function collectStreamEvents() {
     }, 50);
   });
 
-  const permission = events.find((event) => event.type === "permission.request");
-  const permissionResult = await postJson("/permission-result", {
-    type: "permission.result",
-    requestId: permission.requestId,
-    allowed: false,
-    reason: "自動測試拒絕高風險操作",
-  });
-  if (!permissionResult.response.ok) throw new Error("permission result was rejected");
+  if (requirePermission) {
+    const permission = events.find((event) => event.type === "permission.request");
+    const permissionResult = await postJson("/permission-result", {
+      type: "permission.result",
+      requestId: permission.requestId,
+      allowed: false,
+      reason: "自動測試拒絕高風險操作",
+    });
+    if (!permissionResult.response.ok) throw new Error("permission result was rejected");
+  }
 
   ws.close();
   return events;
+}
+
+function extractAgentText(events) {
+  return events
+    .filter((event) => event.type === "agent.message.delta")
+    .map((event) => event.delta)
+    .join("");
 }
 
 const child = spawn(process.execPath, ["sidecars/mock-gateway/server.mjs"], {
@@ -126,11 +135,13 @@ const child = spawn(process.execPath, ["sidecars/mock-gateway/server.mjs"], {
     ...process.env,
     CLAWDESK_IDENTITY_BACKEND_URL: "",
     CLAWDESK_MOCK_STATE_FILE: "",
+    CLAWDESK_MOCK_PORT: String(port),
     OPENCLAW_MOCK_PORT: String(port),
     NODE_ENV: "production",
     NODE_OPTIONS: "--max-old-space-size=128",
   },
   stdio: ["ignore", "pipe", "pipe"],
+  windowsHide: process.platform === "win32",
 });
 
 let bootOutput = "";
@@ -153,18 +164,18 @@ try {
     await waitForGatewayReadyWithReset();
   });
 
-  await check("Paddle + Keygen license activation, machine binding, and tamper handling", async () => {
+  await check("Lemon Squeezy license activation, machine binding, and tamper handling", async () => {
     const fingerprintResponse = await fetch(`${baseUrl}/machine/fingerprint`);
     const fingerprint = await fingerprintResponse.json();
     if (!fingerprintResponse.ok || fingerprint.platform !== "Windows") throw new Error("Windows fingerprint missing");
     if (!fingerprint.fingerprintHash.startsWith("mfp_salted")) throw new Error("fingerprint must be salted hash only");
 
     const activated = await postJson("/license/activate-key", {
-      licenseKey: "CLWD-PRO12-DEMO1-DEMO2-DEMO3",
+      licenseKey: "CLWD-BETA-PRO1-2026",
     });
     if (!activated.response.ok) throw new Error(`license activation rejected ${activated.response.status}`);
-    if (activated.payload.status.licenseProvider !== "keygen") throw new Error("license provider should be Keygen");
-    if (activated.payload.status.paymentProvider !== "paddle") throw new Error("payment provider should be Paddle");
+    if (activated.payload.status.licenseProvider !== "lemon-license") throw new Error("license provider should be Lemon license");
+    if (activated.payload.status.paymentProvider !== "lemon-squeezy") throw new Error("payment provider should be Lemon Squeezy");
     if (activated.payload.status.machines.length !== 1) throw new Error("machine binding missing");
 
     const refreshed = await postJson("/license/refresh-offline-ticket", {});
@@ -178,10 +189,10 @@ try {
     if (!reported.response.ok || reported.payload.event.faultCode !== "CLWD-LIC-1001") throw new Error("tamper report missing fault code");
   });
 
-  await check("Paddle mock webhook and update entitlement", async () => {
-    const paid = await postJson("/webhooks/paddle/mock", { eventType: "lifetime.purchased" });
-    if (!paid.response.ok) throw new Error("Paddle lifetime webhook rejected");
-    if (paid.payload.status.plan !== "lifetime-local") throw new Error("lifetime plan not mapped");
+  await check("Lemon Squeezy mock webhook and update entitlement", async () => {
+    const paid = await postJson("/webhooks/lemon/mock", { eventType: "license_key_created", licenseKey: "CLWD-BETA-PRO1-2026" });
+    if (!paid.response.ok) throw new Error("Lemon Squeezy license webhook rejected");
+    if (paid.payload.status.paymentProvider !== "lemon-squeezy") throw new Error("Lemon provider not mapped");
 
     const renewed = await postJson("/updates/mock-renew-support", {});
     if (!renewed.response.ok) throw new Error("support renewal rejected");
@@ -223,14 +234,14 @@ try {
         documentHash: "sha256-demo",
         documents: ["docs/legal/INSTALLER_TERMS.md", "docs/legal/OPENCLAW_MIT_NOTICE.md"],
       },
-      userDescription: "user@example.com C:\\Users\\demo\\private.txt CLWD-PRO12-DEMO1-DEMO2-DEMO3 sk-test1234567890 paddle_customer_abc",
+      userDescription: "user@example.com C:\\Users\\demo\\private.txt CLWD-BETA-PRO1-2026 sk-test1234567890 sk-ant-test123456789 gsk_test123456789 AIzaTest123456789 lemon_customer_abc",
     });
     if (!diagnostic.response.ok) throw new Error("diagnostic report rejected");
     if (diagnostic.payload.report.legalConsentSummary?.documentHash !== "sha256-demo") {
       throw new Error("diagnostic missing legal consent summary");
     }
     const serialized = JSON.stringify(diagnostic.payload.report);
-    for (const forbidden of ["user@example.com", "C:\\Users\\demo\\private.txt", "CLWD-PRO12-DEMO1-DEMO2-DEMO3", "sk-test1234567890", "paddle_customer_abc"]) {
+    for (const forbidden of ["user@example.com", "C:\\Users\\demo\\private.txt", "CLWD-BETA-PRO1-2026", "sk-test1234567890", "sk-ant-test123456789", "gsk_test123456789", "AIzaTest123456789", "lemon_customer_abc"]) {
       if (serialized.includes(forbidden)) throw new Error(`diagnostic leaked ${forbidden}`);
     }
   });
@@ -439,8 +450,8 @@ try {
     if (unsupported.response.ok) throw new Error("unknown provider should be rejected");
   });
 
-  await check("OpenClaw runtime adapter contract and auth plan endpoints", async () => {
-    const contractResponse = await fetch(`${baseUrl}/openclaw/runtime-contract`);
+  await check("compatible runtime adapter contract and auth plan endpoints", async () => {
+    const contractResponse = await fetch(`${baseUrl}/compat/runtime-contract`);
     const contract = await contractResponse.json();
     if (!contractResponse.ok) throw new Error("runtime contract endpoint failed");
     if (contract.adapterMode !== "windows-sidecar-contract") throw new Error("runtime adapter mode mismatch");
@@ -449,15 +460,82 @@ try {
       throw new Error("runtime summary should distinguish contract-compatible and mock-backed surfaces");
     }
 
-    const apiPlan = await postJson("/openclaw/runtime/auth-plan", { providerId: "openai-api" });
+    const apiPlan = await postJson("/compat/runtime/auth-plan", { providerId: "openai-api" });
     if (!apiPlan.response.ok) throw new Error("OpenAI API auth plan rejected");
     if (apiPlan.payload.endpoint !== "/auth/openai-api-key") throw new Error("OpenAI API auth endpoint mismatch");
     if (apiPlan.payload.credentialPolicy !== "masked-in-memory") throw new Error("OpenAI API credential policy mismatch");
+    if (apiPlan.payload.secretRefPolicy !== "gateway-secret-ref") throw new Error("OpenAI API SecretRef policy mismatch");
 
-    const accountPlan = await postJson("/openclaw/runtime/auth-plan", { providerId: "openai-codex" });
+    const accountPlan = await postJson("/compat/runtime/auth-plan", { providerId: "openai-codex" });
     if (!accountPlan.response.ok) throw new Error("OpenAI account auth plan rejected");
     if (accountPlan.payload.endpoint !== "/auth/openai-codex/oauth-login") throw new Error("OpenAI account endpoint mismatch");
     if (accountPlan.payload.credentialPolicy !== "account-token-stub") throw new Error("OpenAI account credential policy mismatch");
+    if (accountPlan.payload.secretRefPolicy !== "gateway-secret-ref") throw new Error("OpenAI account SecretRef policy mismatch");
+  });
+
+  await check("product comparison, coding workspace, context budget, and safety queue", async () => {
+    const comparisonResponse = await fetch(`${baseUrl}/product-comparison`);
+    const comparison = await comparisonResponse.json();
+    if (!comparisonResponse.ok || comparison.items.length < 7) throw new Error("product comparison endpoint failed");
+    if (!comparison.items.some((item) => item.claudeCode && item.openClaw && item.clawDesk)) {
+      throw new Error("comparison matrix missing product columns");
+    }
+    if (comparison.summary.p0 < 4) throw new Error("comparison P0 priority count is too low");
+
+    const workspaceResponse = await fetch(`${baseUrl}/coding-workspace`);
+    const workspace = await workspaceResponse.json();
+    if (!workspaceResponse.ok || workspace.mode !== "windows-coding-workspace") throw new Error("coding workspace endpoint failed");
+    for (const subagentId of ["planner", "implementer", "reviewer", "tester"]) {
+      if (!workspace.subagents.some((agent) => agent.id === subagentId)) throw new Error(`missing subagent ${subagentId}`);
+    }
+    for (const adapterName of ["health", "chat", "permissionResult", "providerStatus", "workflow", "diagnostics"]) {
+      if (!workspace.gatewayAdapter.some((method) => method.name === adapterName)) throw new Error(`missing adapter ${adapterName}`);
+    }
+    for (const extendedAdapter of ["providerSecretRef", "providerOpenAiRuntime", "memory"]) {
+      if (!workspace.gatewayAdapter.some((method) => method.name === extendedAdapter)) throw new Error(`missing extended adapter ${extendedAdapter}`);
+    }
+
+    const contextResponse = await fetch(`${baseUrl}/context-budget`);
+    const context = await contextResponse.json();
+    if (!contextResponse.ok || context.budget.recommendedAction !== "none") throw new Error("context budget endpoint failed");
+    if (!context.budget.loadedTools.includes("permission-queue")) throw new Error("context budget missing permission queue");
+
+    const safetyResponse = await fetch(`${baseUrl}/safety-policy`);
+    const safety = await safetyResponse.json();
+    if (!safetyResponse.ok || safety.summary.requiresApproval < safety.rules.length) throw new Error("safety policy summary invalid");
+    if (!safety.rules.some((rule) => rule.denyPaths.includes(".env*") && rule.riskLevel === "blocked")) {
+      throw new Error("safety policy must block .env*");
+    }
+
+    const gatewayAdapterResponse = await fetch(`${baseUrl}/gateway-adapter/contract`);
+    const gatewayAdapter = await gatewayAdapterResponse.json();
+    if (!gatewayAdapterResponse.ok || gatewayAdapter.mode !== "windows-sidecar-contract") {
+      throw new Error("gateway adapter contract endpoint failed");
+    }
+
+    const fileSearch = await postJson("/coding-workspace/file-search", { query: "provider", maxResults: 5 });
+    if (!fileSearch.response.ok || !Array.isArray(fileSearch.payload.results) || fileSearch.payload.results.length < 1) {
+      throw new Error("coding workspace file-search endpoint failed");
+    }
+
+    const patchPreview = await postJson("/coding-workspace/patch-preview", {
+      target: "src/lib/codingWorkspace.ts",
+      summary: "MVP verification patch preview",
+      riskLevel: "high",
+    });
+    if (!patchPreview.response.ok || !patchPreview.payload.preview?.queueItemId) {
+      throw new Error("coding workspace patch-preview endpoint failed");
+    }
+
+    const queueDecision = await postJson("/safety-queue/decision", {
+      id: patchPreview.payload.preview.queueItemId,
+      decision: "approve",
+      note: "verify-mvp",
+    });
+    if (!queueDecision.response.ok) throw new Error("safety queue decision endpoint failed");
+    if (!queueDecision.payload.queue?.some((item) => item.id === patchPreview.payload.preview.queueItemId && item.status === "approved")) {
+      throw new Error("safety queue decision did not update status");
+    }
   });
 
   await check("OpenAI API provider model setting", async () => {
@@ -470,6 +548,44 @@ try {
     if (typeof payload.maskedKey !== "string" || !payload.maskedKey.includes("...") || !payload.maskedKey.endsWith("7890")) {
       throw new Error("key was not masked as expected");
     }
+    if (!payload.secretRef?.startsWith("psr_")) throw new Error("provider SecretRef missing");
+    if (JSON.stringify(payload).includes("sk-test-1234567890")) throw new Error("provider payload leaked raw key");
+
+    const contractResponse = await fetch(`${baseUrl}/provider/secret-ref/contract`);
+    const contract = await contractResponse.json();
+    if (!contractResponse.ok || contract.rawSecretResponse !== false) throw new Error("provider SecretRef contract failed");
+
+    const issued = await postJson("/provider/secret-ref/issue", {
+      providerId: "openai-api",
+      authMode: "api-key",
+      model: "gpt-5.2",
+      secretLabel: payload.maskedKey,
+    });
+    if (!issued.response.ok || !issued.payload.secretRef.startsWith("psr_")) throw new Error("provider SecretRef issue failed");
+    if (JSON.stringify(issued.payload).includes("sk-test-1234567890")) throw new Error("SecretRef issue leaked raw key");
+
+    const runtimeContract = await fetch(`${baseUrl}/provider/openai/runtime-contract`);
+    const runtimeContractPayload = await runtimeContract.json();
+    if (!runtimeContract.ok || runtimeContractPayload.apiStyle !== "responses-api") throw new Error("OpenAI runtime contract failed");
+    if (runtimeContractPayload.rawSecretResponse !== false) throw new Error("OpenAI runtime contract must not return raw secrets");
+
+    const runtimeValidate = await postJson("/provider/openai/validate-key", {
+      providerId: "openai-api",
+      apiKey: "sk-test-1234567890",
+      model: "gpt-5.2",
+    });
+    if (!runtimeValidate.response.ok || runtimeValidate.payload.status !== "dry-run") throw new Error("OpenAI runtime validation dry-run failed");
+    if (JSON.stringify(runtimeValidate.payload).includes("sk-test-1234567890")) throw new Error("OpenAI validation leaked raw key");
+
+    const runtimeChat = await postJson("/provider/openai/chat-test", {
+      providerId: "openai-api",
+      apiKey: "sk-test-1234567890",
+      model: "gpt-5.2",
+      prompt: "ClawDesk runtime probe",
+    });
+    if (!runtimeChat.response.ok || runtimeChat.payload.status !== "dry-run") throw new Error("OpenAI runtime chat dry-run failed");
+    if (!runtimeChat.payload.outputText?.includes("Dry-run OK")) throw new Error("OpenAI runtime chat probe missing dry-run output");
+    if (JSON.stringify(runtimeChat.payload).includes("sk-test-1234567890")) throw new Error("OpenAI chat probe leaked raw key");
   });
 
   await check("Google Gemini provider key setting", async () => {
@@ -543,7 +659,7 @@ try {
       provider: "google",
       email: "collab@example.com",
       role: "editor",
-      projectIds: ["openclaw-desktop"],
+      projectIds: ["clawdesk-desktop"],
       softwareTargets: ["Google Drive", "Gmail"],
       scopes: ["drive.read", "gmail.draft"],
     });
@@ -660,14 +776,14 @@ try {
     if (!stopped.payload.workflow.steps[0].requiresApproval) throw new Error("learned file action should require approval");
   });
 
-  await check("OpenClaw settings schema is available in guided sections", async () => {
-    const response = await fetch(`${baseUrl}/openclaw/settings`);
+  await check("compatible settings schema is available in guided sections", async () => {
+    const response = await fetch(`${baseUrl}/compat/settings`);
     const payload = await response.json();
     if (!response.ok) throw new Error(`status ${response.status}`);
     for (const section of ["workspace", "models", "agents", "channels", "gateway", "security", "tools", "advanced"]) {
       if (!payload.sections.includes(section)) throw new Error(`missing settings section ${section}`);
     }
-    const saved = await postJson("/openclaw/settings", {
+    const saved = await postJson("/compat/settings", {
       goal: "office",
       modelProvider: "chatgpt-pro",
       workspaceFolder: "~/ClawDesk Projects/桌面 GUI",
@@ -682,6 +798,22 @@ try {
     for (const expected of ["gateway.status", "agent.message.delta", "agent.message.done", "canvas.begin", "canvas.patch", "permission.request"]) {
       if (!types.has(expected)) throw new Error(`missing ${expected}`);
     }
+  });
+
+  await check("OpenAI provider route uses runtime chat text on /chat (dry-run)", async () => {
+    const auth = await postJson("/auth/openai-api-key", {
+      apiKey: "sk-test-openai-runtime-demo",
+      provider: "openai-api",
+      model: "gpt-5.2",
+    });
+    if (!auth.response.ok) throw new Error("openai provider auth not accepted");
+    const events = await collectStreamEvents({
+      conversationId: "verify-openai-chat",
+      prompt: "測試 OpenAI runtime 的 /chat 串流結果",
+      requirePermission: true,
+    });
+    const text = extractAgentText(events);
+    if (!text.includes("Dry-run")) throw new Error("OpenAI /chat output does not include dry-run runtime marker");
   });
 } finally {
   child.kill("SIGTERM");

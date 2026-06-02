@@ -35,12 +35,14 @@ function spawnGateway() {
     cwd: process.cwd(),
     env: {
       ...process.env,
+      CLAWDESK_MOCK_PORT: String(port),
       OPENCLAW_MOCK_PORT: String(port),
       CLAWDESK_MOCK_STATE_FILE: stateFile,
       NODE_ENV: "test",
       NODE_OPTIONS: "--max-old-space-size=128",
     },
     stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: process.platform === "win32",
   });
 }
 
@@ -86,10 +88,10 @@ try {
   await check("backend health and simulated deployment metadata", async () => {
     const health = await waitForHealth();
     if (!health.backend?.persistence?.enabled) throw new Error("persistence must be enabled for backend verification");
-    if (!["lemon-squeezy-mock", "paddle-mock"].includes(health.backend.providers.payment)) throw new Error("payment provider metadata missing");
+    if (health.backend.providers.payment !== "lemon-squeezy-mock") throw new Error("payment provider metadata missing");
     const plan = await getJson("/backend/deployment-plan");
     if (!plan.response.ok) throw new Error("deployment plan endpoint failed");
-    for (const moduleName of ["Lemon Squeezy webhook service for direct beta", "Paddle webhook service", "Keygen license adapter", "MCP connector proxy service"]) {
+    for (const moduleName of ["Lemon Squeezy webhook service for direct beta", "MCP connector proxy service"]) {
       if (!plan.payload.productionModules.includes(moduleName)) throw new Error(`missing production module: ${moduleName}`);
     }
   });

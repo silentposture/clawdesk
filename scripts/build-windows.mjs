@@ -20,6 +20,7 @@ function run(command, args, options = {}) {
     cwd: process.cwd(),
     stdio: "inherit",
     shell: false,
+    windowsHide: process.platform === "win32",
     env: cleanWindowsBuildEnv(options.env ?? {}),
   });
 
@@ -34,6 +35,8 @@ function run(command, args, options = {}) {
 
 const production = process.argv.includes("--production");
 const store = process.argv.includes("--store");
+
+run("npm", ["run", "preflight"]);
 
 if (production) {
   run("npm", ["run", "release:guard:strict"], {
@@ -64,3 +67,9 @@ run("tauri", buildArgs, {
       }
     : {},
 });
+
+if (!store) {
+  run("npm", ["run", "release:metadata:win"]);
+}
+
+

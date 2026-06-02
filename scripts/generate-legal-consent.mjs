@@ -6,6 +6,7 @@ const root = process.cwd();
 const version = "2026-05-14.beta-direct.v1";
 const documents = [
   { id: "installer-terms", path: "docs/legal/INSTALLER_TERMS.md" },
+  { id: "developer-disclosure", path: "docs/legal/DEVELOPER_DISCLOSURE.md" },
   { id: "eula", path: "docs/legal/EULA.md" },
   { id: "privacy", path: "docs/legal/PRIVACY.md" },
   { id: "refund-policy", path: "docs/legal/REFUND_POLICY.md" },

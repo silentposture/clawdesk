@@ -4,9 +4,11 @@ import path from "node:path";
 
 const cwd = process.cwd();
 const appName = "ClawDesk";
-const gatewayPort = Number(process.env.OPENCLAW_MOCK_PORT ?? process.env.CLAWDESK_MOCK_PORT ?? 18890);
+const gatewayPort = Number(process.env.CLAWDESK_MOCK_PORT ?? process.env.OPENCLAW_MOCK_PORT ?? 18890);
 const gatewayHealthUrl = `http://127.0.0.1:${gatewayPort}/health`;
-const appExecutable = path.join(cwd, "src-tauri", "target", "release", "openclaw-desktop.exe");
+const appExecutableName = "clawdesk-desktop.exe";
+const legacyAppExecutableName = "openclaw-desktop.exe";
+const appExecutable = path.join(cwd, "src-tauri", "target", "release", appExecutableName);
 const reportDir = path.join(cwd, "artifacts", "win-app-smoke");
 const reportFile = path.join(reportDir, `${new Date().toISOString().replace(/[:.]/g, "_")}-report.json`);
 
@@ -29,6 +31,7 @@ function run(command, args, options = {}) {
     encoding: "utf8",
     stdio: options.stdio ?? ["ignore", "pipe", "pipe"],
     shell: false,
+    windowsHide: process.platform === "win32",
     env: { ...process.env, ...(options.env ?? {}) },
   });
   return {
@@ -134,11 +137,15 @@ async function main() {
   try {
     await check("cleanup pre-existing local app/gateway", async () => {
       await fs.rm(report.gatewayLogFile, { force: true }).catch(() => undefined);
-      const appPids = processIdsForCommandLine("openclaw-desktop.exe");
+      const appPids = [
+        ...processIdsForCommandLine(appExecutableName),
+        ...processIdsForCommandLine(legacyAppExecutableName),
+      ];
       const gatewayPids = gatewayProcessIds();
       terminateProcessIds([...appPids, ...gatewayPids]);
       await waitForCondition("pre-existing process cleanup", async () => {
-        return processIdsForCommandLine("openclaw-desktop.exe").length === 0 &&
+        return processIdsForCommandLine(appExecutableName).length === 0 &&
+          processIdsForCommandLine(legacyAppExecutableName).length === 0 &&
           gatewayProcessIds().length === 0;
       }, 5000, 250).catch(() => undefined);
       return { appPidsStopped: appPids, gatewayPidsStopped: gatewayPids, gatewayPort };
@@ -158,10 +165,12 @@ async function main() {
         cwd,
         detached: false,
         stdio: ["ignore", "ignore", "ignore"],
+        windowsHide: true,
         env: {
           ...process.env,
           CLAWDESK_SMOKE_BOOT_GATEWAY: "1",
           CLAWDESK_SMOKE_GATEWAY_LOG: report.gatewayLogFile,
+          CLAWDESK_MOCK_PORT: String(gatewayPort),
           OPENCLAW_MOCK_PORT: String(gatewayPort),
         },
       });
@@ -203,3 +212,5 @@ async function main() {
 }
 
 await main();
+
+

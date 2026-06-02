@@ -1,4 +1,4 @@
-# OpenClaw Mock Gateway
+# ClawDesk Mock Gateway
 
 這個 Node sidecar 提供第一版桌面 MVP 合約，不需要先取得 upstream OpenClaw checkout。
 
@@ -25,6 +25,13 @@
 - `POST /auth/openai-api-key`
 - `POST /auth/local-model`
 - `POST /auth/mock`
+- `GET /provider/secret-ref/contract`
+- `POST /provider/secret-ref/issue`
+- `POST /provider/token-refresh`
+- `GET /provider/openai/runtime-contract`
+- `POST /provider/openai/validate-key`
+- `POST /provider/openai/chat-test`
+- `POST /chat`：若目前供應商為 `openai-api`，會先透過 `openai` runtime 文字輸出生成後再串流；預設為 dry-run，不回傳 API key。
 - `GET /accounts`
 - `POST /accounts/connect`
 - `GET /channels`
@@ -35,8 +42,9 @@
 - `POST /mcp/preview`
 - `GET /workflows`
 - `POST /workflows`
-- `GET /openclaw/settings`
-- `POST /openclaw/settings`
+- `GET /compat/settings`
+- `POST /compat/settings`
+- Legacy aliases: `GET /openclaw/settings`, `POST /openclaw/settings`
 - `ws://127.0.0.1:18890/events`
 
 Email 檢核流程（mock）：
@@ -45,6 +53,8 @@ Email 檢核流程（mock）：
 - `GET /identity/verification-code?email=<email>`：回傳目前有效驗證碼，用於本地除錯與 UI 測試。
 - `identity/resend-verification`：重新建立驗證記錄。
 - `confirm`：可用 `code` 或 `token` 驗證，通過後才可 login。
+
+OpenAI runtime probe 預設只做 dry-run，不會呼叫外部 OpenAI API，也不回傳 API key。若要做 live 測試，需設定 `CLAWDESK_OPENAI_LIVE_TEST=1` 並提供 request body `apiKey` 或環境變數 `OPENAI_API_KEY`；實作使用 OpenAI Responses API 合約。
 
 MCP 與帳號/授權相關 API 全部僅為本機模擬，實際郵件發送與 SSO 需接上正式後端時另外接線。
 

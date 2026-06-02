@@ -14,10 +14,12 @@ The Windows landing path is therefore a runtime adapter contract:
 
 Runtime contract source:
 
-- `src/lib/openclawRuntime.ts`
-- `GET /openclaw/runtime-contract`
-- `POST /openclaw/runtime/auth-plan`
+- `src/lib/compatRuntime.ts`
+- `GET /compat/runtime-contract`
+- `POST /compat/runtime/auth-plan`
 - `write_provider_credential`
 - `read_provider_credential_summaries`
+
+Legacy `/openclaw/*` aliases are still accepted for compatibility.
 
 Current status is honest by design: several surfaces are contract-compatible, but not all upstream execution paths are production-backed yet.

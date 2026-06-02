@@ -1,14 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
-  isOpenClawOpenAiProvider,
-  openClawOpenAiAuthModes,
-  openClawUpstreamSnapshot,
+  defaultProviderSession,
+  compatOpenAiAuthModes,
+  compatUpstreamSnapshot,
+  isCompatOpenAiProvider,
   providerName,
   providerStatusLabel,
   upstreamAuthModeForProvider,
 } from "./providers";
 
 describe("provider labels", () => {
+  it("defaults to a local Ollama session without secrets", () => {
+    expect(defaultProviderSession.activeProvider).toBe("local-model");
+    expect(defaultProviderSession.displayName).toBe("Ollama");
+    expect(defaultProviderSession.endpoint).toBe("http://127.0.0.1:11434");
+    expect(defaultProviderSession.model).toBe("llama3.3");
+    expect(defaultProviderSession.runtime?.live).not.toBe(true);
+    expect(JSON.stringify(defaultProviderSession)).not.toContain("sk-");
+  });
+
   it("returns Traditional Chinese status labels", () => {
     expect(providerStatusLabel("connected")).toBe("已連線");
     expect(providerStatusLabel("configured")).toBe("已設定");
@@ -24,15 +34,15 @@ describe("provider labels", () => {
     expect(providerName("mock")).toBe("Mock Gateway");
   });
 
-  it("documents imported OpenClaw upstream OpenAI auth modes", () => {
-    expect(openClawUpstreamSnapshot.license).toBe("MIT");
-    expect(openClawUpstreamSnapshot.repository).toContain("github.com/openclaw/openclaw");
-    expect(openClawOpenAiAuthModes.map((mode) => mode.id)).toEqual([
+  it("documents imported upstream OpenAI auth modes", () => {
+    expect(compatUpstreamSnapshot.license).toBe("MIT");
+    expect(compatUpstreamSnapshot.repository).toContain("github.com/openclaw/openclaw");
+    expect(compatOpenAiAuthModes.map((mode) => mode.id)).toEqual([
       "openai-api-key",
       "openai-account-oauth",
     ]);
-    expect(isOpenClawOpenAiProvider("openai-api")).toBe(true);
-    expect(isOpenClawOpenAiProvider("openai-codex")).toBe(true);
+    expect(isCompatOpenAiProvider("openai-api")).toBe(true);
+    expect(isCompatOpenAiProvider("openai-codex")).toBe(true);
     expect(upstreamAuthModeForProvider("openai-api")).toBe("openai:api_key");
     expect(upstreamAuthModeForProvider("openai-codex")).toBe("openai-codex:oauth");
   });

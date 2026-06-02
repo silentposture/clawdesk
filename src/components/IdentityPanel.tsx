@@ -19,7 +19,7 @@ interface IdentityPanelProps {
   onSessionChange: (session: IdentitySession) => void;
 }
 
-type IdentityEntryMode = "signin" | "register" | "sso";
+type IdentityEntryMode = "signin" | "register" | "sso" | "reset";
 
 export function IdentityPanel({ session, gatewayBaseUrl, onClose, onSessionChange }: IdentityPanelProps): JSX.Element {
   const { t } = useI18n();
@@ -124,6 +124,72 @@ export function IdentityPanel({ session, gatewayBaseUrl, onClose, onSessionChang
       }
     } catch {
       setError(t("identity.formError.codeResendFailed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function requestPasswordReset() {
+    if (!gatewayBaseUrl || !email.trim()) return;
+    setBusy(true);
+    setError(undefined);
+    try {
+      await postIdentity("/identity/forgot-password", { email: email.trim() });
+      setMode("reset");
+      setError(t("identity.formError.resetRequested"));
+    } catch {
+      setError(t("identity.formError.resetRequestFailed"));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function fetchPasswordResetCode() {
+    if (!gatewayBaseUrl || !email.trim()) {
+      return;
+    }
+    try {
+      const response = await fetch(
+        `${gatewayBaseUrl}/identity/password-reset-code?email=${encodeURIComponent(email.trim().toLowerCase())}`,
+      );
+      const payload = await response.json();
+      if (!response.ok) {
+        throw new Error(payload?.error ?? "password reset fetch failed");
+      }
+      const code = typeof payload.code === "string" ? payload.code : "";
+      if (!code) {
+        setError(t("identity.formError.resetCodeMissing"));
+        return;
+      }
+      setVerificationCode(code);
+      setError(t("identity.formError.resetCodeFetched"));
+    } catch {
+      setError(t("identity.formError.resetCodeMissing"));
+    }
+  }
+
+  async function resetPassword(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!email.includes("@") || password.length < 8 || password !== passwordRepeat || !verificationCode.trim()) {
+      setError(t("identity.formError.resetInvalid"));
+      return;
+    }
+    setBusy(true);
+    setError(undefined);
+    try {
+      await postIdentity("/identity/reset-password", {
+        email: email.trim(),
+        code: verificationCode.trim(),
+        password,
+      });
+      setPassword("");
+      setPasswordRepeat("");
+      setVerificationCode("");
+      setMode("signin");
+      setError(t("identity.formError.resetSuccess"));
+    } catch (error) {
+      const message = (error as { payload?: { error?: string } }).payload?.error;
+      setError(message || t("identity.formError.resetFailed"));
     } finally {
       setBusy(false);
     }
@@ -260,11 +326,11 @@ export function IdentityPanel({ session, gatewayBaseUrl, onClose, onSessionChang
         {session.authenticated ? (
           <div className="identity-session">
             <h3>{t("identity.authenticated")}</h3>
-            <p>Email：{session.email}</p>
-            {session.organization ? <p>組織：{session.organization}</p> : null}
-            <p>{t("identity.modeLabel")}：{session.mode}</p>
+            <p>{t("identity.emailLabel", { value: session.email ?? "" })}</p>
+            {session.organization ? <p>{t("identity.organizationLabel", { value: session.organization })}</p> : null}
+            <p>{t("identity.modeValue", { label: t("identity.modeLabel"), value: session.mode })}</p>
             {sessionSsoProviderLabel ? <p>SSO：{sessionSsoProviderLabel}</p> : null}
-            {session.lastLoginAt ? <p>上次登入：{session.lastLoginAt}</p> : null}
+            {session.lastLoginAt ? <p>{t("identity.lastLogin", { value: session.lastLoginAt })}</p> : null}
             <button className="secondary-button" type="button" onClick={signOut} disabled={busy}>
               <LogIn size={16} />
               {t("identity.signout")}
@@ -303,6 +369,16 @@ export function IdentityPanel({ session, gatewayBaseUrl, onClose, onSessionChang
             <KeyRound size={16} />
             {t("identity.ssoTab")}
           </button>
+          <button
+            type="button"
+            role="tab"
+            className={mode === "reset" ? "session-button" : ""}
+            onClick={() => setMode("reset")}
+            aria-selected={mode === "reset"}
+          >
+            <ShieldCheck size={16} />
+            {t("identity.resetTab")}
+          </button>
         </div>
 
         {mode === "signin" ? (
@@ -323,6 +399,10 @@ export function IdentityPanel({ session, gatewayBaseUrl, onClose, onSessionChang
             <button className="primary-button" type="submit" disabled={busy || !gatewayBaseUrl || !email.trim() || !password.trim()}>
               <LogIn size={16} />
               {t("identity.submit.signin")}
+            </button>
+            <button className="secondary-button" type="button" onClick={requestPasswordReset} disabled={busy || !gatewayBaseUrl || !email.trim()}>
+              <ShieldCheck size={16} />
+              {t("identity.submit.requestReset")}
             </button>
           </form>
         ) : null}
@@ -349,7 +429,7 @@ export function IdentityPanel({ session, gatewayBaseUrl, onClose, onSessionChang
               />
             </label>
             <label>
-              <span>部署模式</span>
+              <span>{t("identity.deploymentMode")}</span>
               <select value={deploymentMode} onChange={(event) => setDeploymentMode(event.target.value as "personal" | "enterprise")}>
                 {identityModes.map((item) => (
                   <option key={item.id} value={item.id}>
@@ -363,7 +443,7 @@ export function IdentityPanel({ session, gatewayBaseUrl, onClose, onSessionChang
               <input
                 value={organization}
                 onChange={(event) => setOrganization(event.target.value)}
-                placeholder="公司、學校或團隊名稱"
+                placeholder={t("identity.organizationPlaceholder")}
                 autoComplete="organization"
               />
             </label>
@@ -396,7 +476,7 @@ export function IdentityPanel({ session, gatewayBaseUrl, onClose, onSessionChang
           <section className="identity-verification">
             <h3>{t("identity.submit.confirm")}</h3>
             <label>
-              <span>驗證碼（6 碼）</span>
+              <span>{t("identity.verificationCode")}</span>
               <input
                 value={verificationCode}
                 onChange={(event) => setVerificationCode(event.target.value)}
@@ -430,14 +510,14 @@ export function IdentityPanel({ session, gatewayBaseUrl, onClose, onSessionChang
                 ))}
               </select>
             </label>
-            <p>MVP mock will create entry users directly; production should redirect to the SSO provider.</p>
+            <p>{t("identity.ssoMockNotice")}</p>
             <label>
               <span>{t("identity.connectHint")}</span>
               <input
                 value={email}
                 onChange={(event) => setEmail(event.target.value)}
                 type="email"
-                placeholder="如需綁定既有帳號可輸入"
+                placeholder={t("identity.bindExistingPlaceholder")}
                 autoComplete="email"
               />
             </label>
@@ -446,7 +526,7 @@ export function IdentityPanel({ session, gatewayBaseUrl, onClose, onSessionChang
               <input
                 value={displayName}
                 onChange={(event) => setDisplayName(event.target.value)}
-                placeholder="SSO 對應名稱"
+                placeholder={t("identity.ssoNamePlaceholder")}
                 autoComplete="name"
               />
             </label>
@@ -455,12 +535,66 @@ export function IdentityPanel({ session, gatewayBaseUrl, onClose, onSessionChang
               <input
                 value={organization}
                 onChange={(event) => setOrganization(event.target.value)}
-                placeholder="請填寫企業 / 組織名稱"
+                placeholder={t("identity.ssoOrganizationPlaceholder")}
               />
             </label>
             <button className="primary-button" type="submit" disabled={busy || !gatewayBaseUrl}>
               <ArrowRight size={16} />
               {t("identity.submit.connectSso")}
+            </button>
+          </form>
+        ) : null}
+
+        {mode === "reset" ? (
+          <form className="identity-form stacked-form" onSubmit={resetPassword}>
+            <label>
+              <span>{t("identity.email")}</span>
+              <input
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                type="email"
+                placeholder="name@example.com"
+                autoComplete="email"
+              />
+            </label>
+            <label>
+              <span>{t("identity.verificationCode")}</span>
+              <input
+                value={verificationCode}
+                onChange={(event) => setVerificationCode(event.target.value)}
+                inputMode="numeric"
+                autoComplete="one-time-code"
+              />
+            </label>
+            <div className="identity-inline-actions">
+              <button className="secondary-button" type="button" onClick={requestPasswordReset} disabled={busy || !gatewayBaseUrl || !email.trim()}>
+                {t("identity.submit.requestReset")}
+              </button>
+              <button className="secondary-button" type="button" onClick={fetchPasswordResetCode} disabled={busy || !gatewayBaseUrl || !email.trim()}>
+                {t("identity.submit.fetchResetCode")}
+              </button>
+            </div>
+            <label>
+              <span>{t("identity.password")}</span>
+              <input
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                type="password"
+                autoComplete="new-password"
+              />
+            </label>
+            <label>
+              <span>{t("identity.passwordRepeat")}</span>
+              <input
+                value={passwordRepeat}
+                onChange={(event) => setPasswordRepeat(event.target.value)}
+                type="password"
+                autoComplete="new-password"
+              />
+            </label>
+            <button className="primary-button" type="submit" disabled={busy || !gatewayBaseUrl || !email.trim() || !verificationCode.trim()}>
+              <ShieldCheck size={16} />
+              {t("identity.submit.resetPassword")}
             </button>
           </form>
         ) : null}

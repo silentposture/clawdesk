@@ -2,7 +2,7 @@
   "$schema": "https://schema.tauri.app/config/2",
   "productName": "ClawDesk",
   "version": "0.1.0",
-  "identifier": "dev.openclaw.desktop",
+  "identifier": "dev.clawdesk.desktop",
   "build": {
     "beforeDevCommand": "npm run dev",
     "devUrl": "http://127.0.0.1:5173",
@@ -26,17 +26,20 @@
   "bundle": {
     "active": true,
     "targets": ["nsis"],
+    "publisher": "Alisonsoftware",
     "category": "Productivity",
     "resources": {
       "../sidecars/mock-gateway/server.mjs": "sidecars/mock-gateway/server.mjs",
       "../docs/legal/INSTALLER_TERMS.md": "legal/INSTALLER_TERMS.md",
+      "../docs/legal/DEVELOPER_DISCLOSURE.md": "legal/DEVELOPER_DISCLOSURE.md",
       "../docs/legal/EULA.md": "legal/EULA.md",
       "../docs/legal/PRIVACY.md": "legal/PRIVACY.md",
       "../docs/legal/REFUND_POLICY.md": "legal/REFUND_POLICY.md",
       "../docs/legal/DIGITAL_CONTENT_WAIVER.md": "legal/DIGITAL_CONTENT_WAIVER.md",
       "../docs/legal/AI_AGENT_RISK_NOTICE.md": "legal/AI_AGENT_RISK_NOTICE.md",
       "../docs/legal/OPENCLAW_MIT_NOTICE.md": "legal/OPENCLAW_MIT_NOTICE.md",
-      "../docs/legal/OPENCLAW_UPSTREAM_LICENSE.md": "legal/OPENCLAW_UPSTREAM_LICENSE.md"
+      "../docs/legal/OPENCLAW_UPSTREAM_LICENSE.md": "legal/OPENCLAW_UPSTREAM_LICENSE.md",
+      "../docs/support/CONTACT.md": "support/CONTACT.md"
     },
     "windows": {
       "nsis": {

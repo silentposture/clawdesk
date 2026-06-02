@@ -37,6 +37,21 @@ async function pathExists(relativePath) {
   }
 }
 
+async function readSupportContactFromDoc() {
+  const contactPath = path.join(cwd, "docs", "support", "CONTACT.md");
+  try {
+    const content = await fs.readFile(contactPath, "utf8");
+    const emailMatch = content.match(/Support email:\s*([^\s`]+)/i);
+    const urlMatch = content.match(/https?:\/\/[^\s)]+/i);
+    return {
+      email: emailMatch?.[1] ?? "",
+      url: urlMatch?.[0] ?? "",
+    };
+  } catch {
+    return { email: "", url: "" };
+  }
+}
+
 function commandInvocation(command, args) {
   if (process.platform !== "win32") return { command, args };
   if (command.endsWith(".exe")) return { command, args };
@@ -52,6 +67,7 @@ function run(command, args) {
     encoding: "utf8",
     stdio: ["ignore", "pipe", "pipe"],
     shell: false,
+    windowsHide: process.platform === "win32",
   });
 }
 
@@ -129,31 +145,13 @@ function buildReadinessMatrix(input) {
       nextAction: "建立 production Gateway / backend connector，替換 mock sidecar 合約。",
     },
     {
-      id: "paddle",
-      category: "payment",
-      label: "Paddle 金流環境",
-      status: readinessStatus(input.strictModeEnabled, input.hasPaddleCredentials),
-      current: input.hasPaddleCredentials ? "已設定 production credentials" : "目前僅 mock",
-      required: "正式版需 Paddle API、webhook secret 與 price/product id。",
-      nextAction: "設定 Paddle production credentials；桌面端不得保存信用卡資料。",
-    },
-    {
       id: "lemon-squeezy",
       category: "payment",
-      label: "Lemon Squeezy Beta 金流/授權",
+      label: "Lemon Squeezy 金流/授權",
       status: readinessStatus(input.betaDirect || input.strictModeEnabled, input.hasLemonCredentials),
-      current: input.hasLemonCredentials ? "已設定 Lemon direct beta env" : "尚未設定 Lemon env",
-      required: "Windows 直售 Beta 需 Lemon webhook secret、store id 與 product id。",
+      current: input.hasLemonCredentials ? "已設定 Lemon Squeezy env" : "尚未設定 Lemon Squeezy env",
+      required: "Lemon Squeezy 是唯一付款/授權供應商，需 webhook secret、store id、product id 與 variant id。",
       nextAction: "完成 Lemon Squeezy seller onboarding，設定 LEMON_SQUEEZY_*。",
-    },
-    {
-      id: "keygen",
-      category: "licensing",
-      label: "Keygen 授權環境",
-      status: readinessStatus(input.strictModeEnabled, input.hasKeygenCredentials),
-      current: input.hasKeygenCredentials ? "已設定 Keygen account/product/signing" : "目前僅 mock",
-      required: "正式版需 Keygen account、product、policy 與 signing public key。",
-      nextAction: "建立 Keygen product/policy，接上 license validation 與 offline ticket。",
     },
     {
       id: "sso",
@@ -161,16 +159,16 @@ function buildReadinessMatrix(input) {
       label: "SSO / 帳號入口",
       status: readinessStatus(input.strictModeEnabled, input.hasSsoCredentials),
       current: input.hasSsoCredentials ? "已設定 issuer/client" : "目前僅本機 mock 登入",
-      required: "個人版與企業版都需 CLAWDESK_SSO_ISSUER_URL 與 CLAWDESK_SSO_CLIENT_ID。",
-      nextAction: "接上 Google / Microsoft / Email 驗證與回信確認流程。",
+      required: "Windows 直售 Beta 不擋 SSO；企業版 / strict production 才需 CLAWDESK_SSO_ISSUER_URL 與 CLAWDESK_SSO_CLIENT_ID。",
+      nextAction: "未來接上 Google / Microsoft / Email 驗證與回信確認流程。",
     },
     {
       id: "windows-signing-env",
       category: "windows",
       label: "Windows 簽章環境",
-      status: readinessStatus(input.strictModeEnabled || input.storeReadiness, input.hasWindowsSigningEnv || input.hasTrustedSigningEnv),
+      status: readinessStatus(input.strictModeEnabled || input.storeReadiness || input.betaDirect, input.hasWindowsSigningEnv || input.hasTrustedSigningEnv),
       current: input.hasTrustedSigningEnv ? "已設定 Trusted Signing env" : input.hasWindowsSigningEnv ? "已設定傳統憑證簽章 env" : "尚未設定",
-      required: "正式 Windows installer / Microsoft Store candidate 需要受信任簽章。",
+      required: "Windows 直售 Beta / 正式 Windows installer 需要受信任簽章。",
       nextAction: "設定 WINDOWS_SIGNING_* 或 AZURE_TRUSTED_SIGNING_*。",
     },
     {
@@ -233,7 +231,7 @@ async function main() {
   const failures = [];
   const warnings = [];
   const packageJson = await readJson("package.json");
-  const channel = process.env.CLAWDESK_RELEASE_CHANNEL || "mock-candidate";
+  const channel = process.env.CLAWDESK_RELEASE_CHANNEL || (options.betaDirect ? "beta-direct" : "mock-candidate");
   const betaDirect = options.betaDirect;
   const strictModeEnabled = options.strictProduction || channel === "production";
   const tauriConfigPath = strictModeEnabled ? "src-tauri/tauri.prod.conf.json" : "src-tauri/tauri.conf.json";
@@ -293,21 +291,17 @@ async function main() {
   for (const expected of mockResourceMarkers) {
     if (!defaultBundledResources.includes(expected)) failures.push(`mock 候選版 Tauri bundle resources 未包含 ${expected}`);
   }
-  for (const expected of ["../docs/legal/INSTALLER_TERMS.md", "../docs/legal/OPENCLAW_MIT_NOTICE.md"]) {
+  for (const expected of ["../docs/legal/INSTALLER_TERMS.md", "../docs/legal/DEVELOPER_DISCLOSURE.md", "../docs/legal/OPENCLAW_MIT_NOTICE.md", "../docs/support/CONTACT.md"]) {
     if (!bundledResources.includes(expected)) failures.push(`${tauriConfigPath} bundle resources 未包含 ${expected}`);
   }
 
   const productionEnvNames = [
     "CLAWDESK_GATEWAY_BASE_URL",
-    "PADDLE_API_KEY",
-    "PADDLE_WEBHOOK_SECRET",
-    "PADDLE_PRODUCT_ID",
-    "PADDLE_PRICE_ID_PRO_MONTHLY",
-    "PADDLE_PRICE_ID_PRO_YEARLY",
-    "KEYGEN_ACCOUNT_ID",
-    "KEYGEN_PRODUCT_ID",
-    "KEYGEN_POLICY_ID",
-    "KEYGEN_SIGNING_PUBLIC_KEY",
+    "LEMON_SQUEEZY_WEBHOOK_SECRET",
+    "LEMON_SQUEEZY_STORE_ID",
+    "LEMON_SQUEEZY_PRODUCT_ID",
+    "LEMON_SQUEEZY_VARIANT_ID_PRO_YEARLY",
+    "LEMON_SQUEEZY_VARIANT_ID_LIFETIME",
     "CLAWDESK_SSO_ISSUER_URL",
     "CLAWDESK_SSO_CLIENT_ID",
   ];
@@ -321,14 +315,21 @@ async function main() {
   ];
   const windowsSigningEnvNames = ["WINDOWS_SIGNING_CERTIFICATE", "WINDOWS_SIGNING_CERTIFICATE_PASSWORD"];
   const trustedSigningEnvNames = ["AZURE_TRUSTED_SIGNING_ACCOUNT_NAME", "AZURE_TRUSTED_SIGNING_CERTIFICATE_PROFILE_NAME", "AZURE_TRUSTED_SIGNING_ENDPOINT"];
+  const hasWindowsSigningByPath = Boolean(process.env.WINDOWS_SIGNING_CERTIFICATE && process.env.WINDOWS_SIGNING_CERTIFICATE_PASSWORD);
+  const hasWindowsSigningBySubject = Boolean(process.env.WINDOWS_SIGNING_CERTIFICATE_SUBJECT);
+  const hasTraditionalSigning = hasWindowsSigningByPath || hasWindowsSigningBySubject;
   const missingProductionEnv = missingEnv(productionEnvNames);
   const missingBetaDirectEnv = missingEnv(betaDirectEnvNames);
-  const missingWindowsSigningEnv = missingEnv(windowsSigningEnvNames);
+  const missingWindowsSigningEnv = hasWindowsSigningBySubject ? [] : missingEnv(windowsSigningEnvNames);
   const missingTrustedSigningEnv = missingEnv(trustedSigningEnvNames);
-  const hasAnyWindowsSigning = missingWindowsSigningEnv.length === 0 || missingTrustedSigningEnv.length === 0;
+  const hasAnyWindowsSigning = hasTraditionalSigning || missingTrustedSigningEnv.length === 0;
+  const supportContactDoc = await readSupportContactFromDoc();
+  const supportEmail = process.env.CLAWDESK_SUPPORT_EMAIL ?? supportContactDoc.email;
+  const supportUrl = process.env.CLAWDESK_SUPPORT_URL ?? supportContactDoc.url;
+  const hasSupportContact = Boolean(supportEmail || supportUrl);
 
   if (!strictModeEnabled && !betaDirect) {
-    warnings.push("目前是 mock candidate 檢查：允許本機 mock Gateway 與 mock Paddle/Keygen，但不得視為正式商業發佈。");
+    warnings.push("目前是 mock candidate 檢查：允許本機 mock Gateway 與 mock Lemon Squeezy，但不得視為正式商業發佈。");
     if (missingProductionEnv.length > 0) warnings.push(`正式 production 尚缺環境變數：${missingProductionEnv.join(", ")}`);
     if (!hasAnyWindowsSigning) warnings.push("正式 Windows / Microsoft Store 發佈尚未完成程式碼簽章環境。");
   }
@@ -356,14 +357,15 @@ async function main() {
     if (!installerArtifact && options.requireArtifacts) failures.push("beta-direct 找不到 Windows NSIS installer artifact，請先執行 npm run tauri:build:win。");
     if (!hasSbomArtifacts) failures.push("beta-direct 需要 SBOM artifacts：請執行 npm run sbom。");
     if (!hasAnyWindowsSigning) failures.push("beta-direct 需要 Windows 簽章環境：WINDOWS_SIGNING_* 或 AZURE_TRUSTED_SIGNING_*。");
-    for (const name of missingBetaDirectEnv) warnings.push(`beta-direct 尚缺 Lemon/Gateway 環境變數：${name}`);
+    if (!hasSupportContact) failures.push("beta-direct 需要公開客服入口：請設定 CLAWDESK_SUPPORT_EMAIL 或 CLAWDESK_SUPPORT_URL。");
+    for (const name of missingBetaDirectEnv) failures.push(`beta-direct 缺少必要 Lemon/Gateway 環境變數：${name}`);
   }
 
   if ((options.requireSigning || strictModeEnabled || options.storeReadiness || betaDirect) && !hasAnyWindowsSigning) {
     failures.push("Windows 簽章缺少必要環境變數：需 WINDOWS_SIGNING_* 或 AZURE_TRUSTED_SIGNING_*。");
   }
   if ((options.requireSigning || strictModeEnabled || betaDirect) && installerArtifact) {
-    const signingCheck = run(process.execPath, ["scripts/verify-windows-signing.mjs", path.join(cwd, installerArtifact.relativePath)]);
+    const signingCheck = run(process.execPath, ["scripts/verify-windows-signing.mjs", "--require-signtool", path.join(cwd, installerArtifact.relativePath)]);
     if (signingCheck.status !== 0) failures.push("Windows installer 簽章驗證失敗，請執行 npm run sign:win-installer 後重試。");
   }
 
@@ -377,9 +379,7 @@ async function main() {
     thirdPartyNoticesCurrent: noticesCheck.status === 0,
     hasSbomArtifacts,
     hasProductionGateway: Boolean(process.env.CLAWDESK_GATEWAY_BASE_URL),
-    hasPaddleCredentials: missingEnv(["PADDLE_API_KEY", "PADDLE_WEBHOOK_SECRET", "PADDLE_PRODUCT_ID"]).length === 0,
     hasLemonCredentials: missingEnv(["LEMON_SQUEEZY_WEBHOOK_SECRET", "LEMON_SQUEEZY_STORE_ID", "LEMON_SQUEEZY_PRODUCT_ID"]).length === 0,
-    hasKeygenCredentials: missingEnv(["KEYGEN_ACCOUNT_ID", "KEYGEN_PRODUCT_ID", "KEYGEN_POLICY_ID", "KEYGEN_SIGNING_PUBLIC_KEY"]).length === 0,
     hasSsoCredentials: missingEnv(["CLAWDESK_SSO_ISSUER_URL", "CLAWDESK_SSO_CLIENT_ID"]).length === 0,
     hasWindowsSigningEnv: missingWindowsSigningEnv.length === 0,
     hasTrustedSigningEnv: missingTrustedSigningEnv.length === 0,
@@ -412,6 +412,14 @@ async function main() {
     thirdPartyNoticesCurrent: noticesCheck.status === 0,
     productionEnv: envPresence(productionEnvNames),
     betaDirectEnv: envPresence(betaDirectEnvNames),
+    supportContact: {
+      env: envPresence(["CLAWDESK_SUPPORT_EMAIL", "CLAWDESK_SUPPORT_URL"]),
+      effective: {
+        email: supportEmail ? `${supportEmail.slice(0, 2)}***` : "",
+        url: supportUrl,
+      },
+      source: process.env.CLAWDESK_SUPPORT_EMAIL || process.env.CLAWDESK_SUPPORT_URL ? "env" : "docs/support/CONTACT.md",
+    },
     signing: { env: envPresence(windowsSigningEnvNames), trustedSigningEnv: envPresence(trustedSigningEnvNames) },
     artifacts: {
       installer: installerArtifact,
@@ -436,3 +444,5 @@ async function main() {
 }
 
 await main();
+
+

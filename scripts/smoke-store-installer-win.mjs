@@ -26,6 +26,7 @@ function run(command, args, options = {}) {
     encoding: "utf8",
     stdio: options.stdio ?? ["ignore", "pipe", "pipe"],
     shell: false,
+    windowsHide: process.platform === "win32",
   });
 }
 
@@ -101,3 +102,5 @@ async function main() {
 }
 
 await main();
+
+

@@ -1,7 +1,17 @@
-import { CheckCircle2, CreditCard, KeyRound, RefreshCw, ShieldAlert, Undo2, X } from "lucide-react";
+import { CheckCircle2, CreditCard, KeyRound, RefreshCw, Undo2, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import type { LicenseStatus, PricingPlan } from "../lib/licensing";
+import { betaPricingPlans, canInstallLatestVersion, createFreeStatus, type LicenseStatus, type PricingPlan } from "../lib/licensing";
 import { useI18n } from "../lib/i18n";
+import {
+  activateNaviaLicense,
+  createNaviaLicenseGatewayClient,
+  createTauriNaviaLicenseCacheStore,
+  deactivateNaviaLicense,
+  getCurrentNaviaMachineIdentity,
+  mapNaviaLicenseToClawDeskStatus,
+  refreshNaviaLicense,
+  runNaviaLicenseStartupCheck,
+} from "../lib/naviaLicenseClient";
 import {
   buildReleaseReadinessMatrix,
   defaultMockCandidateReadiness,
@@ -11,6 +21,7 @@ import { Tooltip } from "./Tooltip";
 
 interface LicensePanelProps {
   gatewayBaseUrl?: string;
+  identityEmail?: string;
   onClose: () => void;
 }
 
@@ -25,92 +36,115 @@ interface UpdateInfo {
   requiresRenewal: boolean;
 }
 
-export function LicensePanel({ gatewayBaseUrl, onClose }: LicensePanelProps): JSX.Element {
+const CLAWDESK_LICENSE_PRODUCT_KEY = "clawdesk";
+const CLAWDESK_APP_VERSION = "0.1.0";
+const CLAWDESK_APP_RELEASE_DATE_UTC = "2026-05-16T00:00:00.000Z";
+
+export function LicensePanel({ gatewayBaseUrl, identityEmail, onClose }: LicensePanelProps): JSX.Element {
   const { t } = useI18n();
   const [status, setStatus] = useState<LicenseStatus>();
-  const [plans, setPlans] = useState<PricingPlan[]>([]);
+  const [plans] = useState<PricingPlan[]>(betaPricingPlans);
   const [update, setUpdate] = useState<UpdateInfo>();
   const [licenseKey, setLicenseKey] = useState("CLWD-BETA-PRO1-2026");
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
   const readinessMatrix = buildReleaseReadinessMatrix(defaultMockCandidateReadiness);
   const readinessSummary = summarizeReleaseReadiness(readinessMatrix);
+  const statusHint = status ? buildStatusHint(status, t) : null;
 
   useEffect(() => {
     void load();
-  }, [gatewayBaseUrl]);
+  }, [gatewayBaseUrl, identityEmail]);
 
   async function load() {
-    if (!gatewayBaseUrl) return;
+    setError(undefined);
+    if (!gatewayBaseUrl) {
+      setError(t("license.noGateway"));
+      return;
+    }
     try {
-      const [licenseResponse, updateResponse] = await Promise.all([
-        fetch(`${gatewayBaseUrl}/license/status`),
-        fetch(`${gatewayBaseUrl}/updates/check`),
-      ]);
-      if (!licenseResponse.ok || !updateResponse.ok) throw new Error("bad response");
-      const licensePayload = (await licenseResponse.json()) as { status: LicenseStatus; pricingPlans: PricingPlan[] };
-      setStatus(licensePayload.status);
-      setPlans(licensePayload.pricingPlans);
-      setUpdate((await updateResponse.json()) as UpdateInfo);
+      const service = createLicenseService(gatewayBaseUrl);
+      const state = await runNaviaLicenseStartupCheck(service);
+      const nextStatus =
+        state.cache && state.local
+          ? mapNaviaLicenseToClawDeskStatus(state.cache, state.local, state.remote)
+          : createFreeStatus("NO_LICENSE_CACHE");
+      setStatus(nextStatus);
+      setUpdate(buildUpdateInfo(nextStatus));
     } catch {
       setError(t("license.error"));
+      const fallback = createFreeStatus("LICENSE_LOAD_FAILED");
+      setStatus(fallback);
+      setUpdate(buildUpdateInfo(fallback));
     }
   }
 
   async function activate() {
-    if (!gatewayBaseUrl) return;
+    if (!gatewayBaseUrl) {
+      setError(t("license.noGateway"));
+      return;
+    }
+    if (!identityEmail) {
+      setError(t("license.identityRequired"));
+      return;
+    }
     setMessage(undefined);
     setError(undefined);
     try {
-      const response = await fetch(`${gatewayBaseUrl}/license/activate-key`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ licenseKey }),
+      const machine = await getCurrentNaviaMachineIdentity();
+      await activateNaviaLicense(createLicenseService(gatewayBaseUrl), {
+        orderNo: licenseKey.trim(),
+        email: identityEmail,
+        hwid: machine.hwid,
+        instanceId: machine.instanceId,
       });
-      const payload = (await response.json()) as { status: LicenseStatus };
-      setStatus(payload.status);
-      if (!response.ok) {
-        setError(t("license.validationError"));
-      } else {
-        setMessage(t("license.activateSuccess"));
-      }
+      setMessage(t("license.activateSuccess"));
       await load();
-    } catch {
-      setError(t("license.activateError"));
+    } catch (error) {
+      setError(resolveLicenseActionError(error, t, "license.activateError"));
     }
   }
 
-  async function validateTamper() {
-    if (!gatewayBaseUrl) return;
-    const response = await fetch(`${gatewayBaseUrl}/license/validate`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ licenseFile: "TAMPERED-LICENSE-FILE" }),
-    });
-    const payload = (await response.json()) as { status: LicenseStatus };
-    setStatus(payload.status);
-    setMessage(t("license.tamperWarning"));
+  async function refreshEntitlement() {
+    if (!gatewayBaseUrl) {
+      setError(t("license.noGateway"));
+      return;
+    }
+    setMessage(undefined);
+    setError(undefined);
+    try {
+      const updated = await refreshNaviaLicense(createLicenseService(gatewayBaseUrl));
+      if (!updated) {
+        setError(t("license.validationError"));
+        return;
+      }
+      setMessage(t("license.refreshSuccess"));
+      await load();
+    } catch (error) {
+      setError(resolveLicenseActionError(error, t, "license.validationError"));
+    }
   }
 
-  async function renewSupport() {
-    if (!gatewayBaseUrl) return;
-    const response = await fetch(`${gatewayBaseUrl}/updates/mock-renew-support`, { method: "POST" });
-    const payload = (await response.json()) as { status: LicenseStatus; update: UpdateInfo };
-    setStatus(payload.status);
-    setUpdate(payload.update);
-    setMessage(t("license.renewSuccess"));
-  }
-
-  async function simulateLemonEvent(eventType: "refund_created" | "subscription_cancelled") {
-    if (!gatewayBaseUrl) return;
-    const response = await fetch(`${gatewayBaseUrl}/webhooks/lemon/mock`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ eventType, licenseKey }),
-    });
-    const payload = (await response.json()) as { status: LicenseStatus };
-    setStatus(payload.status);
-    setMessage(eventType === "refund_created" ? "已模擬退款 webhook，授權降級為 safe-mode。" : "已模擬取消訂閱 webhook，授權降級為 safe-mode。");
+  async function deactivateCurrentDevice() {
+    if (!gatewayBaseUrl) {
+      setError(t("license.noGateway"));
+      return;
+    }
+    setMessage(undefined);
+    setError(undefined);
+    try {
+      const deleted = await deactivateNaviaLicense(createLicenseService(gatewayBaseUrl));
+      if (!deleted) {
+        setError(t("license.validationError"));
+        return;
+      }
+      const nextStatus = createFreeStatus("DEVICE_DEACTIVATED");
+      setStatus(nextStatus);
+      setUpdate(buildUpdateInfo(nextStatus));
+      setMessage(t("license.deactivateSuccess"));
+    } catch (error) {
+      setError(resolveLicenseActionError(error, t, "license.validationError"));
+    }
   }
 
   return (
@@ -129,44 +163,47 @@ export function LicensePanel({ gatewayBaseUrl, onClose }: LicensePanelProps): JS
         <div className="commercial-grid">
           <section className="commercial-card">
             <KeyRound size={23} />
-            <h3>Lemon Squeezy beta license</h3>
+            <h3>{t("license.lemonTitle")}</h3>
             <label>
               {t("license.keyLabel")}
               <input value={licenseKey} onChange={(event) => setLicenseKey(event.target.value)} />
             </label>
             <div className="panel-actions">
-              <Tooltip text="第一次啟用會送出 salted machine fingerprint，不送明文硬體序號。">
+              <Tooltip text={t("license.activationTooltip")}>
                 <button className="primary-button" type="button" onClick={activate}>
                   <CheckCircle2 size={16} />
                   {t("license.activate")}
                 </button>
               </Tooltip>
-              <Tooltip text="模擬有人修改 license file 或更新到期日，應立即降級 safe mode。">
-                <button className="secondary-button" type="button" onClick={validateTamper}>
-                  <ShieldAlert size={16} />
-                  {t("license.tamper")}
+              <Tooltip text={t("license.refreshTooltip")}>
+                <button className="secondary-button" type="button" onClick={refreshEntitlement}>
+                  <RefreshCw size={16} />
+                  {t("license.refresh")}
                 </button>
               </Tooltip>
-              <Tooltip text="模擬退款或撤銷後的客服降權流程。">
-                <button className="secondary-button" type="button" onClick={() => simulateLemonEvent("refund_created")}>
+              <Tooltip text={t("license.deactivateTooltip")}>
+                <button className="secondary-button" type="button" onClick={deactivateCurrentDevice}>
                   <Undo2 size={16} />
-                  模擬退款降權
+                  {t("license.deactivate")}
                 </button>
               </Tooltip>
             </div>
             {status ? (
-              <dl className="status-list">
-                <div><dt>付款供應商</dt><dd>{status.paymentProvider}</dd></div>
-                <div><dt>授權供應商</dt><dd>{status.licenseProvider}</dd></div>
-                <div><dt>{t("license.featurePlan")}</dt><dd>{status.plan}</dd></div>
-                <div><dt>{t("license.featureStatus")}</dt><dd>{status.status}</dd></div>
-                <div><dt>{t("license.featureDeviceLimit")}</dt><dd>{status.deviceLimit}</dd></div>
-                <div><dt>{t("license.featureMachines")}</dt><dd>{status.machines.length} 台</dd></div>
-                <div><dt>Entitlement</dt><dd>{status.entitlement?.status ?? "none"}</dd></div>
-                <div><dt>License hash</dt><dd>{status.entitlement?.licenseKeyHash ?? "none"}</dd></div>
-                <div><dt>Offline grace</dt><dd>{status.offlineGraceUntil ?? status.entitlement?.graceUntil ?? "none"}</dd></div>
-                <div><dt>{t("license.featureValidationCode")}</dt><dd>{status.lastValidationCode ?? "none"}</dd></div>
-              </dl>
+              <>
+                <dl className="status-list">
+                  <div><dt>{t("license.paymentProvider")}</dt><dd>{status.paymentProvider}</dd></div>
+                  <div><dt>{t("license.licenseProvider")}</dt><dd>{status.licenseProvider}</dd></div>
+                  <div><dt>{t("license.featurePlan")}</dt><dd>{status.plan}</dd></div>
+                  <div><dt>{t("license.featureStatus")}</dt><dd>{status.status}</dd></div>
+                  <div><dt>{t("license.featureDeviceLimit")}</dt><dd>{status.deviceLimit}</dd></div>
+                  <div><dt>{t("license.featureMachines")}</dt><dd>{t("license.machinesCount", { count: status.machines.length })}</dd></div>
+                  <div><dt>{t("license.entitlement")}</dt><dd>{status.entitlement?.status ?? t("license.none")}</dd></div>
+                  <div><dt>{t("license.licenseHash")}</dt><dd>{status.entitlement?.licenseKeyHash ?? t("license.none")}</dd></div>
+                  <div><dt>{t("license.offlineGrace")}</dt><dd>{status.offlineGraceUntil ?? status.entitlement?.graceUntil ?? t("license.none")}</dd></div>
+                  <div><dt>{t("license.featureValidationCode")}</dt><dd>{status.lastValidationCode ?? t("license.none")}</dd></div>
+                </dl>
+                {statusHint ? <p className={statusHint.level === "ok" ? "panel-success" : "panel-error"}>{statusHint.text}</p> : null}
+              </>
             ) : null}
           </section>
 
@@ -184,9 +221,6 @@ export function LicensePanel({ gatewayBaseUrl, onClose }: LicensePanelProps): JS
                 <p className={update.canInstallLatest ? "panel-success" : "panel-error"}>
                   {update.canInstallLatest ? t("license.updateEligibleMessage") : t("license.updateNeedRenew")}
                 </p>
-                <button className="secondary-button" type="button" onClick={renewSupport}>
-                  {t("license.updateRenew")}
-                </button>
               </>
             ) : null}
           </section>
@@ -203,14 +237,18 @@ export function LicensePanel({ gatewayBaseUrl, onClose }: LicensePanelProps): JS
           ))}
         </section>
 
-        <section className="release-readiness-card" aria-label="正式發佈準備矩陣">
+        <section className="release-readiness-card" aria-label={t("license.readinessLabel")}>
           <header>
             <div>
-              <h3>正式發佈準備矩陣</h3>
-              <p>目前是本機 mock release candidate；正式商業版必須補齊下列 production 條件。</p>
+              <h3>{t("license.readinessTitle")}</h3>
+              <p>{t("license.readinessSubtitle")}</p>
             </div>
             <strong>
-              Ready {readinessSummary.ready} · Warning {readinessSummary.warning} · Blocked {readinessSummary.blocked}
+              {t("license.readinessSummary", {
+                ready: readinessSummary.ready,
+                warning: readinessSummary.warning,
+                blocked: readinessSummary.blocked,
+              })}
             </strong>
           </header>
           <div className="release-readiness-grid">
@@ -230,4 +268,69 @@ export function LicensePanel({ gatewayBaseUrl, onClose }: LicensePanelProps): JS
       </section>
     </div>
   );
+}
+
+function createLicenseService(gatewayBaseUrl: string) {
+  return {
+    gateway: createNaviaLicenseGatewayClient(gatewayBaseUrl),
+    store: createTauriNaviaLicenseCacheStore(),
+    productKey: CLAWDESK_LICENSE_PRODUCT_KEY,
+    appVersion: CLAWDESK_APP_VERSION,
+    appReleaseDateUtc: CLAWDESK_APP_RELEASE_DATE_UTC,
+  };
+}
+
+function buildUpdateInfo(status: LicenseStatus): UpdateInfo {
+  return {
+    currentVersion: CLAWDESK_APP_VERSION,
+    latestVersion: CLAWDESK_APP_VERSION,
+    eligibleLatestVersion: status.eligibleLatestVersion,
+    supportUpdatesUntil: status.supportUpdatesUntil,
+    canInstallLatest: canInstallLatestVersion(status, CLAWDESK_APP_RELEASE_DATE_UTC),
+    downloadUrl: null,
+    releaseNotes: [],
+    requiresRenewal: !canInstallLatestVersion(status, CLAWDESK_APP_RELEASE_DATE_UTC),
+  };
+}
+
+function buildStatusHint(status: LicenseStatus, t: (key: string, vars?: Record<string, string | number>) => string): { level: "ok" | "error"; text: string } | null {
+  switch (status.status) {
+    case "active":
+      return { level: "ok", text: t("license.state.active") };
+    case "trial":
+      return { level: "ok", text: t("license.state.trial") };
+    case "offline-grace":
+      return { level: "error", text: t("license.state.offlineGrace") };
+    case "expired":
+      return { level: "error", text: t("license.state.expired") };
+    case "revoked":
+      return { level: "error", text: t("license.state.revoked") };
+    case "tampered":
+      return { level: "error", text: t("license.state.tampered") };
+    case "safe-mode":
+      return { level: "error", text: t("license.state.safeMode") };
+    default:
+      return null;
+  }
+}
+
+function resolveLicenseActionError(
+  error: unknown,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+  fallbackKey: string,
+): string {
+  const message = error instanceof Error ? error.message : String(error ?? "");
+  if (message.includes("device_limit_exceeded")) {
+    return t("license.error.deviceLimitExceeded");
+  }
+  if (message.includes("revoked")) {
+    return t("license.error.revoked");
+  }
+  if (message.includes("expired")) {
+    return t("license.error.expired");
+  }
+  if (message.includes("email_mismatch")) {
+    return t("license.error.emailMismatch");
+  }
+  return t(fallbackKey);
 }

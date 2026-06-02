@@ -15,13 +15,9 @@ let currentMachineFingerprintHash = "";
 let currentLicenseStatus = createFreeLicenseStatus();
 
 const pricingPlans = [
-  { id: "hobby", name: "Hobby", priceUsd: 0, cadence: "free", description: "本機基礎功能與安全沙盒。" },
-  { id: "pro-monthly", name: "Pro Monthly", priceUsd: 19, cadence: "monthly", description: "個人完整桌面 Agent，每月訂閱。" },
-  { id: "pro-yearly", name: "Pro Yearly", priceUsd: 190, cadence: "yearly", description: "個人完整桌面 Agent，年繳優惠。" },
-  { id: "lifetime-local", name: "Lifetime Local", priceUsd: 249, cadence: "one-time", description: "永久本機 Pro，含 12 個月支援更新。" },
-  { id: "team", name: "Team", priceUsd: 40, cadence: "monthly", description: "多人協作與座席管理，按人計費。" },
-  { id: "enterprise", name: "Enterprise", priceUsd: 50000, cadence: "contract", description: "企業合約、稽核與私有部署支援。" },
-  { id: "byok-managed", name: "BYOK Managed", priceUsd: 30, cadence: "monthly", description: "自帶金鑰的受管執行個體。" },
+  { id: "trial", name: "Free Trial", priceUsd: 0, cadence: "free", description: "本機安全沙盒與基本桌面工作流試用。" },
+  { id: "pro-yearly", name: "Pro Yearly", priceUsd: 79, cadence: "yearly", description: "個人完整桌面 Agent，年繳方案。" },
+  { id: "lifetime-local", name: "Lifetime", priceUsd: 99, cadence: "one-time", description: "永久本機 Pro，含 12 個月支援更新。" },
 ];
 
 const gatewayContract = {
@@ -50,6 +46,12 @@ const gatewayContract = {
     { method: "POST", path: "/license/validate" },
     { method: "POST", path: "/license/refresh-offline-ticket" },
     { method: "POST", path: "/license/report-tamper" },
+    { method: "GET", path: "/provider/secret-ref/contract" },
+    { method: "POST", path: "/provider/secret-ref/issue" },
+    { method: "POST", path: "/provider/token-refresh" },
+    { method: "GET", path: "/provider/openai/runtime-contract" },
+    { method: "POST", path: "/provider/openai/validate-key" },
+    { method: "POST", path: "/provider/openai/chat-test" },
     { method: "GET", path: "/updates/check" },
     { method: "GET", path: "/legal/documents" },
     { method: "GET", path: "/legal/notices" },
@@ -75,8 +77,8 @@ function json(res, code, body) {
 
 function createFreeLicenseStatus() {
   return {
-    paymentProvider: "paddle",
-    licenseProvider: "keygen",
+    paymentProvider: "lemon-squeezy",
+    licenseProvider: "lemon-license",
     plan: "hobby",
     status: "free",
     seats: 1,
@@ -120,8 +122,8 @@ function frontendLicenseFromBackend(backendPayload, machine) {
   const license = backendPayload?.license ?? backendPayload ?? {};
   const active = String(license.status ?? "").toLowerCase() === "active";
   return {
-    paymentProvider: "paddle",
-    licenseProvider: "keygen",
+    paymentProvider: "lemon-squeezy",
+    licenseProvider: "lemon-license",
     plan: license.plan ?? "hobby",
     status: active ? "active" : license.status ?? "free",
     seats: license.plan === "team" ? 10 : 1,
@@ -142,7 +144,7 @@ function frontendLicenseFromBackend(backendPayload, machine) {
           },
         ]
       : [],
-    lastValidationCode: active ? "KEYGEN_VALID" : "PROD_SIM_HOBBY",
+    lastValidationCode: active ? "LEMON_LICENSE_ACTIVE" : "PROD_SIM_HOBBY",
   };
 }
 
@@ -302,14 +304,14 @@ const server = http.createServer(async (req, res) => {
         json(res, 200, frontendIdentityFromBackend(null));
         return;
       }
-      const backend = await backendRequest("/auth/session", { token: currentIdentityToken });
-      json(res, backend.ok ? 200 : 401, backend.ok ? frontendIdentityFromBackend(backend.payload.session) : frontendIdentityFromBackend(null));
+      const backend = await backendRequest("/api/auth/me", { token: currentIdentityToken });
+      json(res, backend.ok ? 200 : 401, backend.ok ? frontendIdentityFromBackend(backend.payload.account) : frontendIdentityFromBackend(null));
       return;
     }
 
     if (req.method === "POST" && pathname === "/identity/register") {
       const body = await readJson(req);
-      const backend = await backendRequest("/auth/register", {
+      const backend = await backendRequest("/api/auth/register", {
         method: "POST",
         body: { email: body.email, password: body.password, displayName: body.displayName, organization: body.organization },
       });
@@ -337,20 +339,23 @@ const server = http.createServer(async (req, res) => {
 
     if (req.method === "POST" && pathname === "/identity/confirm") {
       const body = await readJson(req);
-      const backend = await backendRequest("/auth/confirm", { method: "POST", body: { email: body.email, code: body.code || body.token } });
+      const backend = await backendRequest("/api/auth/verify-email", { method: "POST", body: { email: body.email, code: body.code || body.token } });
       json(res, backend.status, backend.ok ? { ...frontendIdentityFromBackend({ email: body.email, displayName: String(body.email).split("@")[0], mode: "consumer", role: "member" }), verification: { verified: true, at: nowIso() } } : backend.payload);
       return;
     }
 
     if (req.method === "POST" && pathname === "/identity/login") {
       const body = await readJson(req);
-      const backend = await backendRequest("/auth/login", { method: "POST", body: { email: body.email, password: body.password } });
+      const backend = await backendRequest("/api/auth/login", { method: "POST", body: { email: body.email, password: body.password } });
       if (backend.ok) currentIdentityToken = backend.payload.session.token;
       json(res, backend.status, backend.ok ? frontendIdentityFromBackend(backend.payload.session.account) : backend.payload);
       return;
     }
 
     if (req.method === "POST" && pathname === "/identity/logout") {
+      if (currentIdentityToken) {
+        await backendRequest("/api/auth/logout", { method: "POST", token: currentIdentityToken });
+      }
       currentIdentityToken = "";
       json(res, 200, frontendIdentityFromBackend(null));
       return;
@@ -409,7 +414,7 @@ const server = http.createServer(async (req, res) => {
     }
 
     if (req.method === "POST" && pathname === "/license/validate") {
-      currentLicenseStatus = { ...createFreeLicenseStatus(), status: "tampered", lastValidationCode: "KEYGEN_TAMPERED" };
+      currentLicenseStatus = { ...createFreeLicenseStatus(), status: "tampered", lastValidationCode: "LEMON_TAMPERED" };
       json(res, 200, { status: currentLicenseStatus });
       return;
     }
@@ -417,6 +422,42 @@ const server = http.createServer(async (req, res) => {
     if (req.method === "POST" && pathname === "/license/report-tamper") {
       const backend = await backendRequest("/licenses/report-tamper", { method: "POST", body: await readJson(req) });
       json(res, backend.status, { event: backend.payload });
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/provider/secret-ref/contract") {
+      const backend = await backendRequest("/provider/secret-refs/contract");
+      json(res, backend.status, backend.payload);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/provider/secret-ref/issue") {
+      const backend = await backendRequest("/provider/secret-refs/issue", { method: "POST", body: await readJson(req) });
+      json(res, backend.status, backend.payload);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/provider/token-refresh") {
+      const backend = await backendRequest("/provider/token-refresh", { method: "POST", body: await readJson(req) });
+      json(res, backend.status, backend.payload);
+      return;
+    }
+
+    if (req.method === "GET" && pathname === "/provider/openai/runtime-contract") {
+      const backend = await backendRequest("/provider/openai/runtime-contract");
+      json(res, backend.status, backend.payload);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/provider/openai/validate-key") {
+      const backend = await backendRequest("/provider/openai/validate-key", { method: "POST", body: await readJson(req) });
+      json(res, backend.status, backend.payload);
+      return;
+    }
+
+    if (req.method === "POST" && pathname === "/provider/openai/chat-test") {
+      const backend = await backendRequest("/provider/openai/chat-test", { method: "POST", body: await readJson(req) });
+      json(res, backend.status, backend.payload);
       return;
     }
 

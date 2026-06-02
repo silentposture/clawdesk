@@ -22,7 +22,7 @@ function parseArgs(argv) {
     includeStoreInstallerSmoke: false,
     includeMacDmgSmoke: false,
     productionSmoke: false,
-    gatewayPort: Number(process.env.OPENCLAW_MOCK_PORT ?? process.env.CLAWDESK_MOCK_PORT ?? 18890),
+    gatewayPort: Number(process.env.CLAWDESK_MOCK_PORT ?? process.env.OPENCLAW_MOCK_PORT ?? 18890),
     appPort: 5173,
     reportDir: path.join(process.cwd(), "artifacts", "qa-loop"),
   };
@@ -120,6 +120,7 @@ function buildCommandPlan(options) {
 
   return [
     { name: "preflight", cmd: "npm", args: ["run", "preflight"], timeoutMs: 60000, enabled: !options.skipPreflight },
+    { name: "hidden-window-policy", cmd: "npm", args: ["run", "policy:hidden-window"], timeoutMs: 60000, enabled: !options.skipPreflight },
     { name: "release-configs", cmd: "npm", args: ["run", "release:configs:check"], timeoutMs: 60000, enabled: includeReleaseGuardForExtendedTargets },
     { name: "release-guard", cmd: "npm", args: ["run", "release:guard"], timeoutMs: 60000, enabled: includeReleaseGuardForExtendedTargets },
     { name: "unit-tests", cmd: "npm", args: ["test"], timeoutMs: 120000, enabled: !options.skipUnit },
@@ -134,6 +135,13 @@ function buildCommandPlan(options) {
       timeoutMs: 120000,
       enabled: !options.skipVerifyProductionGatewaySim && (options.productionSmoke || options.includeTauriAppSmoke || options.includeWindowsInstallerSmoke),
       cleanupPorts: true,
+    },
+    {
+      name: "verify-reports-check",
+      cmd: "npm",
+      args: ["run", "verify:reports:check"],
+      timeoutMs: 60000,
+      enabled: !options.skipVerifyProductionGatewaySim && (options.productionSmoke || options.includeTauriAppSmoke || options.includeWindowsInstallerSmoke),
     },
     {
       name: options.productionSmoke ? "smoke-gui-prod" : "smoke-gui",
@@ -178,8 +186,16 @@ function buildCommandPlan(options) {
       cmd: "npm",
       args: ["run", "smoke:mac-dmg"],
       timeoutMs: 300000,
-      enabled: options.includeMacDmgSmoke,
+      enabled: options.includeMacDmgSmoke && process.platform === "darwin",
       cleanupPorts: true,
+    },
+    {
+      name: "mac-dmg-smoke-skip",
+      cmd: process.execPath,
+      args: ["-e", "console.log('SKIP mac-dmg-smoke: requires macOS host')"],
+      timeoutMs: 5000,
+      enabled: options.includeMacDmgSmoke && process.platform !== "darwin",
+      cleanupPorts: false,
     },
   ].filter((command) => command.enabled ?? true);
 }
@@ -204,12 +220,19 @@ function cleanupPorts() {
             "-Command",
             `Get-NetTCPConnection -LocalPort ${port} -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess -Unique`,
           ],
-          { cwd: process.cwd(), encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], shell: false },
+          {
+            cwd: process.cwd(),
+            encoding: "utf8",
+            stdio: ["ignore", "pipe", "ignore"],
+            shell: false,
+            windowsHide: process.platform === "win32",
+          },
         )
       : spawnSync("bash", ["-lc", `lsof -ti tcp:${port}`], {
           cwd: process.cwd(),
           encoding: "utf8",
           stdio: ["ignore", "pipe", "ignore"],
+          windowsHide: process.platform === "win32",
         });
     const pids = (finder.stdout || "")
       .split("\n")
@@ -223,11 +246,13 @@ function cleanupPorts() {
           cwd: process.cwd(),
           stdio: ["ignore", "ignore", "ignore"],
           shell: false,
+    windowsHide: process.platform === "win32",
         });
       } else {
         spawnSync("kill", ["-9", pid], {
           cwd: process.cwd(),
           stdio: ["ignore", "ignore", "ignore"],
+          windowsHide: process.platform === "win32",
         });
       }
     }
@@ -257,6 +282,7 @@ async function runOne(command, options) {
       stdio: "inherit",
       timeout: command.timeoutMs,
       shell: false,
+    windowsHide: process.platform === "win32",
     });
 
     if (result.status === 0) break;
@@ -379,3 +405,5 @@ async function run() {
 }
 
 await run();
+
+

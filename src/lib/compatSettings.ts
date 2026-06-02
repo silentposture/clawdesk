@@ -2,7 +2,7 @@ export type SettingsAudience = "basic" | "advanced";
 
 import type { ProviderId } from "./providers";
 
-export interface OpenClawSettingItem {
+export interface CompatSettingItem {
   id: string;
   label: string;
   plainLabel: string;
@@ -11,16 +11,16 @@ export interface OpenClawSettingItem {
   audience: SettingsAudience;
 }
 
-export interface OpenClawSettingSection {
+export interface CompatSettingSection {
   id: string;
   title: string;
   plainTitle: string;
   summary: string;
   setupQuestion: string;
-  items: OpenClawSettingItem[];
+  items: CompatSettingItem[];
 }
 
-export interface OpenClawSetupProfile {
+export interface CompatSetupProfile {
   goal: "personal" | "office" | "automation" | "advanced";
   modelProvider: ProviderId;
   workspaceFolder: string;
@@ -30,7 +30,7 @@ export interface OpenClawSetupProfile {
   enableWorkflows: boolean;
 }
 
-export const defaultOpenClawSetupProfile: OpenClawSetupProfile = {
+export const defaultCompatSetupProfile: CompatSetupProfile = {
   goal: "office",
   modelProvider: "chatgpt-pro",
   workspaceFolder: "~/ClawDesk Projects/桌面 GUI",
@@ -40,25 +40,25 @@ export const defaultOpenClawSetupProfile: OpenClawSetupProfile = {
   enableWorkflows: true,
 };
 
-export const openClawSettingSections: OpenClawSettingSection[] = [
+export const compatSettingSections: CompatSettingSection[] = [
   {
     id: "workspace",
     title: "工作區與專案沙盒",
     plainTitle: "你的 AI 可以在哪裡工作？",
-    summary: "對應 OpenClaw workspace 與專案層設定，決定檔案作業根目錄。",
+    summary: "對應 workspace 與專案層設定，決定檔案作業根目錄。",
     setupQuestion: "選一個專案資料夾，AI 只能在這裡自動改動；外面都要問你。",
     items: [
       {
         id: "workspace.folder",
         label: "agents.defaults.workspace",
         plainLabel: "專案資料夾",
-        description: "OpenClaw 的檔案工作目錄。本桌面版會把它當成沙盒根目錄。",
+        description: "檔案工作目錄。本桌面版會把它當成沙盒根目錄。",
         defaultValue: "~/clawd",
         audience: "basic",
       },
       {
         id: "workspace.projectConfig",
-        label: "openclaw.config.json",
+        label: "compatible.config.json",
         plainLabel: "專案專屬設定",
         description: "放在專案內的設定可覆蓋全域設定，適合不同客戶或工作分類。",
         defaultValue: "專案內可選",
@@ -119,7 +119,7 @@ export const openClawSettingSections: OpenClawSettingSection[] = [
         label: "agents.list[].identity",
         plainLabel: "助理名稱與角色",
         description: "設定 AI 名稱、用途、語氣與專屬規則。",
-        defaultValue: "OpenClaw 助理",
+        defaultValue: "ClawDesk 助理",
         audience: "basic",
       },
       {
@@ -223,7 +223,7 @@ export const openClawSettingSections: OpenClawSettingSection[] = [
     items: [
       {
         id: "security.env",
-        label: "~/.openclaw/.env / SecretRef",
+        label: "~/.clawdesk/.env / SecretRef",
         plainLabel: "金鑰保存",
         description: "API key、channel token 與 Gateway token 使用環境變數或 SecretRef。",
         defaultValue: "本機保管",
@@ -266,7 +266,7 @@ export const openClawSettingSections: OpenClawSettingSection[] = [
         id: "tools.plugins",
         label: "plugins.entries / skills.entries",
         plainLabel: "外掛與技能",
-        description: "安裝、啟用、更新與設定 OpenClaw plugins / skills。",
+        description: "安裝、啟用、更新與設定 plugins / skills。",
         defaultValue: "按需啟用",
         audience: "advanced",
       },
@@ -307,13 +307,13 @@ export const openClawSettingSections: OpenClawSettingSection[] = [
   },
 ];
 
-export function visibleSettingsForAudience(audience: SettingsAudience): OpenClawSettingItem[] {
-  return openClawSettingSections.flatMap((section) =>
+export function visibleSettingsForAudience(audience: SettingsAudience): CompatSettingItem[] {
+  return compatSettingSections.flatMap((section) =>
     section.items.filter((item) => audience === "advanced" || item.audience === "basic"),
   );
 }
 
-export function setupCompletion(profile: OpenClawSetupProfile): number {
+export function setupCompletion(profile: CompatSetupProfile): number {
   const checks = [
     Boolean(profile.workspaceFolder.trim()),
     Boolean(profile.modelProvider),

@@ -1,15 +1,8 @@
-import { FormEvent, useMemo, useState } from "react";
-import { KeyRound, MonitorCog, Shield, Sparkles, X } from "lucide-react";
-import type { LlmProviderSpec, ProviderSession } from "../lib/providers";
-import {
-  canonicalProviderForSession,
-  llmProviderCatalog,
-  openClawUpstreamSnapshot,
-  providerName,
-  providerStatusLabel,
-} from "../lib/providers";
+import { FormEvent, useEffect, useMemo, useState } from "react";
+import { Bot, Eye, PlayCircle, RefreshCw, Shield, Trash2, X } from "lucide-react";
+import type { ProviderSession } from "../lib/providers";
+import { providerStatusLabel } from "../lib/providers";
 import { useI18n } from "../lib/i18n";
-import { writeProviderCredentialToApp } from "../lib/tauri";
 
 interface ProviderPanelProps {
   session: ProviderSession;
@@ -18,14 +11,44 @@ interface ProviderPanelProps {
   onSessionChange: (session: ProviderSession) => void;
 }
 
-const quickProviderIds = new Set(["chatgpt-pro", "openai-api", "google-gemini", "local-model", "mock"]);
-const quickProviders = llmProviderCatalog.filter((provider) => quickProviderIds.has(provider.id));
-const advancedProviders = llmProviderCatalog.filter((provider) => !quickProviderIds.has(provider.id));
+interface OllamaModel {
+  name: string;
+  modifiedAt?: string;
+  capabilities?: {
+    vision?: boolean;
+    text?: boolean;
+    source?: string;
+    reason?: string;
+    probedAt?: string;
+  };
+}
 
-function nextState(providerId: string | null | undefined, fallback = "mock"): string {
-  if (!providerId) return fallback;
-  const found = llmProviderCatalog.find((provider) => provider.id === providerId);
-  return found ? providerId : fallback;
+const endpointOptions = [
+  {
+    id: "ollama-local",
+    label: "Ollama / 本機模型 endpoint",
+    endpoint: "http://127.0.0.1:11434",
+  },
+];
+
+const effortOptions = [
+  { value: "low", label: "Inherited: low" },
+  { value: "medium", label: "Inherited: medium" },
+  { value: "high", label: "Inherited: high" },
+];
+
+function modelFallback(session: ProviderSession): string {
+  return session.model || "nemotron-3-super:cloud";
+}
+
+function capabilityForModel(models: OllamaModel[], modelName: string): OllamaModel["capabilities"] | undefined {
+  return models.find((item) => item.name === modelName)?.capabilities;
+}
+
+function formatProbeTime(value?: string): string {
+  if (!value) return "";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
 }
 
 export function ProviderPanel({
@@ -35,228 +58,226 @@ export function ProviderPanel({
   onSessionChange,
 }: ProviderPanelProps): JSX.Element {
   const { t } = useI18n();
-  const [apiKey, setApiKey] = useState("");
-  const [geminiApiKey, setGeminiApiKey] = useState("");
-  const [chatGptAccount, setChatGptAccount] = useState(session.accountEmail ?? "");
-  const [chatGptModel, setChatGptModel] = useState(session.model ?? "gpt-5.4");
-  const [openAiModel, setOpenAiModel] = useState(session.model ?? "gpt-5.2");
-  const [geminiModel, setGeminiModel] = useState(session.model ?? "gemini-1.5-flash");
-  const [localEndpoint, setLocalEndpoint] = useState(session.endpoint ?? "http://127.0.0.1:11434");
-  const [localModel, setLocalModel] = useState(session.model ?? "llama3.2");
-  const [advancedProvider, setAdvancedProvider] = useState<string>(nextState(advancedProviders[0]?.id));
-  const [advancedModel, setAdvancedModel] = useState<string>(llmProviderCatalog[0]?.modelDefault ?? "");
-  const [advancedAccount, setAdvancedAccount] = useState("");
-  const [advancedKey, setAdvancedKey] = useState("");
-  const [advancedEndpoint, setAdvancedEndpoint] = useState("");
+  const [endpoint, setEndpoint] = useState(session.endpoint ?? endpointOptions[0].endpoint);
+  const [model, setModel] = useState(modelFallback(session));
+  const [effort, setEffort] = useState("low");
+  const [models, setModels] = useState<OllamaModel[]>([]);
   const [busy, setBusy] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const [visionTesting, setVisionTesting] = useState(false);
   const [error, setError] = useState<string>();
+  const [message, setMessage] = useState<string>();
+  const [testResult, setTestResult] = useState<string>();
+  const [visionResult, setVisionResult] = useState<string>();
 
-  const advancedSpec = useMemo<LlmProviderSpec>(() => {
-    return (
-      advancedProviders.find((provider) => provider.id === advancedProvider) ?? {
-        id: "anthropic",
-        shortName: "Anthropic",
-        displayName: "Anthropic",
-        authMode: "api-key",
-        modelPlaceholder: "claude-opus-4-6",
-        modelDefault: "claude-opus-4-6",
-        keyPlaceholder: "sk-ant-...",
-        description: "Anthropic 供應商。",
+  const modelOptions = useMemo(() => {
+    const names = models.map((item) => item.name).filter(Boolean);
+    return [...new Set([model, ...names])].filter(Boolean);
+  }, [model, models]);
+  const selectedCapability = capabilityForModel(models, model);
+
+  useEffect(() => {
+    setEndpoint(session.endpoint ?? endpointOptions[0].endpoint);
+    setModel(modelFallback(session));
+  }, [session.endpoint, session.model]);
+
+  useEffect(() => {
+    void refreshModels(endpoint);
+  }, [gatewayBaseUrl]);
+
+  async function refreshModels(nextEndpoint = endpoint) {
+    if (!gatewayBaseUrl || !nextEndpoint.trim()) return;
+    setError(undefined);
+    setMessage(undefined);
+    setTestResult(undefined);
+    setVisionResult(undefined);
+    try {
+      const response = await fetch(
+        `${gatewayBaseUrl}/provider/local-model/models?endpoint=${encodeURIComponent(nextEndpoint.trim())}`,
+      );
+      const payload = (await response.json()) as { models?: OllamaModel[]; error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || "Cannot load models");
       }
-    );
-  }, [advancedProvider]);
+      const nextModels = payload.models ?? [];
+      setModels(nextModels);
+      if (nextModels.length > 0 && !nextModels.some((item) => item.name === model)) {
+        setModel(nextModels[0].name);
+      }
+      setMessage(t("provider.localModel.modelsLoaded", { count: nextModels.length }));
+    } catch (caught) {
+      setModels([]);
+      setError(caught instanceof Error ? caught.message : t("provider.localModel.modelLoadError"));
+    }
+  }
 
-  async function callProviderEndpoint(path: string, body: Record<string, string>) {
-    if (!gatewayBaseUrl) return null;
+  async function applyLocalModelEndpoint(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!gatewayBaseUrl || !endpoint.trim() || !model.trim()) return;
     setBusy(true);
     setError(undefined);
+    setMessage(undefined);
     try {
-      const response = await fetch(`${gatewayBaseUrl}${path}`, {
+      const response = await fetch(`${gatewayBaseUrl}/auth/local-model`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
+        body: JSON.stringify({
+          endpoint: endpoint.trim(),
+          model: model.trim(),
+          effort,
+        }),
       });
+      const payload = (await response.json()) as ProviderSession | { error?: string };
       if (!response.ok) {
-        return null;
+        throw new Error("error" in payload ? payload.error : "Local model endpoint setup failed");
       }
-      const next = (await response.json()) as ProviderSession;
-      onSessionChange({ ...next, activeProvider: canonicalProviderForSession(next.activeProvider) });
-      return next;
-    } catch {
-      return null;
+      onSessionChange(payload as ProviderSession);
+      setMessage(t("provider.localModel.applied", { model: model.trim(), endpoint: endpoint.trim() }));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : t("provider.localModel.applyError"));
     } finally {
       setBusy(false);
     }
   }
 
-  async function configureChatGptProAccount(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!gatewayBaseUrl || !chatGptAccount.trim()) return;
+  async function testLocalModelEndpoint() {
+    if (!gatewayBaseUrl || !endpoint.trim() || !model.trim()) return;
+    setTesting(true);
     setError(undefined);
-    const response = await callProviderEndpoint("/auth/chatgpt-pro/oauth-login", {
-      accountEmail: chatGptAccount.trim(),
-      model: chatGptModel.trim(),
-    });
-    if (!response) {
-      setError(t("provider.error.missingAccount"));
-    } else {
-      await writeProviderCredentialToApp({
-        providerId: "chatgpt-pro",
-        authMode: "oauth",
-        accountEmail: chatGptAccount.trim(),
-        model: response.model ?? chatGptModel.trim(),
-      }).catch(() => undefined);
-      setChatGptModel(response.model ?? chatGptModel);
-    }
-  }
-
-  async function connectApiKey(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!gatewayBaseUrl || !apiKey.trim()) return;
-    setError(undefined);
-    const response = await callProviderEndpoint("/auth/openai-api-key", {
-      apiKey: apiKey.trim(),
-      model: openAiModel.trim(),
-    });
-    if (!response) {
-      setError(t("provider.error.apiKey"));
-    } else {
-      await writeProviderCredentialToApp({
-        providerId: "openai-api",
-        authMode: "api-key",
-        secret: apiKey.trim(),
-        model: response.model ?? openAiModel.trim(),
-      }).catch(() => undefined);
-      setApiKey("");
-    }
-  }
-
-  async function connectGeminiApiKey(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!gatewayBaseUrl || !geminiApiKey.trim()) return;
-    setError(undefined);
-    const response = await callProviderEndpoint("/auth/gemini-api-key", {
-      apiKey: geminiApiKey.trim(),
-      model: geminiModel.trim(),
-    });
-    if (!response) {
-      setError(t("provider.error.apiKey"));
-    } else {
-      await writeProviderCredentialToApp({
-        providerId: "google-gemini",
-        authMode: "api-key",
-        secret: geminiApiKey.trim(),
-        model: response.model ?? geminiModel.trim(),
-      }).catch(() => undefined);
-      setGeminiApiKey("");
-    }
-  }
-
-  async function connectLocalModel(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!gatewayBaseUrl || !localEndpoint.trim() || !localModel.trim()) return;
-    setError(undefined);
-    const response = await callProviderEndpoint("/auth/local-model", {
-      endpoint: localEndpoint.trim(),
-      model: localModel.trim(),
-    });
-    if (!response) {
-      setError(t("provider.error.local"));
-    } else {
-      await writeProviderCredentialToApp({
-        providerId: "local-model",
-        authMode: "local-endpoint",
-        endpoint: response.endpoint ?? localEndpoint.trim(),
-        model: response.model ?? localModel.trim(),
-      }).catch(() => undefined);
-    }
-  }
-
-  async function useMockProvider() {
-    if (!gatewayBaseUrl) return;
-    setError(undefined);
-    const response = await callProviderEndpoint("/auth/mock", {});
-    if (!response) {
-      setError(t("provider.error.mock"));
-    }
-  }
-
-  async function configureAdvancedProvider(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (!gatewayBaseUrl || !advancedModel.trim()) return;
-    setError(undefined);
+    setTestResult(undefined);
     try {
-      const body: Record<string, string> = {
-        provider: advancedProvider,
-        model: advancedModel.trim(),
+      const setupResponse = await fetch(`${gatewayBaseUrl}/auth/local-model`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpoint: endpoint.trim(),
+          model: model.trim(),
+          effort,
+        }),
+      });
+      const setupPayload = (await setupResponse.json()) as ProviderSession | { error?: string };
+      if (!setupResponse.ok) {
+        throw new Error("error" in setupPayload ? setupPayload.error : "Local model endpoint setup failed");
+      }
+      onSessionChange(setupPayload as ProviderSession);
+
+      const chatResponse = await fetch(`${gatewayBaseUrl}/provider/local-model/test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpoint: endpoint.trim(),
+          model: model.trim(),
+          prompt: t("provider.localModel.testPrompt"),
+        }),
+      });
+      const payload = (await chatResponse.json()) as { ok?: boolean; outputText?: string; error?: string };
+      if (!chatResponse.ok || !payload.ok) {
+        throw new Error(payload.error || t("provider.localModel.testFailed"));
+      }
+      setTestResult(payload.outputText || t("provider.localModel.testSuccess"));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : t("provider.localModel.testError"));
+    } finally {
+      setTesting(false);
+    }
+  }
+
+  async function testVisionCapability() {
+    if (!gatewayBaseUrl || !endpoint.trim() || !model.trim()) return;
+    setVisionTesting(true);
+    setError(undefined);
+    setVisionResult(undefined);
+    try {
+      const response = await fetch(`${gatewayBaseUrl}/provider/local-model/vision-test`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpoint: endpoint.trim(),
+          model: model.trim(),
+        }),
+      });
+      const payload = (await response.json()) as {
+        ok?: boolean;
+        vision?: boolean;
+        mode?: string;
+        outputText?: string;
+        error?: string;
       };
-      if (advancedSpec.authMode === "api-key" && !advancedKey.trim()) {
-        setError(t("provider.error.apiKey"));
-        return;
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || t("provider.localModel.visionProbeError"));
       }
-      if (advancedSpec.authMode === "oauth" && !advancedAccount.trim()) {
-        setError(t("provider.error.missingAccount"));
-        return;
-      }
-      if (advancedSpec.authMode === "local-endpoint" && !advancedEndpoint.trim()) {
-        setError(t("provider.error.local"));
-        return;
-      }
-      if (advancedSpec.authMode === "api-key") {
-        body.apiKey = advancedKey.trim();
-      }
-      if (advancedSpec.authMode === "oauth") {
-        body.accountEmail = advancedAccount.trim();
-      }
-      if (advancedSpec.authMode === "local-endpoint") {
-        body.endpoint = advancedEndpoint.trim();
-      }
-      const response = await fetch(`${gatewayBaseUrl}/auth/provider`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      if (!response.ok) {
-        throw new Error("configure advanced provider failed");
-      }
-      const next = (await response.json()) as ProviderSession;
-      onSessionChange({ ...next, activeProvider: canonicalProviderForSession(next.activeProvider) });
-      await writeProviderCredentialToApp({
-        providerId: advancedSpec.id,
-        authMode: advancedSpec.authMode,
-        secret: advancedSpec.authMode === "api-key" ? advancedKey.trim() : undefined,
-        accountEmail: advancedSpec.authMode === "oauth" ? advancedAccount.trim() : undefined,
-        endpoint: advancedSpec.authMode === "local-endpoint" ? advancedEndpoint.trim() : undefined,
-        model: next.model ?? advancedModel.trim(),
-      }).catch(() => undefined);
-      if (advancedSpec.authMode === "api-key") {
-        setAdvancedKey("");
-      }
-      if (advancedSpec.authMode === "oauth") {
-        setAdvancedAccount("");
-      }
-    } catch {
-      setError(t("provider.error.apiKey"));
+      const vision = Boolean(payload.vision);
+      setModels((current) =>
+        current.map((item) =>
+          item.name === model.trim()
+            ? {
+                ...item,
+                capabilities: {
+                  ...(item.capabilities ?? {}),
+                  vision,
+                  text: true,
+                  source: "probe",
+                  reason: vision ? t("provider.localModel.visionProbeReady") : t("provider.localModel.visionProbeMetadata"),
+                },
+              }
+            : item,
+        ),
+      );
+      setVisionResult(vision ? t("provider.localModel.visionProbeReady") : t("provider.localModel.visionProbeMetadata"));
+    } catch (caught) {
+      setVisionResult(t("provider.localModel.visionProbeMetadata"));
+      setError(caught instanceof Error ? caught.message : t("provider.localModel.visionProbeError"));
     } finally {
-      setBusy(false);
+      setVisionTesting(false);
     }
   }
 
-  function onAdvancedProviderChange(nextProvider: string) {
-    setAdvancedProvider(nextProvider);
-    setAdvancedModel(advancedProviders.find((provider) => provider.id === nextProvider)?.modelDefault ?? "");
-    setAdvancedEndpoint(advancedProviders.find((provider) => provider.id === nextProvider)?.endpointPlaceholder ?? "");
-    setAdvancedKey("");
-    setAdvancedAccount("");
+  async function clearVisionCapability() {
+    if (!gatewayBaseUrl || !endpoint.trim() || !model.trim()) return;
+    setError(undefined);
+    setVisionResult(undefined);
+    try {
+      const response = await fetch(`${gatewayBaseUrl}/provider/local-model/vision-clear`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          endpoint: endpoint.trim(),
+          model: model.trim(),
+        }),
+      });
+      const payload = (await response.json()) as { ok?: boolean; error?: string };
+      if (!response.ok || !payload.ok) {
+        throw new Error(payload.error || t("provider.localModel.visionClearError"));
+      }
+      setModels((current) =>
+        current.map((item) =>
+          item.name === model.trim()
+            ? {
+                ...item,
+                capabilities: {
+                  ...(item.capabilities ?? {}),
+                  vision: false,
+                  text: true,
+                  source: "heuristic",
+                  probedAt: undefined,
+                },
+              }
+            : item,
+        ),
+      );
+      setVisionResult(t("provider.localModel.visionClearSuccess"));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : t("provider.localModel.visionClearError"));
+    }
   }
 
   return (
     <div className="panel-backdrop" role="presentation">
-      <section className="provider-panel" role="dialog" aria-modal="true" aria-labelledby="provider-title">
+      <section className="provider-panel compat-provider-panel" role="dialog" aria-modal="true" aria-labelledby="provider-title">
         <header className="provider-header">
           <div>
             <h2 id="provider-title">{t("provider.title")}</h2>
-            <p>{t("provider.subtitle")}</p>
+            <p>{t("provider.localModel.subtitle")}</p>
           </div>
           <button className="icon-button" type="button" aria-label={t("common.close")} onClick={onClose}>
             <X size={18} />
@@ -268,204 +289,118 @@ export function ProviderPanel({
           <div>
             <span>{t("provider.currentState")}</span>
             <strong>
-              {providerName(session.activeProvider)} · {providerStatusLabel(session.status)}
+              {session.displayName} · {providerStatusLabel(session.status)}
             </strong>
             <p>{session.detail}</p>
-            <small>
-              OpenClaw upstream {openClawUpstreamSnapshot.commit.slice(0, 12)} · OpenAI 支援 API key 與 Codex/OAuth 帳號模式
-            </small>
           </div>
         </div>
 
-        <div className="provider-options">
-          {quickProviders
-            .filter((provider) => provider.id !== "mock")
-            .map((provider) => {
-              if (provider.id === "chatgpt-pro") {
-                return (
-                  <article className="provider-card" key={provider.id}>
-                    <div>
-                      <Sparkles size={20} />
-                      <h3>{provider.shortName}</h3>
-                    </div>
-                    <p>{provider.description}</p>
-                    <form className="stacked-form" onSubmit={configureChatGptProAccount}>
-                      <input
-                        value={chatGptModel}
-                        onChange={(event) => setChatGptModel(event.target.value)}
-                        placeholder={provider.modelPlaceholder}
-                        autoComplete="off"
-                      />
-                      <input
-                        value={chatGptAccount}
-                        onChange={(event) => setChatGptAccount(event.target.value)}
-                        placeholder={provider.accountPlaceholder ?? ""}
-                        type="email"
-                        autoComplete="email"
-                      />
-                      <button
-                        className="secondary-button"
-                        type="submit"
-                        disabled={busy || !gatewayBaseUrl || !chatGptAccount.trim() || !chatGptModel.trim()}
-                      >
-                        <Sparkles size={16} />
-                        {t("provider.chatgpt.submit")}
-                      </button>
-                    </form>
-                  </article>
-                );
-              }
+        <form className="compat-provider-flow" onSubmit={applyLocalModelEndpoint}>
+          <label>
+            <span>{t("provider.localModel.endpoint")}</span>
+            <select
+              value={endpoint}
+              onChange={(event) => {
+                const nextEndpoint = event.target.value;
+                setEndpoint(nextEndpoint);
+                void refreshModels(nextEndpoint);
+              }}
+            >
+              {endpointOptions.map((item) => (
+                <option key={item.id} value={item.endpoint}>
+                  {item.label} · {item.endpoint}
+                </option>
+              ))}
+            </select>
+          </label>
 
-              if (provider.id === "openai-api") {
-                return (
-                  <article className="provider-card" key={provider.id}>
-                    <div>
-                      <KeyRound size={20} />
-                      <h3>{t("provider.openai")}</h3>
-                    </div>
-                    <p>{t("provider.openai.description")}</p>
-                    <form className="key-form" onSubmit={connectApiKey}>
-                      <input
-                        value={openAiModel}
-                        onChange={(event) => setOpenAiModel(event.target.value)}
-                        placeholder={t("provider.openai.modelPlaceholder")}
-                        autoComplete="off"
-                      />
-                      <input
-                        value={apiKey}
-                        onChange={(event) => setApiKey(event.target.value)}
-                        placeholder={t("provider.openai.keyPlaceholder")}
-                        type="password"
-                        autoComplete="off"
-                      />
-                      <button className="secondary-button" type="submit" disabled={busy || !apiKey.trim()}>
-                        {t("provider.openai.submit")}
-                      </button>
-                    </form>
-                    {session.maskedKey ? <small>{t("provider.openai.currentKey", { key: session.maskedKey })}</small> : null}
-                  </article>
-                );
-              }
+          <label>
+            <span>{t("provider.localModel.model")}</span>
+            <select value={model} onChange={(event) => setModel(event.target.value)}>
+              {modelOptions.map((item) => (
+                <option key={item} value={item}>
+                  {item}
+                </option>
+              ))}
+            </select>
+            <small className={selectedCapability?.vision ? "provider-capability vision" : "provider-capability text"}>
+              {selectedCapability?.vision ? t("provider.localModel.visionReady") : t("provider.localModel.metadataOnly")}
+            </small>
+            {selectedCapability?.source === "probe" && selectedCapability.probedAt ? (
+              <small className="provider-capability">{t("provider.localModel.visionLastTested", { time: formatProbeTime(selectedCapability.probedAt) })}</small>
+            ) : null}
+          </label>
 
-              return (
-                <article className="provider-card" key={provider.id}>
-                  <div>
-                    <MonitorCog size={20} />
-                    <h3>{provider.id === "google-gemini" ? t("provider.gemini") : t("provider.local")}</h3>
-                  </div>
-                  <p>{provider.description}</p>
-                  <form
-                    className="stacked-form"
-                    onSubmit={provider.id === "google-gemini" ? connectGeminiApiKey : connectLocalModel}
-                  >
-                    <input
-                      value={provider.id === "google-gemini" ? geminiModel : localModel}
-                      onChange={(event) =>
-                        provider.id === "google-gemini" ? setGeminiModel(event.target.value) : setLocalModel(event.target.value)
-                      }
-                      placeholder={provider.id === "google-gemini" ? t("provider.gemini.modelPlaceholder") : t("provider.local.modelPlaceholder")}
-                      autoComplete="off"
-                    />
-                    <input
-                      value={provider.id === "google-gemini" ? geminiApiKey : localEndpoint}
-                      onChange={(event) =>
-                        provider.id === "google-gemini"
-                          ? setGeminiApiKey(event.target.value)
-                          : setLocalEndpoint(event.target.value)
-                      }
-                      placeholder={
-                        provider.id === "google-gemini" ? t("provider.gemini.keyPlaceholder") : t("provider.local.endpointPlaceholder")
-                      }
-                      type={provider.id === "google-gemini" ? "password" : "text"}
-                      autoComplete="off"
-                    />
-                    <button
-                      className="secondary-button"
-                      type="submit"
-                      disabled={
-                        busy ||
-                        (provider.id === "google-gemini" ? !geminiApiKey.trim() : !localEndpoint.trim() || !localModel.trim())
-                      }
-                    >
-                      {provider.id === "google-gemini" ? t("provider.gemini.submit") : t("provider.local.submit")}
-                    </button>
-                  </form>
-                  {provider.id === "google-gemini" && session.maskedKey ? (
-                    <small>{t("provider.gemini.currentKey", { key: session.maskedKey })}</small>
-                  ) : null}
-                </article>
-              );
-            })}
+          <label>
+            <span>{t("provider.localModel.effort")}</span>
+            <select value={effort} onChange={(event) => setEffort(event.target.value)}>
+              {effortOptions.map((item) => (
+                <option key={item.value} value={item.value}>
+                  {item.label}
+                </option>
+              ))}
+            </select>
+          </label>
 
-          <article className="provider-card" key="provider-mock">
-            <div>
-              <Shield size={20} />
-              <h3>{t("provider.mock.title")}</h3>
-            </div>
-            <p>{t("provider.mock.description")}</p>
-            <button className="secondary-button" type="button" disabled={busy} onClick={useMockProvider}>
-              {t("provider.mock.submit")}
+          <div className="compat-provider-actions">
+            <button className="secondary-button" type="button" disabled={busy || !gatewayBaseUrl} onClick={() => void refreshModels()}>
+              <RefreshCw size={16} />
+              {t("provider.localModel.refresh")}
             </button>
-          </article>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy || testing || !gatewayBaseUrl || !endpoint.trim() || !model.trim()}
+              onClick={() => void testLocalModelEndpoint()}
+            >
+              <PlayCircle size={16} />
+              {t("provider.localModel.test")}
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy || visionTesting || !gatewayBaseUrl || !endpoint.trim() || !model.trim()}
+              onClick={() => void testVisionCapability()}
+            >
+              <Eye size={16} />
+              {t("provider.localModel.visionProbe")}
+            </button>
+            <button
+              className="secondary-button"
+              type="button"
+              disabled={busy || visionTesting || !gatewayBaseUrl || !endpoint.trim() || !model.trim() || selectedCapability?.source !== "probe"}
+              onClick={() => void clearVisionCapability()}
+            >
+              <Trash2 size={16} />
+              {t("provider.localModel.visionClear")}
+            </button>
+            <button className="primary-button" type="submit" disabled={busy || !gatewayBaseUrl || !endpoint.trim() || !model.trim()}>
+              <Bot size={16} />
+              {t("provider.localModel.apply")}
+            </button>
+          </div>
+        </form>
 
-          <article className="provider-card">
-            <div>
-              <Sparkles size={20} />
-              <h3>更多供應商（OpenClaw Provider 目錄）</h3>
-            </div>
-            <p>支援 OpenClaw 目錄中的主要供應商，可直接以 key / OAuth / endpoint 方式連線。</p>
-            <form className="key-form" onSubmit={configureAdvancedProvider}>
-              <select
-                value={advancedProvider}
-                onChange={(event) => onAdvancedProviderChange(event.target.value)}
-                className="provider-provider-select"
+        {models.length > 0 ? (
+          <section className="compat-model-list" aria-label="Local model list">
+            {models.map((item) => (
+              <button
+                className={item.name === model ? "model-chip selected" : "model-chip"}
+                type="button"
+                key={item.name}
+                title={item.capabilities?.reason}
+                onClick={() => setModel(item.name)}
               >
-                {advancedProviders.map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.shortName}
-                  </option>
-                ))}
-              </select>
-              <input
-                value={advancedModel}
-                onChange={(event) => setAdvancedModel(event.target.value)}
-                placeholder={advancedSpec.modelPlaceholder}
-                autoComplete="off"
-              />
-              {advancedSpec.authMode === "oauth" ? (
-                <input
-                  value={advancedAccount}
-                  onChange={(event) => setAdvancedAccount(event.target.value)}
-                  placeholder={advancedSpec.accountPlaceholder ?? `${advancedSpec.shortName} 帳號 Email`}
-                  type="email"
-                  autoComplete="email"
-                />
-              ) : null}
-              {advancedSpec.authMode === "api-key" ? (
-                <input
-                  value={advancedKey}
-                  onChange={(event) => setAdvancedKey(event.target.value)}
-                  placeholder={advancedSpec.keyPlaceholder ?? `${advancedSpec.shortName} API Key`}
-                  type="password"
-                  autoComplete="off"
-                />
-              ) : null}
-              {advancedSpec.authMode === "local-endpoint" ? (
-                <input
-                  value={advancedEndpoint}
-                  onChange={(event) => setAdvancedEndpoint(event.target.value)}
-                  placeholder={advancedSpec.endpointPlaceholder ?? "http://127.0.0.1:11434"}
-                  autoComplete="off"
-                />
-              ) : null}
-              <p className="provider-note">{advancedSpec.description}</p>
-              <button className="secondary-button" type="submit" disabled={busy || !gatewayBaseUrl}>
-                套用供應商
+                <span>{item.name}</span>
+                <small>{item.capabilities?.vision ? t("provider.localModel.visionBadge") : t("provider.localModel.textBadge")}</small>
               </button>
-            </form>
-          </article>
-        </div>
+            ))}
+          </section>
+        ) : null}
 
+        {message ? <p className="provider-note">{message}</p> : null}
+        {testResult ? <p className="provider-test-result">{testResult}</p> : null}
+        {visionResult ? <p className="provider-test-result">{visionResult}</p> : null}
         {error ? <p className="provider-error">{error}</p> : null}
       </section>
     </div>

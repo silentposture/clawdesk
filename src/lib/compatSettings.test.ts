@@ -1,14 +1,14 @@
 import { describe, expect, it } from "vitest";
 import {
-  defaultOpenClawSetupProfile,
-  openClawSettingSections,
+  defaultCompatSetupProfile,
+  compatSettingSections,
   setupCompletion,
   visibleSettingsForAudience,
-} from "./openclawSettings";
+} from "./compatSettings";
 
-describe("OpenClaw settings map", () => {
-  it("covers the major OpenClaw configuration groups", () => {
-    const ids = openClawSettingSections.map((section) => section.id);
+describe("Compat settings map", () => {
+  it("covers the major compatible configuration groups", () => {
+    const ids = compatSettingSections.map((section) => section.id);
     expect(ids).toEqual([
       "workspace",
       "models",
@@ -26,6 +26,6 @@ describe("OpenClaw settings map", () => {
   });
 
   it("reports guided setup completion", () => {
-    expect(setupCompletion(defaultOpenClawSetupProfile)).toBe(100);
+    expect(setupCompletion(defaultCompatSetupProfile)).toBe(100);
   });
 });

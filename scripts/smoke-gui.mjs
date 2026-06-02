@@ -9,9 +9,10 @@ function parseCliArgs(argv) {
     connectOnly: false,
     appServer: process.env.CLAWDESK_SMOKE_APP_SERVER ?? "dev",
     gatewayPort: Number(
-      process.env.OPENCLAW_SMOKE_GATEWAY_PORT
-      ?? process.env.OPENCLAW_MOCK_PORT
+      process.env.CLAWDESK_SMOKE_GATEWAY_PORT
       ?? process.env.CLAWDESK_MOCK_PORT
+      ?? process.env.OPENCLAW_SMOKE_GATEWAY_PORT
+      ?? process.env.OPENCLAW_MOCK_PORT
       ?? 18890,
     ),
     appPort: Number(process.env.CLAWDESK_SMOKE_APP_PORT ?? 5173),
@@ -58,6 +59,9 @@ const accountPassword = process.env.CLAWDESK_ACCOUNT_PASSWORD ?? process.env.CLA
 const developerEmail = process.env.CLAWDESK_DEVELOPER_EMAIL ?? accountEmail;
 const developerPassword = process.env.CLAWDESK_DEVELOPER_PASSWORD ?? "ChangeMe123!";
 const accountIsDeveloper = accountEmail.trim().toLowerCase() === developerEmail.trim().toLowerCase();
+const recoveryAccountEmail = process.env.CLAWDESK_SMOKE_RECOVERY_EMAIL ?? "smoke.recovery@example.com";
+const recoveryAccountPassword = process.env.CLAWDESK_SMOKE_RECOVERY_PASSWORD ?? "SmokeReset123!";
+const recoveryAccountResetPassword = process.env.CLAWDESK_SMOKE_RECOVERY_PASSWORD_RESET ?? "SmokeReset456!";
 
 const reportDir = path.join(process.cwd(), "artifacts", "gui-smoke");
 const reportFile = path.join(reportDir, `${new Date().toISOString().replace(/[:.]/g, "_")}-report.json`);
@@ -83,6 +87,68 @@ async function postJson(pathname, body = {}) {
   return { response, payload };
 }
 
+async function ensureVerifiedIdentityAccount(email, password, displayName = "Smoke Recovery") {
+  const login = await postJson("/identity/login", { email, password });
+  if (login.response.ok) return;
+
+  const register = await postJson("/identity/register", {
+    email,
+    password,
+    displayName,
+    mode: "personal",
+    organization: "ClawDesk Smoke",
+  });
+  if (!register.response.ok && register.response.status !== 409) {
+    throw new Error(`failed to register recovery account (${register.response.status})`);
+  }
+
+  async function readVerificationCode() {
+    const verifyCodeResult = await fetch(`${gatewayBaseUrl}/identity/verification-code?email=${encodeURIComponent(email)}`);
+    const verifyCodePayload = await verifyCodeResult.json().catch(() => ({}));
+    const verifyCode = typeof verifyCodePayload.code === "string" ? verifyCodePayload.code : "";
+    const verifyToken = typeof verifyCodePayload.token === "string" ? verifyCodePayload.token : "";
+    return { verifyCode, verifyToken };
+  }
+
+  let { verifyCode, verifyToken } = await readVerificationCode();
+  if (!verifyCode && !verifyToken) {
+    await postJson("/identity/resend-verification", { email });
+    ({ verifyCode, verifyToken } = await readVerificationCode());
+  }
+  if (!verifyCode && !verifyToken) {
+    await postJson("/identity/password/forgot", { email });
+    const resetCodeResponse = await fetch(`${gatewayBaseUrl}/identity/password-reset-code?email=${encodeURIComponent(email)}`);
+    const resetCodePayload = await resetCodeResponse.json().catch(() => ({}));
+    const resetCode = typeof resetCodePayload.code === "string" ? resetCodePayload.code : "";
+    if (resetCode) {
+      const reset = await postJson("/identity/password/reset", {
+        email,
+        code: resetCode,
+        password,
+      });
+      if (reset.response.ok) {
+        const resetLogin = await postJson("/identity/login", { email, password });
+        if (resetLogin.response.ok) return;
+      }
+    }
+    throw new Error("recovery verification code is unavailable");
+  }
+
+  const confirm = await postJson("/identity/confirm", {
+    email,
+    code: verifyCode,
+    token: verifyToken,
+  });
+  if (!confirm.response.ok) {
+    throw new Error("recovery account verification failed");
+  }
+
+  const relogin = await postJson("/identity/login", { email, password });
+  if (!relogin.response.ok) {
+    throw new Error(`recovery account login failed after verify (${relogin.response.status})`);
+  }
+}
+
 function commandInvocation(command, args) {
   if (process.platform !== "win32") return { command, args };
   if (command.endsWith(".exe")) return { command, args };
@@ -97,6 +163,7 @@ function spawnProcess(command, args, env = {}) {
     env: { ...process.env, ...env },
     stdio: ["ignore", "pipe", "pipe"],
     shell: false,
+    windowsHide: process.platform === "win32",
   });
 }
 
@@ -145,6 +212,7 @@ async function stop(child, label) {
       cwd: process.cwd(),
       stdio: ["ignore", "ignore", "ignore"],
       shell: false,
+    windowsHide: process.platform === "win32",
     });
   } else {
     child.kill("SIGTERM");
@@ -424,6 +492,18 @@ async function waitForIdentityButton(page, timeoutMs = 6000) {
   throw new Error("身份入口按鈕未就緒");
 }
 
+async function openIdentityDialog(page, timeoutMs = 6000) {
+  const identityButton = await waitForIdentityButton(page, timeoutMs);
+  await identityButton.click({ force: true }).catch(() => {});
+  const dialog = page.locator(".identity-panel").first();
+  await dialog.waitFor({ state: "visible", timeout: timeoutMs });
+  return dialog;
+}
+
+function identitySignInTab(dialog) {
+  return dialog.getByRole("tab", { name: /^(登入|Sign in|Login)$/i }).first();
+}
+
 async function waitForMainShell(page, timeoutMs = 9000, options = {}) {
   const requireIdentityButton = options.requireIdentityButton !== false;
   const halfTimeout = Math.max(timeoutMs / 2, 2000);
@@ -528,6 +608,10 @@ async function waitForSessionButton(page, testId, timeoutMs = 5000) {
     "session-button-security",
     "session-button-diagnostics",
     "session-button-ergonomics",
+    "session-button-comparison",
+    "session-button-coding",
+    "session-button-context",
+    "session-button-safety-queue",
     "session-button-compatibility",
     "session-button-legal",
     "session-button-provider",
@@ -732,8 +816,21 @@ async function openPanelByTestId(page, testId, selector, timeoutMs = 8000, optio
     await dismissAllModals(page);
     await clearPanelBackdrops(page);
     const button = await waitForSessionButton(page, testId, timeoutMs);
-    if (await button.isDisabled()) {
-      throw new Error(`按鈕 disabled：${testId}`);
+    const enabledDeadline = Date.now() + Math.min(5000, timeoutMs);
+    let buttonReady = true;
+    while (await button.isDisabled()) {
+      if (Date.now() >= enabledDeadline) {
+        buttonReady = false;
+        break;
+      }
+      await page.waitForTimeout(120);
+    }
+    if (!buttonReady) {
+      if (attempt === retries - 1) {
+        throw new Error(`按鈕 disabled：${testId}`);
+      }
+      await page.waitForTimeout(220);
+      continue;
     }
     const beforeCount = selector ? await safeEvaluate(page, () => page.locator(selector).count(), 0) : 0;
     if (process.env.CLAWDESK_DEBUG_SMOKE === "1") {
@@ -1020,6 +1117,7 @@ async function ensureLocalServices() {
     await waitForHealth(`${gatewayBaseUrl}/health`, 1200, 120);
   } catch {
     gateway = spawnProcess(process.execPath, ["sidecars/mock-gateway/server.mjs"], {
+      CLAWDESK_MOCK_PORT: String(gatewayPort),
       OPENCLAW_MOCK_PORT: String(gatewayPort),
       CLAWDESK_DEVELOPER_EMAIL: developerEmail,
       CLAWDESK_DEVELOPER_PASSWORD: developerPassword,
@@ -1035,6 +1133,7 @@ async function ensureLocalServices() {
   } catch {
     const command = appServerCommand();
     appServerProcess = spawnProcess("npm", command.args, {
+      CLAWDESK_MOCK_PORT: String(gatewayPort),
       OPENCLAW_MOCK_PORT: String(gatewayPort),
       VITE_GATEWAY_PORT: String(gatewayPort),
     });
@@ -1046,6 +1145,7 @@ async function ensureLocalServices() {
 if (!cliOptions.connectOnly) {
   await assertProductionBuildReady();
   gateway = spawnProcess(process.execPath, ["sidecars/mock-gateway/server.mjs"], {
+    CLAWDESK_MOCK_PORT: String(gatewayPort),
     OPENCLAW_MOCK_PORT: String(gatewayPort),
     CLAWDESK_DEVELOPER_EMAIL: developerEmail,
     CLAWDESK_DEVELOPER_PASSWORD: developerPassword,
@@ -1055,6 +1155,7 @@ if (!cliOptions.connectOnly) {
 
   const command = appServerCommand();
   appServerProcess = spawnProcess("npm", command.args, {
+    CLAWDESK_MOCK_PORT: String(gatewayPort),
     OPENCLAW_MOCK_PORT: String(gatewayPort),
     VITE_GATEWAY_PORT: String(gatewayPort),
   });
@@ -1322,6 +1423,7 @@ async function run() {
   } else {
     await waitFor(`${gatewayBaseUrl}/health`);
   }
+  await ensureVerifiedIdentityAccount(recoveryAccountEmail, recoveryAccountPassword);
   const loginTest = await postJson("/identity/login", {
     email: accountEmail,
     password: accountPassword,
@@ -1448,6 +1550,73 @@ async function run() {
     }
   });
 
+  await recordCheck("帳號驗證信重送與密碼重設 GUI 流程", async () => {
+    await closeQuickSetupIfPresent(page);
+    let dialog = await openIdentityDialog(page, 8000);
+
+    const signOutButton = dialog.getByRole("button", { name: /登出|Sign out/i }).first();
+    if (await signOutButton.count()) {
+      await signOutButton.click({ force: true });
+      await dialog.waitFor({ state: "hidden", timeout: 5000 }).catch(() => {});
+    }
+
+    dialog = await openIdentityDialog(page, 8000);
+    await dialog.getByRole("tab", { name: /重設密碼|Reset password/i }).click({ force: true });
+
+    const resetEmailInput = dialog.locator("input[type='email']").first();
+    await resetEmailInput.fill(recoveryAccountEmail);
+
+    const requestResetButton = dialog.getByRole("button", { name: /寄送重設碼|Send reset code/i }).first();
+    await requestResetButton.click({ force: true });
+
+    const fetchResetButton = dialog.getByRole("button", { name: /取重設碼|Fetch reset code/i }).first();
+    await fetchResetButton.click({ force: true });
+
+    const resetCodeInput = dialog.locator("input[inputmode='numeric']").first();
+    let resetCode = (await resetCodeInput.inputValue().catch(() => "")).trim();
+    if (!resetCode) {
+      const resetCodeResponse = await fetch(`${gatewayBaseUrl}/identity/password-reset-code?email=${encodeURIComponent(recoveryAccountEmail)}`);
+      const resetCodePayload = await resetCodeResponse.json().catch(() => ({}));
+      resetCode = typeof resetCodePayload.code === "string" ? resetCodePayload.code.trim() : "";
+      if (!resetCode) {
+        throw new Error("password reset code not available");
+      }
+      await resetCodeInput.fill(resetCode);
+    }
+
+    const passwordInputs = dialog.locator("input[type='password']");
+    await passwordInputs.nth(0).fill(recoveryAccountResetPassword);
+    await passwordInputs.nth(1).fill(recoveryAccountResetPassword);
+
+    const submitResetButton = dialog.getByRole("button", { name: /更新密碼|Update password/i }).first();
+    await submitResetButton.click({ force: true });
+    await page.waitForFunction(() => {
+      return Array.from(document.querySelectorAll(".identity-panel .panel-error")).some((node) => {
+        const text = node.textContent ?? "";
+        return text.includes("密碼已更新") || text.includes("Password updated");
+      });
+    }, null, { timeout: 5000 });
+
+    await identitySignInTab(dialog).click({ force: true });
+    await resetEmailInput.fill(recoveryAccountEmail);
+    await dialog.locator("input[type='password']").first().fill(recoveryAccountResetPassword);
+    await dialog.getByRole("button", { name: /登入|Sign in|Login/i }).first().click({ force: true });
+    await waitForAuthenticatedState(page, 15000, { requireDeveloper: false });
+
+    dialog = await openIdentityDialog(page, 8000);
+    const signOutRecoveryButton = dialog.getByRole("button", { name: /登出|Sign out/i }).first();
+    await signOutRecoveryButton.click({ force: true });
+    await dialog.waitFor({ state: "hidden", timeout: 5000 }).catch(() => {});
+
+    dialog = await openIdentityDialog(page, 8000);
+    await identitySignInTab(dialog).click({ force: true });
+    await dialog.locator("input[type='email']").first().fill(accountEmail);
+    await dialog.locator("input[type='password']").first().fill(accountPassword);
+    await dialog.getByRole("button", { name: /登入|Sign in|Login/i }).first().click({ force: true });
+    await waitForAuthenticatedState(page, 20000, { requireDeveloper: accountIsDeveloper });
+    await closeQuickSetupIfPresent(page);
+  });
+
   await page.screenshot({ path: path.join(reportDir, "02-after-login.png") });
 
   await recordCheck("快速登入後主控面板可用", async () => {
@@ -1467,7 +1636,11 @@ async function run() {
       { testId: "session-button-security", selector: ".security-panel" },
       { testId: "session-button-diagnostics", selector: ".diagnostics-panel" },
       { testId: "session-button-ergonomics", selector: ".ergonomics-panel" },
-      { testId: "session-button-compatibility", selector: ".openclaw-settings-panel" },
+      { testId: "session-button-comparison", selector: ".comparison-panel" },
+      { testId: "session-button-coding", selector: ".coding-workspace-panel" },
+      { testId: "session-button-context", selector: ".context-budget-panel" },
+      { testId: "session-button-safety-queue", selector: ".safety-queue-panel" },
+      { testId: "session-button-compatibility", selector: ".compat-settings-panel" },
       { testId: "session-button-legal", selector: ".legal-panel" },
       { testId: "session-button-provider", selector: ".provider-panel" },
       { testId: "session-button-memory", selector: ".memory-panel" },
@@ -1673,3 +1846,5 @@ try {
     process.exitCode = 1;
   }
 }
+
+

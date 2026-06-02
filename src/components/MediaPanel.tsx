@@ -8,6 +8,7 @@ import {
   type MediaCapability,
   type MediaPolicy,
 } from "../lib/media";
+import { useI18n } from "../lib/i18n";
 import { Tooltip } from "./Tooltip";
 
 interface MediaPanelProps {
@@ -23,6 +24,7 @@ const iconByKind = {
 };
 
 export function MediaPanel({ gatewayBaseUrl, onClose }: MediaPanelProps): JSX.Element {
+  const { t } = useI18n();
   const [capabilities, setCapabilities] = useState<MediaCapability[]>(defaultMediaCapabilities);
   const [policy, setPolicy] = useState<MediaPolicy>(defaultMediaPolicy);
   const [error, setError] = useState<string>();
@@ -41,7 +43,7 @@ export function MediaPanel({ gatewayBaseUrl, onClose }: MediaPanelProps): JSX.El
       setCapabilities(payload.capabilities);
       setPolicy(payload.policy);
     } catch {
-      setError("無法讀取多媒體能力清單，暫時顯示本機預設。");
+      setError(t("media.loadError"));
     }
   }
 
@@ -50,10 +52,10 @@ export function MediaPanel({ gatewayBaseUrl, onClose }: MediaPanelProps): JSX.El
       <section className="media-panel" role="dialog" aria-modal="true" aria-labelledby="media-title">
         <header className="provider-header">
           <div>
-            <h2 id="media-title">多媒體與文字記錄能力</h2>
-            <p>桌面端自帶本機影片、音訊、圖片與文字記錄處理邊界；檔案仍先複製到專案沙盒再作業。</p>
+            <h2 id="media-title">{t("media.title")}</h2>
+            <p>{t("media.subtitle")}</p>
           </div>
-          <button className="icon-button" type="button" aria-label="關閉" onClick={onClose}>
+          <button className="icon-button" type="button" aria-label={t("common.close")} onClick={onClose}>
             <X size={18} />
           </button>
         </header>
@@ -62,13 +64,13 @@ export function MediaPanel({ gatewayBaseUrl, onClose }: MediaPanelProps): JSX.El
           <section className="media-policy-card">
             <ShieldCheck size={22} />
             <div>
-              <h3>本機處理原則</h3>
-              <p>資料預設留在本機，不自動上傳外部服務；需要模型或雲端處理時會先要求授權。</p>
+              <h3>{t("media.policyTitle")}</h3>
+              <p>{t("media.policyBody")}</p>
               <div className="media-policy-grid">
-                <span>影片上限：{policy.maxVideoMinutes} 分鐘</span>
-                <span>音訊上限：{policy.maxAudioMinutes} 分鐘</span>
-                <span>文字記錄：{policy.maxTextLogMb} MB</span>
-                <span>{policy.preferHardwareAcceleration ? "優先 Windows 硬體加速" : "優先 CPU 省電模式"}</span>
+                <span>{t("media.videoLimit", { value: policy.maxVideoMinutes })}</span>
+                <span>{t("media.audioLimit", { value: policy.maxAudioMinutes })}</span>
+                <span>{t("media.textLogLimit", { value: policy.maxTextLogMb })}</span>
+                <span>{policy.preferHardwareAcceleration ? t("media.hardware") : t("media.cpu")}</span>
               </div>
             </div>
           </section>
@@ -87,7 +89,7 @@ export function MediaPanel({ gatewayBaseUrl, onClose }: MediaPanelProps): JSX.El
                   <small>{capability.engine}</small>
                   <Tooltip text={capability.notes}>
                     <button className="secondary-button" type="button">
-                      查看限制
+                      {t("media.viewLimits")}
                     </button>
                   </Tooltip>
                   <span className="media-limit">{capability.maxInputLabel}</span>

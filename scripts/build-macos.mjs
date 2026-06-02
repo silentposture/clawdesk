@@ -5,6 +5,7 @@ function run(command, args, options = {}) {
     cwd: process.cwd(),
     stdio: "inherit",
     shell: false,
+    windowsHide: process.platform === "win32",
     env: { ...process.env, ...(options.env ?? {}) },
   });
   if (result.status !== 0) process.exit(result.status ?? 1);
@@ -18,3 +19,5 @@ run("npm", ["run", "icons"]);
 run("tauri", ["build", "--config", "src-tauri/tauri.macos.conf.json", "--bundles", "app,dmg"], {
   env: { CLAWDESK_RELEASE_CHANNEL: "production", CLAWDESK_BUILD_PROFILE: "production" },
 });
+
+

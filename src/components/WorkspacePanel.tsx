@@ -42,7 +42,7 @@ export function WorkspacePanel({ state, dispatch }: WorkspacePanelProps): JSX.El
         ))}
       </nav>
 
-      <section className="project-list" aria-label="專案清單">
+      <section className="project-list" aria-label={t("app.projectPanel.list")}>
         {projects.map((project) => (
           <article className={`project-item ${state.selectedProjectId === project.id ? "selected" : ""}`} key={project.id}>
             <button className="project-main" type="button" onClick={() => dispatch({ type: "select-project", projectId: project.id })}>

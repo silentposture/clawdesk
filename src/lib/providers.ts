@@ -62,6 +62,21 @@ export interface ProviderSession {
   endpoint?: string;
   accountEmail?: string;
   maskedKey?: string;
+  secretRef?: string;
+  tokenRefresh?: {
+    mode: "not-required" | "manual" | "refreshable";
+    expiresAt?: string;
+    lastRefreshStatus?: "ready" | "refreshed" | "failed" | "not-configured";
+  };
+  runtime?: {
+    providerId: ProviderId;
+    apiStyle: "responses-api" | "chat-completions" | "local-openai-compatible" | "mock";
+    status: "not-tested" | "dry-run" | "validated" | "failed";
+    live: boolean;
+    checkedAt?: string;
+    requestId?: string;
+    message?: string;
+  };
 }
 
 export interface LlmProviderSpec {
@@ -81,9 +96,9 @@ export interface LlmProviderSpec {
   description: string;
 }
 
-export const openClawUpstreamSnapshot = {
+export const compatUpstreamSnapshot = {
   repository: "https://github.com/openclaw/openclaw",
-  commit: "d4484158d9291820d7af236d4277704da019f609",
+  commit: "278e3eabf29dd8ff31d633907525bda35ec6474a",
   license: "MIT",
   importedSurfaces: [
     "src/agents/model-auth.ts",
@@ -94,7 +109,7 @@ export const openClawUpstreamSnapshot = {
   ],
 } as const;
 
-export const openClawOpenAiAuthModes = [
+export const compatOpenAiAuthModes = [
   {
     id: "openai-api-key",
     providerId: "openai-api",
@@ -136,7 +151,7 @@ export const llmProviderCatalog: LlmProviderSpec[] = [
     upstreamAuthKind: "oauth",
     upstreamProviderId: "openai-codex",
     upstreamSource: "src/agents/model-auth.ts",
-    description: "OpenAI Codex OAuth（OpenClaw 也在使用的供應商方式）。",
+    description: "OpenAI Codex OAuth（相容供應商方式）。",
   },
   {
     id: "openai",
@@ -197,7 +212,7 @@ export const llmProviderCatalog: LlmProviderSpec[] = [
     modelDefault: "gemini-1.5-flash",
     keyPlaceholder: "AIza...",
     keyPrefixes: ["AIza"],
-    description: "OpenClaw 既有 Gemini 欄位名稱相容。",
+    description: "Gemini 欄位名稱相容。",
   },
   {
     id: "google-vertex",
@@ -626,8 +641,8 @@ export const llmProviderCatalog: LlmProviderSpec[] = [
     shortName: "本機模型",
     displayName: "本機模型",
     authMode: "local-endpoint",
-    modelPlaceholder: "llama3.2",
-    modelDefault: "llama3.2",
+    modelPlaceholder: "llama3.3",
+    modelDefault: "llama3.3",
     endpointPlaceholder: "http://127.0.0.1:11434",
     description: "通用本機/OpenAI 相容 endpoint。",
   },
@@ -643,10 +658,12 @@ export const llmProviderCatalog: LlmProviderSpec[] = [
 ];
 
 export const defaultProviderSession: ProviderSession = {
-  activeProvider: "mock",
+  activeProvider: "local-model",
   status: "connected",
-  displayName: "Mock Gateway",
-  detail: "目前使用本機 mock provider，可驗證桌面端流程。",
+  displayName: "Ollama",
+  detail: "目前預設使用本機 Ollama endpoint（http://127.0.0.1:11434）。",
+  endpoint: "http://127.0.0.1:11434",
+  model: "llama3.3",
 };
 
 export function providerStatusLabel(status: ProviderStatus): string {
@@ -669,8 +686,8 @@ export function canonicalProviderForSession(providerId: ProviderId): ProviderId 
   return providerId;
 }
 
-export function isOpenClawOpenAiProvider(providerId: ProviderId): boolean {
-  return openClawOpenAiAuthModes.some((mode) => mode.providerId === providerId);
+export function isCompatOpenAiProvider(providerId: ProviderId): boolean {
+  return compatOpenAiAuthModes.some((mode) => mode.providerId === providerId);
 }
 
 export function upstreamAuthModeForProvider(providerId: ProviderId): string {

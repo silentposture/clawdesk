@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-const port = Number(process.env.OPENCLAW_MOCK_PORT ?? 18890);
+const port = Number(process.env.CLAWDESK_MOCK_PORT ?? process.env.OPENCLAW_MOCK_PORT ?? 18890);
 const host = "127.0.0.1";
 const defaultProjectRoot = path.resolve(process.cwd(), "ClawDesk Projects", "desktop-mvp");
 const projectRoot = path.resolve(process.env.CLAWDESK_PROJECT_ROOT ?? defaultProjectRoot);
@@ -22,6 +22,7 @@ const identityBackendUrl = process.env.CLAWDESK_IDENTITY_BACKEND_URL
 const normalizedBackendUrl = identityBackendUrl ? identityBackendUrl.replace(/\/+$/, "") : "";
 const persistenceEnabled = Boolean(stateFilePath);
 const identityBackendEnabled = Boolean(identityBackendUrl);
+const openAiApiBaseUrl = (process.env.CLAWDESK_OPENAI_API_BASE_URL || "https://api.openai.com/v1").replace(/\/+$/, "");
 const backendLicenseState = {
   licenseKey: "",
   machineFingerprintHash: "",
@@ -30,10 +31,13 @@ const backendLicenseState = {
   sessionToken: "",
 };
 const backendIdentityVerificationCodes = new Map();
+const backendIdentityPasswordResetCodes = new Map();
 const openClawUpstreamSnapshot = {
   repository: "https://github.com/openclaw/openclaw",
-  commit: "d4484158d9291820d7af236d4277704da019f609",
+  commit: "278e3eabf29dd8ff31d633907525bda35ec6474a",
   license: "MIT",
+  scannedAt: "2026-05-14",
+  sourceFileCount: 14940,
   importedSurfaces: [
     "src/agents/model-auth.ts",
     "src/agents/auth-profiles/*",
@@ -44,25 +48,220 @@ const openClawUpstreamSnapshot = {
   windowsStatus: "adapted-for-clawdesk-windows-sidecar-contract",
 };
 const openClawFeatureParity = [
-  ["model-auth-openai", "模型連線與 OpenAI 登入", "partial", "已納入 OpenAI API key 與 OpenAI/Codex OAuth 契約；尚未接 Windows Credential Manager / token refresh。"],
-  ["provider-catalog", "Provider catalog / model catalog", "partial", "已有主要 provider 清單；尚未完整支援 live catalog/cache/cost/context window。"],
-  ["gateway-protocol", "Gateway protocol / WebSocket / RPC", "mock", "目前是 OpenClaw-compatible mock Gateway；尚未載入 upstream gateway runtime。"],
-  ["agents-runtime", "Agents runtime / subagents / harness", "mock", "已有 agent GUI 與 mock 任務；尚未執行 embedded runner/harness。"],
-  ["plugins-sdk", "Plugin SDK / tools", "partial", "已有 MCP/tool preview；尚未載入完整 plugin runtime。"],
-  ["extensions", "Extensions / external connectors", "mock", "已有 connector catalog/permission preview；upstream extensions 尚未打包。"],
-  ["channels", "Messaging channels", "partial", "已有 Teams/Gmail/LINE/Telegram/Slack 入口；尚未接 webhook delivery runtime。"],
-  ["cron-workflows", "Cron / workflow automation", "mock", "已有 workflow CRUD mock；尚未接 isolated-agent cron runner。"],
-  ["memory", "Memory / embeddings / vector store", "mock", "已有 memory UI/mock；尚未接 embeddings/batch/vector store。"],
-  ["security-auth", "Security / auth profiles / secret refs", "partial", "已有 redaction 與 masked key；尚未實作 upstream auth profile store。"],
-  ["config-schema", "Config schema / guided setup", "partial", "已有設定導引；尚未完整匯入/匯出 upstream config schema。"],
-  ["ui-control", "Control UI / TUI / model picker", "partial", "本機使用 React/Tauri GUI；未直接使用 upstream Lit UI/TUI。"],
-  ["media-understanding", "Media understanding / generation", "mock", "已有能力宣告；未接 upstream provider runtime。"],
-  ["tts-talk", "TTS / talk / realtime transcription", "deferred", "首發 Beta 不阻塞，後續接 Windows audio pipeline。"],
-  ["pairing-device", "Pairing / device auth / node mode", "deferred", "Windows 首發先支援 loopback，不做 mobile node pairing。"],
-  ["macos-ios-android", "Native Apple/Android apps", "not-applicable", "平台不同，不納入 Windows installer。"],
-  ["sdk", "SDK / client API", "deferred", "Beta 穩定後再提供 local API SDK 或 upstream SDK 相容。"],
-  ["windows-release", "Windows packaging / certification", "partial", "Tauri NSIS/release guard 已有；簽章/認證保留。"],
-].map(([id, domain, status, difference]) => ({ id, domain, status, difference }));
+  ["model-auth-openai", "模型連線與 OpenAI 登入", "partial", "已納入 OpenAI API key、OpenAI/Codex OAuth 契約、Tauri DPAPI credential vault 與 Responses API runtime probe；OAuth token refresh 仍是合約層。", "high", "/provider/openai/runtime-contract", "signed-beta"],
+  ["provider-catalog", "Provider catalog / model catalog", "partial", "已有主要 provider 清單；尚未完整支援 live catalog/cache/cost/context window。", "medium", "/llm-providers", "windows-beta"],
+  ["gateway-protocol", "Gateway protocol / WebSocket / RPC", "mock", "目前是相容 mock Gateway；尚未載入 production gateway runtime。", "high", "/gateway-adapter/contract", "production-gateway"],
+  ["agents-runtime", "Agents runtime / subagents / harness", "mock", "已有 agent GUI 與 mock 任務；尚未執行 embedded runner/harness。", "high", "/coding-workspace", "production-gateway"],
+  ["plugins-sdk", "Plugin SDK / tools", "partial", "已有 MCP/tool preview；尚未載入完整 plugin runtime。", "high", "/safety-policy", "signed-beta"],
+  ["extensions", "Extensions / external connectors", "mock", "已有 connector catalog/permission preview；upstream extensions 尚未打包。", "high", "/mcp/connectors", "signed-beta"],
+  ["channels", "Messaging channels", "partial", "已有 Teams/Gmail/LINE/Telegram/Slack 入口；尚未接 webhook delivery runtime。", "high", "/channels", "signed-beta"],
+  ["cron-workflows", "Cron / workflow automation", "mock", "已有 workflow CRUD mock；尚未接 isolated-agent cron runner。", "medium", "/workflows", "post-beta"],
+  ["memory", "Memory / embeddings / vector store", "mock", "已有 memory UI/mock；尚未接 embeddings/batch/vector store。", "medium", "/memory/items", "post-beta"],
+  ["security-auth", "Security / auth profiles / secret refs", "partial", "已有 redaction、masked key、DPAPI credential vault 與清除流程；尚未實作 production SecretRef/token refresh lock。", "blocked", "/safety-policy", "signed-beta"],
+  ["config-schema", "Config schema / guided setup", "partial", "已有設定導引；尚未完整匯入/匯出相容 config schema。", "medium", "/compat/feature-parity", "post-beta"],
+  ["ui-control", "Control UI / TUI / model picker", "partial", "本機使用 React/Tauri GUI；未直接使用 upstream Lit UI/TUI。", "medium", "/product-comparison", "windows-beta"],
+  ["media-understanding", "Media understanding / generation", "mock", "已有能力宣告；未接 upstream provider runtime。", "medium", "/media/capabilities", "post-beta"],
+  ["tts-talk", "TTS / talk / realtime transcription", "deferred", "首發 Beta 不阻塞，後續接 Windows audio pipeline。", "medium", "", "post-beta"],
+  ["pairing-device", "Pairing / device auth / node mode", "deferred", "Windows 首發先支援 loopback，不做 mobile node pairing。", "medium", "", "post-beta"],
+  ["macos-ios-android", "Native Apple/Android apps", "not-applicable", "平台不同，不納入 Windows installer。", "low", "", "post-beta"],
+  ["sdk", "SDK / client API", "deferred", "Beta 穩定後再提供 local API SDK 或 upstream SDK 相容。", "medium", "", "post-beta"],
+  ["windows-release", "Windows packaging / certification", "partial", "Tauri NSIS/release guard 已有；簽章/認證保留。", "blocked", "npm run release:guard -- --beta-direct", "signed-beta"],
+].map(([id, domain, status, difference, riskLevel, testEndpoint, targetMilestone]) => ({
+  id,
+  domain,
+  status,
+  difference,
+  riskLevel,
+  testEndpoint,
+  targetMilestone,
+}));
+const productComparisonItems = [
+  {
+    domain: "主要入口",
+    openClaw: "多通訊 app、Gateway、CLI 與插件入口。",
+    claudeCowork: "Claude Desktop 內的本機/VM 任務工作流。",
+    claudeCode: "Terminal、IDE、desktop 與 CI coding workflow。",
+    clawDesk: "Windows-first Tauri GUI 與 mock Gateway。",
+    gap: "ClawDesk 應做可視化任務工作台，不追 terminal-only 體驗。",
+    priority: "p1",
+  },
+  {
+    domain: "Agent runtime",
+    openClaw: "Gateway、channels、plugins、cron、memory 與 runtime harness。",
+    claudeCowork: "本機 agent loop、檔案/瀏覽器/app 操作與 VM 隔離。",
+    claudeCode: "coding agent loop、工具、subagents、hooks、settings。",
+    clawDesk: "agent/session UI 已有，runtime 多為 mock/partial。",
+    gap: "先落地 Gateway adapter contract、tool approval 與可測 endpoint。",
+    priority: "p0",
+  },
+  {
+    domain: "模型支援",
+    openClaw: "BYOM：OpenAI、Anthropic、local 與 provider catalog。",
+    claudeCowork: "Claude 生態為主，透過 connector/MCP 擴充。",
+    claudeCode: "Claude 模型為主，可搭配 API、seat 與 IDE integration。",
+    clawDesk: "OpenAI API/OAuth、Anthropic、Gemini、OpenRouter、本機 endpoint contract partial。",
+    gap: "補 provider 狀態、成本、context window、fallback 與 Credential Manager。",
+    priority: "p0",
+  },
+  {
+    domain: "MCP / plugin",
+    openClaw: "Native MCP、Plugin SDK、hot reload config。",
+    claudeCowork: "MCP/plugins/skills，但受桌面安全政策限制。",
+    claudeCode: "MCP、plugins、skills、hooks、subagents。",
+    clawDesk: "MCP UI、connector catalog 與 permission preview mock。",
+    gap: "建立 Windows plugin sandbox、allowlist、manifest 驗證與審計。",
+    priority: "p0",
+  },
+  {
+    domain: "安全與權限",
+    openClaw: "自架彈性高，但 gateway/plugin 權限風險大。",
+    claudeCowork: "permission、VM、admin policy 與使用者責任界線。",
+    claudeCode: "settings、deny list、tool approval、session 控制。",
+    clawDesk: "診斷 redaction、permission mock、sandbox policy partial。",
+    gap: "加 Desktop Action Safety、Credential Manager、risk profile、audit trail。",
+    priority: "p0",
+  },
+  {
+    domain: "商業化",
+    openClaw: "MIT open-source，商業發佈需自建。",
+    claudeCowork: "Anthropic SaaS 與企業政策。",
+    claudeCode: "Anthropic SaaS/CLI/IDE billing path。",
+    clawDesk: "Lemon-only、NSIS、release guard、legal/diagnostics 已有骨架。",
+    gap: "正式 Lemon webhook、signed installer、Gateway URL、support/legal review 仍是 release gate。",
+    priority: "p1",
+  },
+  {
+    domain: "UI / UX",
+    openClaw: "通訊與配置偏工程向。",
+    claudeCowork: "Claude Desktop 體驗，面向一般工作者。",
+    claudeCode: "Terminal/IDE 強，非工程使用者門檻高。",
+    clawDesk: "Windows GUI 工作台、繁中與本機任務面板。",
+    gap: "把任務儀表板、對話、Canvas、執行狀態與風險提示整合成主體驗。",
+    priority: "p1",
+  },
+];
+const defaultSafetyPolicyRules = [
+  {
+    id: "secret-paths",
+    label: "Secret 與 credential 路徑保護",
+    denyPaths: [".env*", "secrets/**", "**/*credential*", "**/*token*", "**/*.pfx", "**/*.p12"],
+    allowCommands: [],
+    requiresApproval: true,
+    riskLevel: "blocked",
+    auditCategory: "credential",
+    dryRunRequired: true,
+    description: "禁止讀取或寫入常見 secret、憑證與 token 檔案；診斷與 Canvas 也不得包含明文。",
+  },
+  {
+    id: "workspace-boundary",
+    label: "工作區外修改保護",
+    denyPaths: ["C:/Windows/**", "C:/Program Files/**", "C:/Users/*/AppData/**", "../**"],
+    allowCommands: [],
+    requiresApproval: true,
+    riskLevel: "high",
+    auditCategory: "workspace",
+    dryRunRequired: true,
+    description: "任何專案資料夾外的變更必須先產生 dry-run preview，Beta 預設不自動套用。",
+  },
+  {
+    id: "shell-allowlist",
+    label: "Shell 指令 allowlist",
+    denyPaths: [],
+    allowCommands: ["npm", "cargo", "git status", "git diff", "rg", "node"],
+    requiresApproval: true,
+    riskLevel: "high",
+    auditCategory: "shell",
+    dryRunRequired: true,
+    description: "允許常見開發驗證指令；刪除、移動、憑證、付款與系統設定類命令需要人工核准。",
+  },
+  {
+    id: "external-send",
+    label: "外部訊息 draft-only",
+    denyPaths: [],
+    allowCommands: [],
+    requiresApproval: true,
+    riskLevel: "high",
+    auditCategory: "external-send",
+    dryRunRequired: true,
+    description: "Gmail、Teams、Slack、LINE、Telegram 等外部傳送首版只建立草稿或預覽，不自動送出。",
+  },
+  {
+    id: "browser-actions",
+    label: "瀏覽器與帳號操作審批",
+    denyPaths: [],
+    allowCommands: [],
+    requiresApproval: true,
+    riskLevel: "medium",
+    auditCategory: "browser",
+    dryRunRequired: true,
+    description: "登入、購買、提交表單、刪除帳號與高權限瀏覽器操作都需要 permission queue。",
+  },
+  {
+    id: "payment-account",
+    label: "付款與訂閱安全閘",
+    denyPaths: [],
+    allowCommands: [],
+    requiresApproval: true,
+    riskLevel: "blocked",
+    auditCategory: "payment-account",
+    dryRunRequired: true,
+    description: "付款、退款、訂閱取消、license downgrade 僅接受已驗簽 webhook 或人工確認流程。",
+  },
+];
+const defaultSubagentTemplates = [
+  { id: "planner", label: "Planner", responsibility: "拆解需求、列風險、決定驗證路徑。", defaultTools: ["repo-read", "rg", "plan"], status: "mock" },
+  { id: "implementer", label: "Implementer", responsibility: "依既有架構做最小安全修改。", defaultTools: ["apply_patch", "npm", "cargo"], status: "mock" },
+  { id: "reviewer", label: "Reviewer", responsibility: "檢查 regression、安全與可維護性。", defaultTools: ["git diff", "tests", "static-analysis"], status: "mock" },
+  { id: "tester", label: "Tester", responsibility: "執行 smoke、build、release guard 並整理結果。", defaultTools: ["npm test", "playwright", "tauri smoke"], status: "mock" },
+];
+const gatewayAdapterMethods = [
+  { name: "health", method: "GET", path: "/health", status: "ready", purpose: "確認 Gateway、版本、相容性與 Windows sidecar 狀態。" },
+  { name: "chat", method: "POST", path: "/chat", status: "partial", purpose: "串流 agent 訊息、Canvas patch 與 permission request。" },
+  { name: "permissionResult", method: "POST", path: "/permission-result", status: "ready", purpose: "把 GUI 審批結果送回 runtime。" },
+  { name: "providerStatus", method: "GET", path: "/provider/status", status: "partial", purpose: "回報 active provider、auth mode、masked credential 與 fallback。" },
+  { name: "providerSecretRef", method: "POST", path: "/provider/secret-ref/issue", status: "partial", purpose: "把 provider secret 轉成不可逆 SecretRef，refresh 只回傳 token reference。" },
+  { name: "providerOpenAiRuntime", method: "POST", path: "/provider/openai/chat-test", status: "partial", purpose: "以 OpenAI Responses API 合約驗證 API key provider，預設 dry-run。" },
+  { name: "memory", method: "POST", path: "/memory/items", status: "mock", purpose: "建立與查詢本機記憶；後續接 durable store/vector store。" },
+  { name: "workflow", method: "GET", path: "/workflows", status: "mock", purpose: "讀取 workflow templates 與 schedule 狀態。" },
+  { name: "diagnostics", method: "POST", path: "/diagnostics/create-report", status: "ready", purpose: "產生 redacted support bundle 與 release/build/signature 狀態。" },
+];
+const defaultContextBudget = {
+  messageCount: 42,
+  estimatedTokens: 48000,
+  tokenLimit: 120000,
+  budgetPercent: 40,
+  loadedTools: ["file-search", "patch-preview", "test-runner", "permission-queue"],
+  mcpConnectors: ["microsoft-office", "google-workspace", "developer-tools"],
+  recommendedAction: "none",
+  note: "目前仍在可操作區間；超過 70% 建議 compact，超過 88% 建議 clear 或新 session。",
+};
+const codingWorkspaceSnapshot = {
+  mode: "windows-coding-workspace",
+  capabilities: [
+    { id: "file-search", label: "檔案搜尋", status: "ready", description: "用 rg / workspace index 找出相關檔案，不讀 secret pattern。" },
+    { id: "change-plan", label: "變更計畫", status: "partial", description: "把需求拆成可審批步驟，保留人工確認點。" },
+    { id: "patch-preview", label: "Patch preview", status: "partial", description: "先展示變更摘要與風險，再套用 apply_patch。" },
+    { id: "test-command", label: "測試命令", status: "ready", description: "集中顯示 npm/cargo/smoke/release guard 結果。" },
+    { id: "result-summary", label: "結果摘要", status: "ready", description: "輸出檔案、驗證、風險與下一步。" },
+  ],
+  subagents: defaultSubagentTemplates,
+  contextBudget: defaultContextBudget,
+  gatewayAdapter: gatewayAdapterMethods,
+};
+const workspaceSearchIndex = [
+  { path: "src/App.tsx", area: "ui-shell", riskLevel: "low" },
+  { path: "src/lib/codingWorkspace.ts", area: "coding-workspace", riskLevel: "low" },
+  { path: "src/lib/safetyPolicy.ts", area: "safety-policy", riskLevel: "high" },
+  { path: "src/components/CodingWorkspacePanel.tsx", area: "coding-panel", riskLevel: "low" },
+  { path: "src/components/SafetyQueuePanel.tsx", area: "safety-panel", riskLevel: "low" },
+  { path: "scripts/release-guard.mjs", area: "release-gate", riskLevel: "high" },
+  { path: "src-tauri/tauri.prod.conf.json", area: "production-bundle", riskLevel: "high" },
+  { path: "backend/server.mjs", area: "backend-adapter", riskLevel: "high" },
+];
+let safetyQueue = [
+  { id: "queue-shell-preview", action: "shell.command.plan", riskLevel: "high", status: "waiting-for-user", note: "變更前需要人工審批" },
+  { id: "queue-external-draft", action: "gmail.draft.create", riskLevel: "high", status: "draft-only", note: "外部訊息預設只可草稿" },
+];
 const openClawRuntimeSurfaces = [
   {
     id: "provider-auth",
@@ -104,7 +303,7 @@ const openClawRuntimeSurfaces = [
     upstreamPaths: ["src/config/*", "src/commands/*"],
     status: "contract-compatible",
     windowsAdapter: "Guided settings and release config are mapped to Windows-first profile sections.",
-    remainingWork: "Add import/export compatibility with upstream OpenClaw config files.",
+    remainingWork: "Add import/export compatibility with upstream config files.",
   },
   {
     id: "memory-workflows",
@@ -275,7 +474,7 @@ const llmProviderCatalog = [
     modelDefault: "gemini-1.5-flash",
     keyPlaceholder: "AIza...",
     keyPrefixes: ["AIza"],
-    description: "兼容 OpenClaw 命名。",
+    description: "兼容既有欄位命名。",
   },
   {
     id: "google-vertex",
@@ -703,8 +902,8 @@ const llmProviderCatalog = [
     shortName: "本機模型",
     displayName: "本機模型",
     authMode: "local-endpoint",
-    modelPlaceholder: "llama3.2",
-    modelDefault: "llama3.2",
+    modelPlaceholder: "llama3.3",
+    modelDefault: "llama3.3",
     endpointPlaceholder: "http://127.0.0.1:11434",
     description: "通用本機/OpenAI 相容 endpoint。",
   },
@@ -1498,13 +1697,17 @@ let openClawSettingsProfile = {
   enableWorkflows: true,
 };
 let providerSession = {
-  activeProvider: "mock",
+  activeProvider: "local-model",
   status: "connected",
-  displayName: "Mock Gateway",
-  detail: "目前使用本機 mock provider，可驗證桌面端流程。",
+  displayName: "Ollama",
+  detail: "目前預設使用本機 Ollama endpoint（http://127.0.0.1:11434）。",
+  endpoint: "http://127.0.0.1:11434",
+  model: "llama3.3",
 };
+let visionProbeResults = {};
 const identityUsers = [];
 const identityVerifications = [];
+const identityPasswordResets = [];
 const identityMailOutbox = [];
 let identitySession = {
   authenticated: false,
@@ -1519,12 +1722,15 @@ const seededIdentityAccounts = [
     email: process.env.CLAWDESK_DEVELOPER_EMAIL ?? "huangkuoling@gmail.com",
     displayName: "huangkuoling",
     password: process.env.CLAWDESK_DEVELOPER_PASSWORD ?? "ChangeMe123!",
-    mode: "personal",
+    mode: process.env.CLAWDESK_DEVELOPER_MODE === "personal" ? "personal" : "enterprise",
     role: "owner",
-    organization: "ClawDesk 測試組織",
+    organization: process.env.CLAWDESK_DEVELOPER_ORGANIZATION ?? "ClawDesk 測試組織",
   },
 ];
-const developerIdentityEmails = new Set(seededIdentityAccounts.map((item) => item.email));
+const developerIdentityEmails = new Set([
+  ...seededIdentityAccounts.map((item) => item.email),
+  "silentposture@hotmail.com",
+]);
 
 let machineFingerprint = {
   fingerprintHash: "mfp_salted_mock_win_x64_a9d2",
@@ -1560,12 +1766,9 @@ let licenseStatus = {
 };
 
 const pricingPlans = [
-  { id: "trial", name: "Beta Trial", priceUsd: 0, cadence: "7 days or 30 launches" },
-  { id: "pro-yearly", name: "Early Access Yearly", priceUsd: 79, cadence: "yearly" },
-  { id: "lifetime-local", name: "Early Access Lifetime", priceUsd: 99, cadence: "one-time", supportRenewalUsd: 49 },
-  { id: "early-bird", name: "First Batch Early Bird", priceUsd: 69, cadence: "yearly" },
-  { id: "team", name: "Team", priceUsd: 40, cadence: "monthly-per-seat" },
-  { id: "enterprise", name: "Enterprise", priceUsd: 50000, cadence: "contract" },
+  { id: "trial", name: "Free Trial", priceUsd: 0, cadence: "free", description: "本機安全沙盒、手動授權與基本桌面工作流試用。" },
+  { id: "pro-yearly", name: "Pro Yearly", priceUsd: 79, cadence: "yearly", description: "桌面 AI 工作平台年繳方案，含支援更新資格。" },
+  { id: "lifetime-local", name: "Lifetime", priceUsd: 99, cadence: "one-time", description: "永久本機功能，含 12 個月支援更新。" },
 ];
 ensureSeedIdentityUsers();
 
@@ -1573,7 +1776,7 @@ const updateHistory = [
   {
     version: "1.4.0",
     releasedAt: "2027-01-15",
-    notes: ["Paddle + Keygen production adapter", "MCP connector policy audit", "Windows installer hardening"],
+    notes: ["Lemon Squeezy production adapter", "MCP connector policy audit", "Windows installer hardening"],
   },
   {
     version: "1.0.0",
@@ -1583,6 +1786,16 @@ const updateHistory = [
 ];
 
 const legalDocuments = [
+  {
+    id: "developer-disclosure",
+    title: "開發者與發行者聲明",
+    summary: "ClawDesk 由 Alisonsoftware 以個人開發者 / independent publisher 名義開發與發行。",
+    details: [
+      "Alisonsoftware 不以公司、代理商、系統整合商、財務顧問、法律顧問、稅務顧問或代管服務提供者身分對外表示。",
+      "除非另有書面揭露，ClawDesk 與 OpenClaw、OpenAI、Microsoft、Google、Lemon Squeezy 或其他第三方服務沒有隸屬、背書或贊助關係。",
+      "完整聲明已打包於 app resources：legal/DEVELOPER_DISCLOSURE.md。",
+    ],
+  },
   {
     id: "installer-terms",
     title: "安裝與使用同意條款",
@@ -1607,8 +1820,7 @@ const legalDocuments = [
     title: "訂閱、自動續費與取消揭露",
     summary: "訂閱方案需在購買與安裝前揭露價格、續費週期、取消入口、退款規則與適用消費者權利。",
     details: [
-      "Paddle 作為 Merchant of Record，正式版付款、稅務、收據與取消入口由 Paddle 流程承接。",
-      "Keygen 管理授權、機器綁定、撤銷、離線票券與支援更新資格。",
+      "Lemon Squeezy 是唯一付款與授權供應商，正式版付款、稅務、收據、取消入口、license key 與 webhook 由 Lemon Squeezy 流程承接。",
       "美國、加州、歐盟、台灣與其他銷售地區可能有不同自動續費、遠距交易與數位內容規範。",
     ],
     sourceUrl: "https://www.ftc.gov/business-guidance/blog/2024/10/click-cancel-ftcs-amended-negative-option-rule-what-it-means-your-business",
@@ -1647,6 +1859,15 @@ const legalDocuments = [
       "診斷包送出或匯出前，必須由使用者在故障回報窗口確認。",
     ],
   },
+  {
+    id: "support-contact",
+    title: "客服與聯絡入口",
+    summary: "客服聯絡信箱為 alison.ai.tech.studio@gmail.com；目前 Beta 不承諾 24/7、企業 SLA 或代管部署。",
+    details: [
+      "release guard 會在 beta-direct 模式要求 CLAWDESK_SUPPORT_EMAIL 或 CLAWDESK_SUPPORT_URL。",
+      "支援範圍草案已打包於 app resources：support/CONTACT.md。",
+    ],
+  },
 ];
 
 const legalNotices = [
@@ -1659,8 +1880,7 @@ const legalNotices = [
   { package: "React", license: "MIT", purpose: "使用者介面" },
   { package: "Vite", license: "MIT", purpose: "前端建置" },
   { package: "lucide-react", license: "ISC", purpose: "介面圖示" },
-  { package: "Keygen", license: "Commercial SaaS", purpose: "正式版授權管控，MVP 使用 mock" },
-  { package: "Paddle", license: "Commercial SaaS", purpose: "正式版金流與稅務，MVP 使用 mock" },
+  { package: "Lemon Squeezy", license: "Commercial SaaS", purpose: "唯一付款、license key、退款/取消 webhook 與授權管控供應商" },
 ];
 
 const enterpriseKnowledgeSources = [
@@ -1707,7 +1927,7 @@ let contextStatus = {
   modelContextLimit: 128000,
   estimatedTokens: 18400,
   rollingSummary: "目前專案正在建立 ClawDesk 商業化桌面 MVP。",
-  pinnedFacts: ["品牌名稱 ClawDesk", "Paddle 收款、Keygen 授權", "專案外改動需人工授權"],
+  pinnedFacts: ["品牌名稱 ClawDesk", "Lemon Squeezy 是唯一付款與授權供應商", "專案外改動需人工授權"],
   compressionRatio: 1,
   lastCompressedAt: null,
 };
@@ -1762,7 +1982,7 @@ let agentProfiles = [
 let ergonomicsChecks = [
   {
     id: "license-activation",
-    taskName: "啟用 Keygen 授權",
+    taskName: "啟用 Lemon Squeezy 授權",
     viewport: "desktop",
     steps: 4,
     keyboardReachable: true,
@@ -1817,12 +2037,14 @@ function snapshotState() {
     schemaVersion: 1,
     savedAt: nowIso(),
     providerSession,
+    visionProbeResults,
     connectedAccounts,
     communicationChannels,
     scheduledWorkflows,
     openClawSettingsProfile,
     identityUsers,
     identityVerifications,
+    identityPasswordResets,
     identityMailOutbox,
     identitySession,
     licenseMachines,
@@ -1834,6 +2056,7 @@ function snapshotState() {
     ergonomicsChecks,
     diagnosticReports,
     auditEvents,
+    safetyQueue,
   };
 }
 
@@ -1845,12 +2068,14 @@ function mergeArray(target, source) {
 function applyPersistedState(state) {
   if (!state || state.schemaVersion !== 1) return;
   if (state.providerSession) providerSession = state.providerSession;
+  if (state.visionProbeResults && typeof state.visionProbeResults === "object") visionProbeResults = state.visionProbeResults;
   mergeArray(connectedAccounts, state.connectedAccounts);
   mergeArray(communicationChannels, state.communicationChannels);
   mergeArray(scheduledWorkflows, state.scheduledWorkflows);
   if (state.openClawSettingsProfile) openClawSettingsProfile = state.openClawSettingsProfile;
   mergeArray(identityUsers, state.identityUsers);
   mergeArray(identityVerifications, state.identityVerifications);
+  mergeArray(identityPasswordResets, state.identityPasswordResets);
   mergeArray(identityMailOutbox, state.identityMailOutbox);
   if (state.identitySession) identitySession = state.identitySession;
   if (Array.isArray(state.licenseMachines)) licenseMachines = state.licenseMachines;
@@ -1862,6 +2087,7 @@ function applyPersistedState(state) {
   if (Array.isArray(state.ergonomicsChecks)) ergonomicsChecks = state.ergonomicsChecks;
   mergeArray(diagnosticReports, state.diagnosticReports);
   if (Array.isArray(state.auditEvents)) auditEvents = state.auditEvents.slice(0, 500);
+  if (Array.isArray(state.safetyQueue)) safetyQueue = state.safetyQueue;
   ensureSeedIdentityUsers();
 }
 
@@ -1979,6 +2205,31 @@ function normalizeIdentitySessionFromBackend(account) {
   };
 }
 
+function ensureBackendIdentityDeveloper(session = {}) {
+  const existingUser = identityUsers.find((user) => user.email === session.email);
+  const derivedMode = existingUser?.mode ?? session.mode;
+  const derivedRole = existingUser?.role ?? session.role;
+  const derivedOrganization = existingUser?.organization ?? session.organization;
+  const normalizedSession = {
+    ...session,
+    mode: derivedMode,
+    role: derivedRole,
+    organization: derivedOrganization,
+    isDeveloper: isDeveloperIdentitySession({
+      authenticated: Boolean(session.authenticated ?? session.email),
+      email: session.email,
+      mode: derivedMode,
+      role: derivedRole,
+      displayName: session.displayName,
+    }),
+  };
+  if (normalizedSession.isDeveloper) {
+    identitySession = normalizedSession;
+    applyDeveloperLicenseBypass();
+  }
+  return normalizedSession;
+}
+
 function mapBackendIdentityAccountToMock(record, email, fallbackMode = "personal", fallbackRole = "viewer") {
   return {
     id: record?.id ?? crypto.randomUUID(),
@@ -2011,6 +2262,30 @@ function setBackendVerificationCode(email, code) {
   backendIdentityVerificationCodes.set(email, code);
 }
 
+function setBackendPasswordResetCode(email, code) {
+  if (!email || !code) return;
+  const now = new Date();
+  const expiresAt = new Date(now.getTime() + 20 * 60 * 1000).toISOString();
+  identityPasswordResets.push({
+    email,
+    code,
+    createdAt: now.toISOString(),
+    expiresAt,
+    used: false,
+    source: "backend",
+  });
+  identityMailOutbox.unshift({
+    to: email,
+    subject: "ClawDesk 密碼重設驗證信",
+    body: `請在 20 分鐘內使用重設碼 ${code} 完成 ClawDesk 密碼更新。`,
+    token: code,
+    code,
+    createdAt: now.toISOString(),
+    purpose: "password-reset",
+  });
+  backendIdentityPasswordResetCodes.set(email, code);
+}
+
 function getBackendVerificationRecord(email) {
   const now = Date.now();
   const target = identityVerifications.find(
@@ -2029,6 +2304,27 @@ function consumeBackendVerification(email, code) {
   target.used = true;
   if (backendIdentityVerificationCodes.get(email) === code) {
     backendIdentityVerificationCodes.delete(email);
+  }
+  return target;
+}
+
+function getBackendPasswordResetRecord(email) {
+  const now = Date.now();
+  const target = identityPasswordResets.find(
+    (item) => item.email === email && !item.used && new Date(item.expiresAt).getTime() > now && item.code === backendIdentityPasswordResetCodes.get(email),
+  );
+  if (target) return target;
+  return identityPasswordResets.find((item) => item.email === email && !item.used && new Date(item.expiresAt).getTime() > now) ?? null;
+}
+
+function consumeBackendPasswordReset(email, code) {
+  if (!email || !code) return null;
+  const now = Date.now();
+  const target = identityPasswordResets.find((item) => item.email === email && !item.used && item.code === code && new Date(item.expiresAt).getTime() > now);
+  if (!target) return null;
+  target.used = true;
+  if (backendIdentityPasswordResetCodes.get(email) === code) {
+    backendIdentityPasswordResetCodes.delete(email);
   }
   return target;
 }
@@ -2127,8 +2423,8 @@ function toLicenseStatusFromBackendLicense(licensePayload, machinePayload, statu
   const statusValue = String(payload.status ?? statusOverride.status ?? "free");
   const isActive = ["active", "updated"].includes(statusValue.toLowerCase()) || statusValue === "past-due";
   const seats = Number(payload.deviceLimit ?? 1);
-  const paymentProvider = payload.paymentProvider ?? statusOverride.paymentProvider ?? "paddle";
-  const licenseProvider = payload.licenseProvider ?? statusOverride.licenseProvider ?? "keygen";
+  const paymentProvider = "lemon-squeezy";
+  const licenseProvider = "lemon-license";
   return {
     paymentProvider,
     licenseProvider,
@@ -2166,10 +2462,10 @@ function toLicenseStatusFromBackendLicense(licensePayload, machinePayload, statu
       keyId: payload.keyId,
       payloadHash: payload.payloadHash ?? payload.licenseKeyHash ?? `sha256:${(payload.encodedKey ?? "").slice(-5).toLowerCase()}`,
       signatureStatus: payload.signatureStatus ?? "valid",
-      storedAs: licenseProvider === "lemon-license" ? "backend issued hashed Lemon beta entitlement" : "backend issued signed Keygen offline license file",
+      storedAs: "backend issued hashed Lemon Squeezy entitlement",
     },
     entitlement: payload.entitlement,
-    lastValidationCode: statusOverride.lastValidationCode ?? (licenseProvider === "lemon-license" ? "LEMON_LICENSE_ACTIVE" : isActive ? "KEYGEN_VALID" : "KEYGEN_WAIT"),
+    lastValidationCode: statusOverride.lastValidationCode ?? (isActive ? "LEMON_LICENSE_ACTIVE" : "LEMON_WAIT"),
   };
 }
 
@@ -2244,23 +2540,18 @@ function backendDeploymentPlan() {
       "Gateway API / WebSocket event service",
       "Identity service with email verification and SSO",
       "Lemon Squeezy webhook service for direct beta",
-      "Paddle webhook service",
-      "Keygen license adapter",
       "Notification service",
       "Audit and diagnostics store",
       "MCP connector proxy service",
     ],
     environmentVariables: [
+      "CLAWDESK_MOCK_PORT",
       "OPENCLAW_MOCK_PORT",
       "CLAWDESK_MOCK_STATE_FILE",
       "NODE_ENV",
-      "PADDLE_WEBHOOK_SECRET",
       "LEMON_SQUEEZY_WEBHOOK_SECRET",
       "LEMON_SQUEEZY_STORE_ID",
       "LEMON_SQUEEZY_PRODUCT_ID",
-      "KEYGEN_ACCOUNT_ID",
-      "KEYGEN_PRODUCT_ID",
-      "KEYGEN_TOKEN",
       "SMTP_URL",
       "SSO_OIDC_ISSUER",
       "SSO_OIDC_CLIENT_ID",
@@ -2268,16 +2559,8 @@ function backendDeploymentPlan() {
   };
 }
 
-function normalizeKeygenKey(input) {
-  return String(input ?? "").trim().toUpperCase().replace(/\s+/g, "-");
-}
-
 function normalizeLemonLicenseKey(input) {
   return String(input ?? "").trim().toUpperCase().replace(/\s+/g, "-");
-}
-
-function isMockKeygenKey(input) {
-  return /^CLWD-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/.test(normalizeKeygenKey(input));
 }
 
 function isMockLemonLicenseKey(input) {
@@ -2286,22 +2569,6 @@ function isMockLemonLicenseKey(input) {
 
 function licenseKeyHash(input) {
   return `lk_${crypto.createHash("sha256").update(`clawdesk-beta-direct:${normalizeLemonLicenseKey(input)}`).digest("hex").slice(0, 24)}`;
-}
-
-function createLicensePayload(encodedKey) {
-  const normalized = normalizeKeygenKey(encodedKey);
-  const plan = normalized.includes("LIFE") ? "lifetime-local" : normalized.includes("TEAM") ? "team" : "pro-yearly";
-  return {
-    keyId: `kg_${normalized.slice(5, 10).toLowerCase()}`,
-    encodedKey: normalized,
-    signatureStatus: isMockKeygenKey(normalized) ? "valid" : "invalid",
-    payloadHash: `sha256:${normalized.slice(-5).toLowerCase()}-${plan}`,
-    plan,
-    status: normalized.includes("REVOK") ? "revoked" : isMockKeygenKey(normalized) ? "active" : "tampered",
-    supportUpdatesUntil: "2027-05-12",
-    expiresAt: plan === "lifetime-local" ? null : "2027-05-12",
-    deviceLimit: plan === "team" ? 10 : 3,
-  };
 }
 
 function isDeveloperIdentitySession(session = identitySession) {
@@ -2330,8 +2597,8 @@ function applyDeveloperLicenseBypass() {
 
   licenseMachines = licenseMachines.filter((machine) => !machine.revokedAt);
   licenseStatus = {
-    paymentProvider: "paddle",
-    licenseProvider: "keygen",
+    paymentProvider: "lemon-squeezy",
+    licenseProvider: "lemon-license",
     plan: "lifetime-local",
     status: "active",
     seats: 10,
@@ -2351,12 +2618,12 @@ function applyDeveloperLicenseBypass() {
     deviceLimit: 10,
     machines: licenseMachines,
     licenseFile: {
-      keyId: "kg_dev_master",
+      keyId: "lem_dev_master",
       payloadHash: "sha256:developer-bypass",
       signatureStatus: "dev-bypass",
       storedAs: "mock developer bypass ticket",
     },
-    lastValidationCode: "KEYGEN_DEV_BYPASS",
+    lastValidationCode: "LEMON_DEV_BYPASS",
   };
 
   audit("license.developer-bypass", { plan: licenseStatus.plan, status: licenseStatus.status });
@@ -2367,10 +2634,10 @@ function applyDeveloperLicenseBypass() {
 function safeModeLicense(validationCode) {
   licenseMachines = [];
   licenseStatus = {
-    paymentProvider: validationCode.includes("LEMON") ? "lemon-squeezy" : "paddle",
-    licenseProvider: validationCode.includes("LEMON") ? "lemon-license" : "keygen",
+    paymentProvider: "lemon-squeezy",
+    licenseProvider: "lemon-license",
     plan: "trial",
-    status: validationCode.includes("LEMON") ? "safe-mode" : validationCode.includes("TAMPER") ? "tampered" : validationCode.includes("REVOK") ? "revoked" : "free",
+    status: validationCode.includes("TAMPER") ? "tampered" : validationCode.includes("REVOK") ? "revoked" : validationCode.includes("LEMON") ? "safe-mode" : "free",
     seats: 1,
     supportUpdatesUntil: "2026-05-12",
     eligibleLatestVersion: "1.0.0",
@@ -2379,7 +2646,7 @@ function safeModeLicense(validationCode) {
     deviceLimit: 1,
     machines: licenseMachines,
     entitlement: {
-      provider: validationCode.includes("LEMON") ? "lemon-squeezy" : "keygen",
+      provider: "lemon-squeezy",
       status: "safe-mode",
       plan: "trial",
       graceUntil: nowIso(),
@@ -2393,58 +2660,10 @@ function safeModeLicense(validationCode) {
 }
 
 function activateLicense(encodedKey) {
-  if (isMockLemonLicenseKey(encodedKey)) {
-    return activateLemonLicense(encodedKey);
+  if (!isMockLemonLicenseKey(encodedKey)) {
+    return safeModeLicense("LEMON_INVALID_LICENSE_KEY");
   }
-  const payload = createLicensePayload(encodedKey);
-  if (payload.signatureStatus !== "valid") {
-    return safeModeLicense("KEYGEN_INVALID_SIGNATURE");
-  }
-  if (payload.status === "revoked") {
-    return safeModeLicense("KEYGEN_REVOKED");
-  }
-  const activeMachines = licenseMachines.filter((machine) => !machine.revokedAt);
-  const alreadyActive = activeMachines.some((machine) => machine.fingerprintHash === machineFingerprint.fingerprintHash);
-  if (!alreadyActive && activeMachines.length >= payload.deviceLimit) {
-    return safeModeLicense("KEYGEN_MACHINE_LIMIT_EXCEEDED");
-  }
-  if (!alreadyActive) {
-    const timestamp = nowIso();
-    licenseMachines = [
-      ...licenseMachines,
-      {
-        machineId: `win_${machineFingerprint.fingerprintHash.slice(-8)}`,
-        fingerprintHash: machineFingerprint.fingerprintHash,
-        deviceName: "Windows 11 x64 workstation",
-        platform: "Windows x64 MSVC",
-        activatedAt: timestamp,
-        lastSeenAt: timestamp,
-      },
-    ];
-  }
-  licenseStatus = {
-    paymentProvider: "paddle",
-    licenseProvider: "keygen",
-    plan: payload.plan,
-    status: "active",
-    seats: payload.plan === "team" ? 10 : 1,
-    supportUpdatesUntil: payload.supportUpdatesUntil,
-    eligibleLatestVersion: "1.4.0",
-    offlineGraceUntil: "2026-06-11",
-    features: ["pro-agent", "local-memory", "workflow-builder", "mcp-connectors", "diagnostics"],
-    deviceLimit: payload.deviceLimit,
-    machines: licenseMachines,
-    licenseFile: {
-      keyId: payload.keyId,
-      payloadHash: payload.payloadHash,
-      signatureStatus: payload.signatureStatus,
-      storedAs: "mock signed Keygen offline ticket",
-    },
-    lastValidationCode: "KEYGEN_VALID",
-  };
-  audit("license.activate", { keyId: payload.keyId, plan: payload.plan, status: licenseStatus.status });
-  scheduleStateSave();
-  return licenseStatus;
+  return activateLemonLicense(encodedKey);
 }
 
 function activateLemonLicense(encodedKey) {
@@ -2517,11 +2736,16 @@ function redactDiagnosticText(input) {
   return String(input ?? "")
     .replace(/\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi, "[REDACTED]")
     .replace(/\bsk-[A-Za-z0-9_-]{12,}\b/g, "[REDACTED]")
+    .replace(/\bsk-ant-[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
+    .replace(/\bsk-or-v1-[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
+    .replace(/\bgsk_[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
+    .replace(/\bxai-[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
+    .replace(/\bAIza[A-Za-z0-9_-]{8,}\b/g, "[REDACTED]")
     .replace(/\bCLWD-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}\b/g, "[REDACTED]")
     .replace(/\bCLWD-BETA-[A-Z0-9]{4}-[0-9]{4}\b/g, "[REDACTED]")
     .replace(/\/Users\/[^/\s]+\/[^\s]+/g, "[REDACTED]")
     .replace(/[A-Z]:\\(?:[^\\\s]+\\)*[^\\\s]+/gi, "[REDACTED]")
-    .replace(/\bpaddle_customer_[A-Za-z0-9_-]+\b/g, "[REDACTED]");
+    .replace(/\b(?:paddle_customer|lem_customer|lemon_customer)_[A-Za-z0-9_-]+\b/g, "[REDACTED]");
 }
 
 function legalConsentSummaryFromBody(body = {}) {
@@ -2541,7 +2765,7 @@ function createDiagnosticReport(body = {}) {
   const timestamp = nowIso();
   const recentErrors = [
     redactDiagnosticText(body.lastError ?? "CLWD-GW-2001 mock gateway recent warning"),
-    `License validation=${licenseStatus.lastValidationCode ?? "none"} Lemon event=${body.lemonEventType ?? "none"} Paddle event=${body.paddleEventType ?? "none"}`,
+    `License validation=${licenseStatus.lastValidationCode ?? "none"} Lemon event=${body.lemonEventType ?? "none"} Payment event=${body.paymentEventType ?? "none"}`,
   ];
   const report = {
     reportId: `diag-${Date.now()}`,
@@ -2557,7 +2781,7 @@ function createDiagnosticReport(body = {}) {
       lowPowerMode: false,
     },
     licenseSummary: {
-      provider: "keygen",
+      provider: "lemon-license",
       status: licenseStatus.status,
       plan: licenseStatus.plan,
       lastValidationCode: licenseStatus.lastValidationCode,
@@ -2805,6 +3029,234 @@ function maskSecret(secret, head = 6, tail = 4) {
   return `${normalized.slice(0, head)}...${normalized.slice(-tail)}`;
 }
 
+function providerSecretRef(providerId, authMode, data = {}) {
+  const source = [
+    String(providerId ?? "").trim(),
+    String(authMode ?? "").trim(),
+    String(data.model ?? "").trim(),
+    String(data.accountEmail ?? "").trim(),
+    String(data.endpoint ?? "").trim(),
+  ].join("|");
+  return `psr_${crypto.createHash("sha256").update(`clawdesk-provider-secret-ref:${source}`).digest("hex").slice(0, 24)}`;
+}
+
+function tokenRefreshForAuthMode(authMode) {
+  if (authMode === "oauth") {
+    return { mode: "refreshable", lastRefreshStatus: "ready" };
+  }
+  if (authMode === "mock") {
+    return { mode: "not-required", lastRefreshStatus: "not-configured" };
+  }
+  return { mode: "manual", lastRefreshStatus: "not-configured" };
+}
+
+function providerSecretRefContract() {
+  return {
+    version: "2026-05-15.provider-secret-ref.v1",
+    storage: "server-side-secret-ref",
+    rawSecretResponse: false,
+    issueEndpoint: "/provider/secret-ref/issue",
+    refreshEndpoint: "/provider/token-refresh",
+    supportedAuthModes: ["api-key", "oauth", "local-endpoint"],
+  };
+}
+
+function openAiRuntimeContract() {
+  return {
+    version: "2026-05-15.openai-runtime.v1",
+    providerIds: ["openai", "openai-api"],
+    apiStyle: "responses-api",
+    apiBaseUrl: openAiApiBaseUrl,
+    responseEndpoint: "/v1/responses",
+    modelFallback: "gpt-4o-mini",
+    rawSecretResponse: false,
+    endpoints: [
+      { method: "GET", path: "/provider/openai/runtime-contract" },
+      { method: "POST", path: "/provider/openai/validate-key" },
+      { method: "POST", path: "/provider/openai/chat-test" },
+    ],
+    liveMode: {
+      defaultEnabled: false,
+      enableFlag: "CLAWDESK_OPENAI_LIVE_TEST",
+      secretSources: ["request.apiKey", "OPENAI_API_KEY"],
+    },
+  };
+}
+
+function normalizeOpenAiProviderId(value) {
+  const providerId = typeof value === "string" && value.trim() ? value.trim() : "openai-api";
+  return providerId === "openai" || providerId === "openai-api" ? providerId : "";
+}
+
+function normalizeOpenAiModel(value) {
+  const model = typeof value === "string" ? value.trim() : "";
+  return model || "gpt-4o-mini";
+}
+
+function liveOpenAiRequested(body = {}) {
+  const flag = String(process.env.CLAWDESK_OPENAI_LIVE_TEST ?? "").trim().toLowerCase();
+  return body.live === true || ["1", "true", "yes"].includes(flag);
+}
+
+function openAiApiKeyFromBodyOrEnv(body = {}) {
+  const requestKey = typeof body.apiKey === "string" ? body.apiKey.trim() : "";
+  return requestKey || process.env.OPENAI_API_KEY || "";
+}
+
+function safeOpenAiErrorPayload(error, status = 502) {
+  const message = error instanceof Error ? error.message : String(error ?? "OpenAI request failed");
+  return {
+    status: "failed",
+    live: true,
+    errorCode: "OPENAI_RUNTIME_FAILED",
+    error: redactDiagnosticText(message).slice(0, 240),
+    httpStatus: status,
+    rawSecretResponse: false,
+  };
+}
+
+function extractOpenAiResponseText(payload) {
+  if (typeof payload?.output_text === "string" && payload.output_text.trim()) {
+    return payload.output_text.trim();
+  }
+  const output = Array.isArray(payload?.output) ? payload.output : [];
+  const text = output
+    .flatMap((item) => (Array.isArray(item.content) ? item.content : []))
+    .map((content) => content.text)
+    .filter((value) => typeof value === "string" && value.trim())
+    .join("\n")
+    .trim();
+  return text || "";
+}
+
+async function fetchJsonWithTimeout(url, options = {}, timeoutMs = 12000) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(url, { ...options, signal: controller.signal });
+    const requestId = response.headers.get("x-request-id") || undefined;
+    const payload = await response.json().catch(() => ({}));
+    return { response, requestId, payload };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function validateOpenAiKeyRuntime(body = {}) {
+  const providerId = normalizeOpenAiProviderId(body.providerId);
+  if (!providerId) return { code: 400, payload: { error: "Unsupported OpenAI provider", rawSecretResponse: false } };
+  const model = normalizeOpenAiModel(body.model);
+  const checkedAt = nowIso();
+  const live = liveOpenAiRequested(body);
+  if (!live) {
+    return {
+      code: 200,
+      payload: {
+        providerId,
+        model,
+        status: "dry-run",
+        live: false,
+        checkedAt,
+        rawSecretResponse: false,
+        message: "OpenAI API key shape accepted; live validation is disabled for this run.",
+      },
+    };
+  }
+  const apiKey = openAiApiKeyFromBodyOrEnv(body);
+  if (!hasValidApiKey(apiKey, ["sk-"])) {
+    return { code: 400, payload: { error: "OpenAI API key is required for live validation", rawSecretResponse: false } };
+  }
+  try {
+    const { response, requestId } = await fetchJsonWithTimeout(`${openAiApiBaseUrl}/models`, {
+      method: "GET",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "X-Client-Request-Id": `clawdesk-openai-validate-${crypto.randomUUID()}`,
+      },
+    });
+    if (!response.ok) {
+      return { code: response.status, payload: safeOpenAiErrorPayload(`OpenAI validation failed with ${response.status}`, response.status) };
+    }
+    return {
+      code: 200,
+      payload: {
+        providerId,
+        model,
+        status: "validated",
+        live: true,
+        checkedAt,
+        requestId,
+        rawSecretResponse: false,
+      },
+    };
+  } catch (error) {
+    return { code: 502, payload: safeOpenAiErrorPayload(error) };
+  }
+}
+
+async function runOpenAiChatRuntime(body = {}) {
+  const providerId = normalizeOpenAiProviderId(body.providerId);
+  if (!providerId) return { code: 400, payload: { error: "Unsupported OpenAI provider", rawSecretResponse: false } };
+  const model = normalizeOpenAiModel(body.model);
+  const prompt = typeof body.prompt === "string" && body.prompt.trim()
+    ? body.prompt.trim()
+    : "Reply with a short ClawDesk OpenAI runtime check.";
+  const checkedAt = nowIso();
+  const live = liveOpenAiRequested(body);
+  if (!live) {
+    return {
+      code: 200,
+      payload: {
+        providerId,
+        model,
+        status: "dry-run",
+        live: false,
+        checkedAt,
+        outputText: `Dry-run OK: ${model} would be called through ${openAiApiBaseUrl}/responses.`,
+        rawSecretResponse: false,
+      },
+    };
+  }
+  const apiKey = openAiApiKeyFromBodyOrEnv(body);
+  if (!hasValidApiKey(apiKey, ["sk-"])) {
+    return { code: 400, payload: { error: "OpenAI API key is required for live chat test", rawSecretResponse: false } };
+  }
+  try {
+    const { response, payload, requestId } = await fetchJsonWithTimeout(`${openAiApiBaseUrl}/responses`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${apiKey}`,
+        "Content-Type": "application/json",
+        "X-Client-Request-Id": `clawdesk-openai-chat-${crypto.randomUUID()}`,
+      },
+      body: JSON.stringify({
+        model,
+        input: prompt,
+        max_output_tokens: 64,
+      }),
+    });
+    if (!response.ok) {
+      return { code: response.status, payload: safeOpenAiErrorPayload(payload?.error?.message || `OpenAI chat failed with ${response.status}`, response.status) };
+    }
+    return {
+      code: 200,
+      payload: {
+        providerId,
+        model: payload?.model || model,
+        status: "validated",
+        live: true,
+        checkedAt,
+        requestId,
+        responseId: payload?.id,
+        outputText: extractOpenAiResponseText(payload).slice(0, 500),
+        rawSecretResponse: false,
+      },
+    };
+  } catch (error) {
+    return { code: 502, payload: safeOpenAiErrorPayload(error) };
+  }
+}
+
 function parseModelValue(value, fallback) {
   const model = typeof value === "string" ? value.trim() : "";
   return model || fallback;
@@ -2815,6 +3267,8 @@ function makeProviderSession(provider, data = {}) {
   const common = {
     displayName: provider.displayName,
     model,
+    secretRef: provider.authMode === "mock" ? undefined : providerSecretRef(provider.id, provider.authMode, { ...data, model }),
+    tokenRefresh: tokenRefreshForAuthMode(provider.authMode),
   };
   if (provider.authMode === "oauth") {
     const accountEmail = typeof data.accountEmail === "string" ? data.accountEmail.trim() : "";
@@ -2830,12 +3284,24 @@ function makeProviderSession(provider, data = {}) {
   }
   if (provider.authMode === "api-key") {
     const apiKey = typeof data.apiKey === "string" ? data.apiKey : "";
+    const isOpenAiProvider = provider.id === "openai" || provider.id === "openai-api";
     return {
       ...common,
       activeProvider: provider.id,
       status: "connected",
       detail: `${provider.displayName} API key 已暫存於本機 mock Gateway，模型：${model}。`,
       maskedKey: maskSecret(apiKey),
+      ...(isOpenAiProvider
+        ? {
+            runtime: {
+              providerId: provider.id,
+              apiStyle: "responses-api",
+              status: "not-tested",
+              live: false,
+              message: "可用 OpenAI runtime probe 執行 dry-run 或 live Responses API 測試。",
+            },
+          }
+        : {}),
     };
   }
   if (provider.authMode === "local-endpoint") {
@@ -2896,11 +3362,265 @@ function setProviderBySpec(providerId, body = {}, options = {}) {
   return { ok: true, session };
 }
 
+async function readOllamaModels(endpoint) {
+  const normalizedUrl = normalizeEndpoint(endpoint);
+  if (!normalizedUrl) {
+    return { ok: false, status: 400, error: "Ollama endpoint 格式無效。" };
+  }
+  const normalized = normalizedUrl.toString().replace(/\/+$/, "");
+  if (!normalized.startsWith("http://127.0.0.1") && !normalized.startsWith("http://localhost")) {
+    return { ok: false, status: 400, error: "Only local Ollama endpoints are allowed in this MVP." };
+  }
+  try {
+    const response = await fetch(`${normalized}/api/tags`);
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return { ok: false, status: response.status, error: payload?.error || "Ollama model list failed." };
+    }
+    const models = Array.isArray(payload.models)
+      ? payload.models.map((item) => ({
+          name: String(item.name ?? item.model ?? ""),
+          modifiedAt: item.modified_at ?? item.modifiedAt,
+          capabilities: inferOllamaModelCapabilities(item),
+        })).filter((item) => item.name).map((item) => ({
+          ...item,
+          capabilities: applyPersistedVisionProbe(normalized, item.name, item.capabilities),
+        }))
+      : [];
+    return { ok: true, models };
+  } catch (error) {
+    return { ok: false, status: 503, error: String(error?.message ?? "Ollama endpoint unreachable.") };
+  }
+}
+
+function visionProbeKey(endpoint, model) {
+  return `${String(endpoint).replace(/\/+$/, "")}::${String(model).trim()}`;
+}
+
+function applyPersistedVisionProbe(endpoint, model, fallbackCapabilities) {
+  const probe = visionProbeResults[visionProbeKey(endpoint, model)];
+  if (!probe) return fallbackCapabilities;
+  return {
+    ...(fallbackCapabilities ?? {}),
+    vision: Boolean(probe.vision),
+    text: true,
+    source: "probe",
+    probedAt: probe.probedAt,
+    reason: probe.vision
+      ? "圖片能力 probe 通過；此模型可接收 image payload。"
+      : "圖片能力 probe 未通過；貼圖將使用 metadata-only fallback。",
+  };
+}
+
+function recordVisionProbe(endpoint, model, result) {
+  const key = visionProbeKey(endpoint, model);
+  visionProbeResults = {
+    ...visionProbeResults,
+    [key]: {
+      endpoint,
+      model,
+      vision: Boolean(result.vision),
+      mode: result.vision ? "vision-ready" : "metadata-only",
+      outputText: String(result.outputText ?? result.error ?? "").slice(0, 400),
+      probedAt: nowIso(),
+    },
+  };
+  scheduleStateSave();
+  return visionProbeResults[key];
+}
+
+function clearVisionProbe(endpoint, model) {
+  const key = visionProbeKey(endpoint, model);
+  if (!visionProbeResults[key]) return false;
+  const next = { ...visionProbeResults };
+  delete next[key];
+  visionProbeResults = next;
+  scheduleStateSave();
+  return true;
+}
+
+function inferOllamaModelCapabilities(model = {}) {
+  const name = String(model.name ?? model.model ?? "").toLowerCase();
+  const details = model.details && typeof model.details === "object" ? model.details : {};
+  const families = [
+    details.family,
+    ...(Array.isArray(details.families) ? details.families : []),
+  ].filter(Boolean).map((item) => String(item).toLowerCase());
+  const signal = [name, ...families].join(" ");
+  const visionPattern = /\b(?:vision|vl|llava|bakllava|moondream|minicpm-v|pixtral|internvl|qwen2(?:\.5)?-vl|qwen-vl|llama3\.2-vision)\b/i;
+  const textPattern = /\b(?:coder|text|embed|embedding)\b/i;
+  const vision = visionPattern.test(signal);
+  return {
+    vision,
+    text: true,
+    source: "heuristic",
+    reason: vision
+      ? "模型名稱或 Ollama details 顯示 vision/VL 能力。"
+      : textPattern.test(signal)
+        ? "模型名稱顯示 text/coder/embed 類型；圖片將以 metadata fallback。"
+        : "未偵測到 vision/VL 訊號；圖片 payload 會先嘗試，失敗時自動 fallback metadata。",
+  };
+}
+
+async function runOllamaChatOnce({ endpoint, model, prompt }) {
+  const normalizedUrl = normalizeEndpoint(endpoint);
+  if (!normalizedUrl) {
+    return { ok: false, status: 400, error: "Ollama endpoint 格式無效。" };
+  }
+  const normalized = normalizedUrl.toString().replace(/\/+$/, "");
+  if (!normalized.startsWith("http://127.0.0.1") && !normalized.startsWith("http://localhost")) {
+    return { ok: false, status: 400, error: "Only local Ollama endpoints are allowed in this MVP." };
+  }
+  try {
+    const response = await fetch(`${normalized}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        stream: false,
+        messages: [{ role: "user", content: prompt }],
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      return { ok: false, status: response.status, error: payload?.error || "Ollama chat test failed." };
+    }
+    const outputText = String(payload?.message?.content ?? payload?.response ?? "").trim();
+    return { ok: true, outputText, model };
+  } catch (error) {
+    return { ok: false, status: 503, error: String(error?.message ?? "Ollama endpoint unreachable.") };
+  }
+}
+
+async function runOllamaVisionProbe({ endpoint, model }) {
+  const normalizedUrl = normalizeEndpoint(endpoint);
+  if (!normalizedUrl) {
+    return { ok: false, status: 400, vision: false, error: "Ollama endpoint 格式無效。" };
+  }
+  const normalized = normalizedUrl.toString().replace(/\/+$/, "");
+  if (!normalized.startsWith("http://127.0.0.1") && !normalized.startsWith("http://localhost")) {
+    return { ok: false, status: 400, vision: false, error: "Only local Ollama endpoints are allowed in this MVP." };
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 20000);
+  try {
+    const response = await fetch(`${normalized}/api/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        stream: false,
+        messages: [
+          {
+            role: "user",
+            content: "This is a ClawDesk image capability probe. Reply exactly VISION_OK only if you can receive and inspect the attached image payload. If you cannot inspect image pixels, reply VISION_UNSUPPORTED.",
+            images: ["iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="],
+          },
+        ],
+      }),
+    });
+    const payload = await response.json().catch(() => ({}));
+    if (!response.ok) {
+      const errorText = String(payload?.error ?? "");
+      if (/image|vision|multimodal|unsupported|does not support/i.test(errorText)) {
+        return {
+          ok: true,
+          vision: false,
+          outputText: errorText,
+          model,
+        };
+      }
+      return {
+        ok: false,
+        status: response.status,
+        vision: false,
+        error: errorText || "Ollama vision probe failed.",
+      };
+    }
+    const outputText = String(payload?.message?.content ?? payload?.response ?? "").trim();
+    return {
+      ok: true,
+      vision: /\bVISION_OK\b/i.test(outputText),
+      outputText,
+      model,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      status: 503,
+      vision: false,
+      error: error?.name === "AbortError" ? "Vision probe timed out." : String(error?.message ?? "Ollama endpoint unreachable."),
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 function runtimeReadinessSummary() {
   return openClawRuntimeSurfaces.reduce((summary, surface) => {
     summary[surface.status] = (summary[surface.status] ?? 0) + 1;
     return summary;
   }, {});
+}
+
+function summarizeProductComparison(items = productComparisonItems) {
+  return items.reduce(
+    (summary, item) => {
+      summary[item.priority] = (summary[item.priority] ?? 0) + 1;
+      summary.total += 1;
+      return summary;
+    },
+    { p0: 0, p1: 0, p2: 0, later: 0, total: 0 },
+  );
+}
+
+function summarizeSafetyPolicy(rules = defaultSafetyPolicyRules) {
+  return rules.reduce(
+    (summary, rule) => {
+      summary[rule.riskLevel] = (summary[rule.riskLevel] ?? 0) + 1;
+      if (rule.requiresApproval || rule.riskLevel === "high" || rule.riskLevel === "blocked") {
+        summary.requiresApproval += 1;
+      }
+      return summary;
+    },
+    { low: 0, medium: 0, high: 0, blocked: 0, requiresApproval: 0 },
+  );
+}
+
+function summarizeGatewayAdapter(methods = gatewayAdapterMethods) {
+  return methods.reduce(
+    (summary, method) => {
+      summary[method.status] = (summary[method.status] ?? 0) + 1;
+      summary.total += 1;
+      return summary;
+    },
+    { ready: 0, partial: 0, mock: 0, deferred: 0, total: 0 },
+  );
+}
+
+function createSafetyQueueItem(action, riskLevel = "medium", note = "") {
+  const item = {
+    id: `queue-${crypto.randomUUID().slice(0, 8)}`,
+    action,
+    riskLevel,
+    status: "waiting-for-user",
+    note: note || "等待人工審批",
+    createdAt: nowIso(),
+  };
+  safetyQueue.unshift(item);
+  safetyQueue = safetyQueue.slice(0, 200);
+  scheduleStateSave();
+  return item;
+}
+
+function fileSearchPreview(query, maxResults = 8) {
+  const normalized = query.trim().toLowerCase();
+  const matched = workspaceSearchIndex
+    .filter((item) => item.path.toLowerCase().includes(normalized) || item.area.includes(normalized))
+    .slice(0, Math.max(1, Math.min(maxResults, 20)));
+  if (matched.length > 0) return matched;
+  return workspaceSearchIndex.slice(0, Math.max(1, Math.min(maxResults, 8)));
 }
 
 function runtimeAuthPlan(providerId) {
@@ -2913,6 +3633,7 @@ function runtimeAuthPlan(providerId) {
       authMode: provider.authMode,
       endpoint: provider.id === "chatgpt-pro" ? "/auth/chatgpt-pro/oauth-login" : "/auth/openai-codex/oauth-login",
       credentialPolicy: "account-token-stub",
+      secretRefPolicy: "gateway-secret-ref",
       upstreamSource: provider.upstreamSource ?? "src/agents/model-auth.ts",
       canUseNow: true,
     };
@@ -2924,6 +3645,7 @@ function runtimeAuthPlan(providerId) {
       authMode: provider.authMode,
       endpoint: "/auth/local-model",
       credentialPolicy: "loopback-only",
+      secretRefPolicy: "local-dpapi",
       upstreamSource: provider.upstreamSource ?? "src/agents/models-config.providers.*",
       canUseNow: true,
     };
@@ -2935,6 +3657,7 @@ function runtimeAuthPlan(providerId) {
       authMode: provider.authMode,
       endpoint: "/auth/mock",
       credentialPolicy: "no-secret",
+      secretRefPolicy: "none",
       upstreamSource: "sidecars/mock-gateway/server.mjs",
       canUseNow: true,
     };
@@ -2945,6 +3668,7 @@ function runtimeAuthPlan(providerId) {
     authMode: provider.authMode,
     endpoint: provider.id === "openai" || provider.id === "openai-api" ? "/auth/openai-api-key" : "/auth/provider",
     credentialPolicy: "masked-in-memory",
+    secretRefPolicy: "gateway-secret-ref",
     upstreamSource: provider.upstreamSource ?? "src/agents/model-auth-env.ts",
     canUseNow: true,
   };
@@ -3006,6 +3730,37 @@ function issueIdentityVerification(user) {
   return record;
 }
 
+function findPasswordResetByEmail(email) {
+  const now = Date.now();
+  return identityPasswordResets.find((item) => item.email === email && !item.used && new Date(item.expiresAt).getTime() > now);
+}
+
+function issueIdentityPasswordReset(user) {
+  const code = createIdentityVerificationCode();
+  const now = Date.now();
+  const expiresAt = new Date(now + 20 * 60 * 1000).toISOString();
+  const record = {
+    email: user.email,
+    userId: user.id,
+    code,
+    createdAt: new Date(now).toISOString(),
+    expiresAt,
+    used: false,
+    source: "mock",
+  };
+  identityPasswordResets.push(record);
+  identityMailOutbox.unshift({
+    to: user.email,
+    subject: "ClawDesk 密碼重設驗證信",
+    body: `請在 20 分鐘內使用重設碼 ${code} 完成 ClawDesk 密碼更新。`,
+    token: code,
+    code,
+    createdAt: record.createdAt,
+    purpose: "password-reset",
+  });
+  return record;
+}
+
 function hashIdentityPassword(password) {
   return crypto.createHash("sha256").update(`${password}:${identityPasswordSalt}`).digest("hex");
 }
@@ -3035,6 +3790,17 @@ function consumeIdentityVerification({ token, code }) {
     if (code && item.code === code) return true;
     return false;
   });
+  if (!target) return null;
+  if (new Date(target.expiresAt).getTime() < now) {
+    return null;
+  }
+  target.used = true;
+  return target;
+}
+
+function consumeIdentityPasswordReset({ email, code }) {
+  const now = Date.now();
+  const target = identityPasswordResets.find((item) => item.email === email && !item.used && item.code === code);
   if (!target) return null;
   if (new Date(target.expiresAt).getTime() < now) {
     return null;
@@ -3103,8 +3869,190 @@ function delay(ms) {
   });
 }
 
-async function streamDemo(conversationId, prompt) {
+async function streamTextDelta(conversationId, text) {
   const messageId = `agent-${Date.now()}`;
+  for (const token of text.match(/.{1,24}/g) ?? []) {
+    broadcast({
+      type: "agent.message.delta",
+      conversationId,
+      messageId,
+      delta: token,
+    });
+    await delay(24);
+  }
+  broadcast({ type: "agent.message.done", conversationId, messageId });
+  return messageId;
+}
+
+async function streamRuntimeCanvas(conversationId, title, summaryText, rows = []) {
+  const surfaceId = `runtime-${conversationId}`;
+  broadcast({ type: "canvas.begin", surfaceId, title });
+  await delay(80);
+  broadcast({
+    type: "canvas.patch",
+    surfaceId,
+    rootId: "root",
+    components: [
+      {
+        id: "root",
+        type: "Panel",
+        props: { title },
+        children: ["summary", "provider", "model", "table", "approve"],
+      },
+      { id: "summary", type: "Text", props: { text: summaryText } },
+      { id: "provider", type: "Metric", props: { label: "Provider", value: providerSession.displayName ?? "本機模型 endpoint" } },
+      { id: "model", type: "Metric", props: { label: "Model", value: providerSession.model ?? "not configured" } },
+      {
+        id: "table",
+        type: "Table",
+        props: {
+          columns: ["項目", "狀態", "說明"],
+          rows,
+        },
+      },
+      { id: "approve", type: "Button", props: { label: "檢視後續需要授權的動作" } },
+    ],
+  });
+
+  const request = {
+    type: "permission.request",
+    requestId: crypto.randomUUID(),
+    action: "runtime.next-step",
+    target: providerSession.endpoint ?? "/chat",
+    risk: "low",
+    summary: "LLM 回覆已完成；若下一步要讀寫檔案、呼叫工具或使用外部 connector，仍需人工確認。",
+  };
+  pendingPermissions.set(request.requestId, request);
+  broadcast(request);
+}
+
+function normalizeImageAttachments(attachments = []) {
+  if (!Array.isArray(attachments)) return [];
+  return attachments
+    .map((item) => {
+      const name = typeof item?.name === "string" && item.name.trim() ? item.name.trim().slice(0, 160) : "未命名圖片";
+      const mimeType = typeof item?.mimeType === "string" && item.mimeType.startsWith("image/") ? item.mimeType : "image/png";
+      const dataUrl = typeof item?.dataUrl === "string" ? item.dataUrl : "";
+      const match = dataUrl.match(/^data:image\/[a-z0-9.+-]+;base64,([A-Za-z0-9+/=]+)$/i);
+      const base64 = match?.[1] ?? "";
+      const sizeBytes = Number(item?.sizeBytes ?? Math.floor((base64.length * 3) / 4));
+      if (base64 && sizeBytes > 4 * 1024 * 1024) {
+        return { name, mimeType, sizeBytes, rejected: true, reason: "圖片超過 4MB，已只傳 metadata。" };
+      }
+      return { name, mimeType, sizeBytes: Number.isFinite(sizeBytes) ? sizeBytes : 0, base64 };
+    })
+    .filter(Boolean)
+    .slice(0, 6);
+}
+
+async function streamOllamaRuntime(conversationId, prompt, attachments = []) {
+  const endpoint = providerSession.endpoint || "http://127.0.0.1:11434";
+  const model = providerSession.model || "llama3.3";
+  const messageId = `agent-${Date.now()}`;
+  const imageAttachments = normalizeImageAttachments(attachments);
+  const imagePayloads = imageAttachments.filter((item) => item.base64 && !item.rejected).map((item) => item.base64);
+  const attachmentText =
+    imageAttachments.length > 0
+      ? `\n\n使用者同時附上 ${imageAttachments.length} 個圖片附件：${imageAttachments
+          .map((item) => `${item.name} (${item.base64 && !item.rejected ? "payload" : "metadata"})`)
+          .join("、")}。若目前模型不支援 vision，請明確告知只能根據文字與圖片 metadata 回覆。`
+      : "";
+
+  try {
+    const normalizedUrl = normalizeEndpoint(endpoint);
+    if (!normalizedUrl) throw new Error("Ollama endpoint 格式無效。");
+    const normalized = normalizedUrl.toString().replace(/\/+$/, "");
+    const createRequest = (includeImagePayloads) => ({
+      model,
+      stream: true,
+      messages: [
+        {
+          role: "user",
+          content: `${prompt}${attachmentText}`,
+          ...(includeImagePayloads && imagePayloads.length > 0 ? { images: imagePayloads } : {}),
+        },
+      ],
+    });
+    const fetchOllamaChat = (body, timeoutMs = 20000) => {
+      const controller = new AbortController();
+      const timeout = setTimeout(() => controller.abort(), timeoutMs);
+      return fetch(`${normalized}/api/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+        signal: controller.signal,
+      }).finally(() => clearTimeout(timeout));
+    };
+    let usedImagePayloads = imagePayloads.length;
+    let response;
+    try {
+      response = await fetchOllamaChat(createRequest(true));
+    } catch (error) {
+      if (imagePayloads.length === 0) throw error;
+      usedImagePayloads = 0;
+      response = await fetchOllamaChat(createRequest(false));
+    }
+    if (!response.ok && imagePayloads.length > 0) {
+      const payload = await response.json().catch(() => ({}));
+      const reason = String(payload?.error ?? response.status);
+      if (/image|vision|multimodal|unsupported|does not support/i.test(reason)) {
+        usedImagePayloads = 0;
+        response = await fetchOllamaChat(createRequest(false));
+      } else {
+        throw new Error(payload?.error || `Ollama chat failed: ${response.status}`);
+      }
+    }
+    if (!response.ok || !response.body) {
+      const payload = await response.json().catch(() => ({}));
+      throw new Error(payload?.error || `Ollama chat failed: ${response.status}`);
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    let buffer = "";
+    let emitted = false;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split(/\r?\n/);
+      buffer = lines.pop() ?? "";
+      for (const line of lines) {
+        if (!line.trim()) continue;
+        const payload = JSON.parse(line);
+        const delta = String(payload?.message?.content ?? payload?.response ?? "");
+        if (delta) {
+          emitted = true;
+          broadcast({ type: "agent.message.delta", conversationId, messageId, delta });
+        }
+      }
+    }
+    if (!emitted) {
+      broadcast({ type: "agent.message.delta", conversationId, messageId, delta: "LLM 已完成，但沒有回傳文字內容。" });
+    }
+    broadcast({ type: "agent.message.done", conversationId, messageId });
+    await streamRuntimeCanvas(conversationId, "本機模型 / Ollama Runtime", "聊天回覆已由目前設定的本機模型 endpoint 產生。", [
+      { 項目: "Endpoint", 狀態: "connected", 說明: endpoint },
+      { 項目: "Model", 狀態: "streamed", 說明: model },
+      {
+        項目: "Attachments",
+        狀態: String(imageAttachments.length),
+        說明: imageAttachments.length > 0
+          ? `payload ${usedImagePayloads} / metadata ${imageAttachments.length - usedImagePayloads}`
+          : "無附件",
+      },
+    ]);
+  } catch (error) {
+    const message = `本機模型 runtime 失敗：${String(error?.message ?? error)}。請重新整理模型清單或按測試確認 endpoint。`;
+    await streamTextDelta(conversationId, message);
+    await streamRuntimeCanvas(conversationId, "本機模型 / Ollama Runtime Error", message, [
+      { 項目: "Endpoint", 狀態: "failed", 說明: endpoint },
+      { 項目: "Model", 狀態: "failed", 說明: model },
+    ]);
+  }
+}
+
+async function streamDemo(conversationId, prompt, attachments = []) {
   const providerLabel = providerDisplayLabel(providerSession.activeProvider ?? "mock");
   const modelLabel = providerSession.model ?? "未指定模型";
   const routeLabel =
@@ -3115,21 +4063,15 @@ async function streamDemo(conversationId, prompt) {
     providerSession.activeProvider === "mock"
       ? "目前使用 Mock Gateway。"
       : `目前已啟用 ${providerLabel}，路由：${routeLabel}，模型 ${modelLabel}。`;
+  const attachmentSummary =
+    Array.isArray(attachments) && attachments.length > 0
+      ? `我也收到 ${attachments.length} 個圖片附件（${attachments.map((item) => item.name || item.mimeType || "未命名圖片").join("、")}）。`
+      : "";
   const response =
     `${providerPrefix} 我會透過安全的桌面邊界處理「${prompt}」；` +
-    "ClawDesk mock Gateway 正在串流回覆、更新 Live Canvas，並針對高風險動作要求使用者授權。";
+    `${attachmentSummary} ClawDesk mock Gateway 正在串流回覆、更新 Live Canvas，並針對高風險動作要求使用者授權。`;
 
-  for (const token of response.match(/.{1,24}/g) ?? []) {
-    broadcast({
-      type: "agent.message.delta",
-      conversationId,
-      messageId,
-      delta: token,
-    });
-    await delay(24);
-  }
-
-  broadcast({ type: "agent.message.done", conversationId, messageId });
+  await streamTextDelta(conversationId, response);
 
   const surfaceId = "workspace-review";
   broadcast({ type: "canvas.begin", surfaceId, title: "工作區安全檢視" });
@@ -3166,7 +4108,7 @@ async function streamDemo(conversationId, prompt) {
         props: {
           columns: ["區域", "狀態", "下一步"],
           rows: [
-            { 區域: "Sidecar", 狀態: "Mock", 下一步: "替換為 OpenClaw-compatible Gateway" },
+            { 區域: "Sidecar", 狀態: "Mock", 下一步: "替換為正式 Gateway" },
             { 區域: "權限", 狀態: "需確認", 下一步: "持久化政策設定" },
             { 區域: "Canvas", 狀態: "宣告式", 下一步: "擴充元件型錄" },
             { 區域: "MCP", 狀態: "Microsoft mock", 下一步: "串接正式 MCP server" },
@@ -3189,6 +4131,93 @@ async function streamDemo(conversationId, prompt) {
   };
   pendingPermissions.set(request.requestId, request);
   broadcast(request);
+}
+
+async function streamOpenAiRuntimeDemo(conversationId, prompt, attachments = []) {
+  const providerId = normalizeOpenAiProviderId(providerSession.activeProvider);
+  const model = normalizeOpenAiModel(providerSession.model);
+  const result = await runOpenAiChatRuntime({
+    providerId,
+    model,
+    prompt,
+    secretRef: providerSession.secretRef,
+  });
+  const payload = result.payload;
+  const runtimeStatus = String(payload?.status ?? "failed");
+  const runtimeMessage = runtimeStatus === "validated" ? "已驗證" : runtimeStatus === "dry-run" ? "Dry-run" : "失敗";
+  const responseText =
+    payload?.outputText && typeof payload.outputText === "string"
+      ? payload.outputText
+      : `${runtimeMessage}：OpenAI runtime 回應不可用，已回退到 mock 流。`;
+  const providerName = providerDisplayLabel(providerId ?? providerSession.activeProvider ?? "openai-api");
+  const requestId = typeof payload?.requestId === "string" ? payload.requestId : "";
+
+  providerSession = {
+    ...providerSession,
+    runtime: {
+      providerId: payload?.providerId ?? providerId ?? "openai-api",
+      apiStyle: "responses-api",
+      status: runtimeStatus,
+      live: Boolean(payload?.live),
+      checkedAt: payload?.checkedAt ?? nowIso(),
+      requestId,
+      message: runtimeMessage,
+    },
+  };
+
+  const attachmentSummary =
+    Array.isArray(attachments) && attachments.length > 0 ? `已收到 ${attachments.length} 個圖片附件。` : "";
+  await streamTextDelta(conversationId, `${runtimeMessage}（${model}）：${responseText}。${attachmentSummary}`);
+
+  const surfaceId = "workspace-openai-runtime";
+  broadcast({ type: "canvas.begin", surfaceId, title: "OpenAI Runtime 測試報告" });
+  broadcast({
+    type: "canvas.patch",
+    surfaceId,
+    rootId: "root",
+    components: [
+      {
+        id: "root",
+        type: "Panel",
+        props: { title: "OpenAI Responses API" },
+        children: ["summary", "provider", "model", "status", "notes", "request", "permission"],
+      },
+      {
+        id: "summary",
+        type: "Text",
+        props: {
+          text: `${providerName} 已完成 ${runtimeMessage}，回應內容範例：${responseText.slice(0, 140)}。`,
+        },
+      },
+      { id: "provider", type: "Metric", props: { label: "供應商", value: payload?.providerId ?? providerId ?? "openai" } },
+      { id: "model", type: "Metric", props: { label: "模型", value: model } },
+      { id: "status", type: "Metric", props: { label: "狀態", value: runtimeStatus } },
+      { id: "request", type: "Metric", props: { label: "requestId", value: requestId || "mock-only" } },
+      {
+        id: "notes",
+        type: "Text",
+        props: {
+          text: "未設定 live 時為 dry-run；啟用 live 請設定 CLAWDESK_OPENAI_LIVE_TEST=1 並提供 OPENAI_API_KEY。",
+        },
+      },
+      {
+        id: "permission",
+        type: "Button",
+        props: { label: "繼續 OpenAI runtime 任務" },
+      },
+    ],
+  });
+
+  const permission = {
+    type: "permission.request",
+    requestId: crypto.randomUUID(),
+    action: "openai-runtime-check",
+    target: "/provider/openai/chat-test",
+    risk: "low",
+    summary: `${providerName} runtime 已完成 ${runtimeMessage}，請確認是否允許繼續執行。`,
+  };
+  pendingPermissions.set(permission.requestId, permission);
+  broadcast(permission);
 }
 
 const server = http.createServer(async (req, res) => {
@@ -3242,6 +4271,42 @@ const server = http.createServer(async (req, res) => {
       return;
     }
     json(res, 200, machineFingerprint);
+    return;
+  }
+
+  if (
+    pathname.startsWith("/api/auth/")
+    || pathname.startsWith("/api/license/")
+    || pathname === "/api/account/entitlements"
+    || pathname === "/api/webhooks/lemonsqueezy"
+    || pathname === "/api/payment/lemonsqueezy/webhook"
+  ) {
+    if (!identityBackendEnabled) {
+      json(res, 503, { error: "UniversalServer backend is not configured for this mock gateway." });
+      return;
+    }
+    const body = req.method === "POST" ? await readJson(req).catch(() => "__invalid_json__") : undefined;
+    if (body === "__invalid_json__") {
+      json(res, 400, { error: "Invalid JSON" });
+      return;
+    }
+    const response = await callBackendApi(pathname, {
+      method: req.method,
+      headers: getBackendIdentityToken() ? { Authorization: `Bearer ${getBackendIdentityToken()}` } : undefined,
+      body,
+      query: Object.fromEntries(parsedUrl.searchParams.entries()),
+    });
+    if (!response) {
+      json(res, 503, { error: "UniversalServer backend is unavailable." });
+      return;
+    }
+    if (pathname === "/api/auth/login" && response.ok && response.payload?.session?.token) {
+      setBackendIdentityToken(response.payload.session.token);
+    }
+    if (pathname === "/api/auth/logout" && response.ok) {
+      setBackendIdentityToken("");
+    }
+    json(res, response.status || (response.ok ? 200 : 502), response.payload);
     return;
   }
 
@@ -3333,7 +4398,7 @@ const server = http.createServer(async (req, res) => {
       licenseMachines = licenseMachines.map((machine) =>
         machine.machineId === body.machineId ? { ...machine, revokedAt: timestamp } : machine,
       );
-      licenseStatus = { ...licenseStatus, machines: licenseMachines, lastValidationCode: "KEYGEN_MACHINE_DEACTIVATED" };
+      licenseStatus = { ...licenseStatus, machines: licenseMachines, lastValidationCode: "LEMON_MACHINE_DEACTIVATED" };
       json(res, 200, { status: licenseStatus, machines: licenseMachines });
     } catch {
       json(res, 400, { error: "Invalid JSON" });
@@ -3369,10 +4434,10 @@ const server = http.createServer(async (req, res) => {
         return;
       }
       if (String(body.licenseFile ?? body.licenseKey ?? "").includes("TAMPER")) {
-        json(res, 200, { status: safeModeLicense("KEYGEN_TAMPERED_LICENSE_FILE") });
+        json(res, 200, { status: safeModeLicense("LEMON_TAMPERED_LICENSE_FILE") });
         return;
       }
-      licenseStatus = { ...licenseStatus, lastValidationCode: licenseStatus.status === "active" ? "KEYGEN_VALID" : licenseStatus.lastValidationCode };
+      licenseStatus = { ...licenseStatus, lastValidationCode: licenseStatus.status === "active" ? "LEMON_LICENSE_ACTIVE" : licenseStatus.lastValidationCode };
       json(res, 200, { status: licenseStatus });
     } catch {
       json(res, 400, { error: "Invalid JSON" });
@@ -3411,17 +4476,17 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, {
         status: applyDeveloperLicenseBypass(),
         ticket: {
-          storedAs: "mock signed Keygen offline license file",
+          storedAs: "mock hashed Lemon Squeezy offline entitlement",
           expiresAt: "2099-12-31",
         },
       });
       return;
     }
-    licenseStatus = { ...licenseStatus, offlineGraceUntil: "2026-06-11", lastValidationCode: "KEYGEN_OFFLINE_TICKET_REFRESHED" };
+    licenseStatus = { ...licenseStatus, offlineGraceUntil: "2026-06-11", lastValidationCode: "LEMON_OFFLINE_ENTITLEMENT_REFRESHED" };
     json(res, 200, {
       status: licenseStatus,
       ticket: {
-        storedAs: "mock signed Keygen offline license file",
+        storedAs: "mock hashed Lemon Squeezy offline entitlement",
         expiresAt: licenseStatus.offlineGraceUntil,
       },
     });
@@ -3449,10 +4514,10 @@ const server = http.createServer(async (req, res) => {
         reason: "授權金鑰、方案、裝置數、到期日、更新日或 license file 被修改。",
         detectedAt: nowIso(),
         localAction: "downgrade-to-hobby",
-        serverAction: "report-to-keygen",
+        serverAction: "report-to-lemon",
         faultCode: "CLWD-LIC-1001",
       };
-      json(res, 200, { event: response?.payload?.id ? response.payload : fallbackEvent, status: safeModeLicense("KEYGEN_TAMPER_REPORTED") });
+      json(res, 200, { event: response?.payload?.id ? response.payload : fallbackEvent, status: safeModeLicense("LEMON_TAMPER_REPORTED") });
       return;
     }
     if (isDeveloperIdentitySession()) {
@@ -3472,86 +4537,15 @@ const server = http.createServer(async (req, res) => {
       reason: "授權金鑰、方案、裝置數、到期日、更新日或 license file 被修改。",
       detectedAt: nowIso(),
       localAction: "downgrade-to-hobby",
-      serverAction: "report-to-keygen",
+      serverAction: "report-to-lemon",
       faultCode: "CLWD-LIC-1001",
     };
-    json(res, 200, { event, status: safeModeLicense("KEYGEN_TAMPER_REPORTED") });
+    json(res, 200, { event, status: safeModeLicense("LEMON_TAMPER_REPORTED") });
     return;
   }
 
   if (req.method === "POST" && pathname === "/webhooks/paddle/mock") {
-    try {
-      const body = await readJson(req);
-      const eventType = body.eventType ?? "transaction.completed";
-      const backendEventType = {
-        "lifetime.purchased": "subscription.created",
-        "transaction.completed": "payment_succeeded",
-        "subscription.created": "subscription.created",
-        "subscription.renewed": "renewed",
-        "subscription.updated-failed": "subscription.updated-failed",
-        "subscription.payment_failed": "payment_failed",
-        "payment_failed": "payment_failed",
-        "transaction.failed": "payment_failed",
-        "transaction.refunded": "subscription.canceled",
-        "subscription.canceled": "subscription.canceled",
-        "support.renewed": "renewed",
-      }[eventType] ?? eventType;
-      const licenseKey = typeof body.licenseKey === "string" && body.licenseKey.trim() ? body.licenseKey : backendLicenseState.licenseKey || "CLWD-LIFETIME-LOCAL-2026";
-      if (identityBackendEnabled) {
-        const response = await callBackendApi("/webhooks/paddle", {
-          method: "POST",
-          body: {
-            eventType: backendEventType,
-            licenseKey,
-            note: body.note ?? `frontend-webhook-${eventType}`,
-          },
-        });
-        if (response?.ok) {
-          const newStatus = mapBackendLicenseEndpointResponse(response.payload, {
-            status: licenseStatus.status,
-            supportUpdatesUntil: licenseStatus.supportUpdatesUntil,
-          });
-          licenseStatus = {
-            ...licenseStatus,
-            ...newStatus,
-            paymentProvider: "paddle",
-            licenseProvider: "keygen",
-            lastValidationCode: `PADDLE_${eventType}`,
-          };
-          audit("webhook.paddle", { eventType, licenseStatus: licenseStatus.status, plan: licenseStatus.plan });
-          scheduleStateSave();
-          json(res, 200, { accepted: true, provider: "paddle", eventType, status: licenseStatus, backend: true });
-          return;
-        }
-        if (!response?.networkError) {
-          json(res, response.status, { accepted: false, provider: "paddle", eventType, ...response.payload });
-          return;
-        }
-      }
-      if (["transaction.completed", "subscription.created", "subscription.renewed", "lifetime.purchased", "payment_succeeded", "renewed", "support.renewed"].includes(eventType)) {
-        licenseStatus = {
-          ...licenseStatus,
-          status: eventType === "transaction.refunded" ? "canceled" : "active",
-          plan: eventType === "lifetime.purchased" ? "lifetime-local" : "pro-yearly",
-          lastValidationCode: `PADDLE_${eventType}`,
-        };
-      } else if (["subscription.payment_failed", "payment_failed", "subscription.updated-failed"].includes(eventType)) {
-        licenseStatus = { ...licenseStatus, status: "past-due", lastValidationCode: `PADDLE_${eventType}` };
-      } else if (["subscription.canceled", "transaction.refunded"].includes(eventType)) {
-        licenseStatus = { ...licenseStatus, status: "canceled", lastValidationCode: `PADDLE_${eventType}` };
-      }
-      if (eventType === "support.renewed") {
-        licenseStatus = { ...licenseStatus, supportUpdatesUntil: "2028-05-12", eligibleLatestVersion: "1.8.0", lastValidationCode: "PADDLE_SUPPORT_RENEWED" };
-      }
-      if (!["subscription.payment_failed", "payment_failed", "transaction.failed", "subscription.updated-failed"].includes(eventType) && !licenseStatus.plan) {
-        licenseStatus = { ...licenseStatus, plan: "lifetime-local" };
-      }
-      audit("webhook.paddle", { eventType, licenseStatus: licenseStatus.status, plan: licenseStatus.plan });
-      scheduleStateSave();
-      json(res, 200, { accepted: true, provider: "paddle", eventType, status: licenseStatus });
-    } catch {
-      json(res, 400, { error: "Invalid JSON" });
-    }
+    json(res, 410, { error: "Paddle is disabled. Lemon Squeezy is the only payment and license provider." });
     return;
   }
 
@@ -3608,42 +4602,7 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && pathname === "/webhooks/keygen/mock") {
-    try {
-      const body = await readJson(req);
-      const eventType = body.eventType ?? "license.validated";
-      const licenseKey = typeof body.licenseKey === "string" && body.licenseKey.trim() ? body.licenseKey : backendLicenseState.licenseKey;
-      if (identityBackendEnabled && licenseKey) {
-        const response = await callBackendApi("/webhooks/keygen", {
-          method: "POST",
-          body: { eventType, licenseKey },
-        });
-        if (response?.ok) {
-          if (eventType === "license.revoked" || eventType === "license.suspended") {
-            licenseStatus = safeModeLicense("KEYGEN_REVOKED");
-          } else if (eventType === "license.validated") {
-            licenseStatus = { ...licenseStatus, lastValidationCode: "KEYGEN_WEBHOOK_VALIDATED" };
-          }
-          audit("webhook.keygen", { eventType, licenseStatus: licenseStatus.status });
-          scheduleStateSave();
-          json(res, 200, { accepted: true, provider: "keygen", eventType, status: licenseStatus, backend: true });
-          return;
-        }
-        if (!response?.networkError) {
-          json(res, response.status, { accepted: false, provider: "keygen", eventType, ...response.payload });
-          return;
-        }
-      }
-      if (eventType === "license.revoked") {
-        safeModeLicense("KEYGEN_REVOKED_BY_WEBHOOK");
-      } else if (eventType === "license.validated") {
-        licenseStatus = { ...licenseStatus, lastValidationCode: "KEYGEN_WEBHOOK_VALIDATED" };
-      }
-      audit("webhook.keygen", { eventType, licenseStatus: licenseStatus.status });
-      scheduleStateSave();
-      json(res, 200, { accepted: true, provider: "keygen", eventType, status: licenseStatus });
-    } catch {
-      json(res, 400, { error: "Invalid JSON" });
-    }
+    json(res, 410, { error: "Keygen is disabled. Lemon Squeezy is the only payment and license provider." });
     return;
   }
 
@@ -3685,13 +4644,13 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && pathname === "/updates/mock-renew-support") {
-    const supportLicenseKey = backendLicenseState.licenseKey || "CLWD-LIFETIME-LOCAL-2026";
+    const supportLicenseKey = backendLicenseState.licenseKey || "CLWD-BETA-PRO1-2026";
     if (identityBackendEnabled) {
       const latestCheck = await callBackendApi("/updates/check");
-      const response = await callBackendApi("/webhooks/paddle", {
+      const response = await callBackendApi("/webhooks/lemon", {
         method: "POST",
         body: {
-          eventType: "subscription.created",
+          eventType: "subscription_updated",
           licenseKey: supportLicenseKey,
           note: "frontend-support-renewal",
         },
@@ -3699,13 +4658,13 @@ const server = http.createServer(async (req, res) => {
       if (response?.ok) {
         audit("updates.renew-support", {
           supportUpdatesUntil: response.payload?.license?.supportUpdatesUntil ?? "2028-05-12",
-          licenseKey: supportLicenseKey,
+          licenseKeyHash: licenseKeyHash(supportLicenseKey),
         });
         licenseStatus = {
           ...licenseStatus,
           supportUpdatesUntil: response.payload?.license?.supportUpdatesUntil ?? "2028-05-12",
           eligibleLatestVersion: "1.8.0",
-          lastValidationCode: "PADDLE_SUPPORT_RENEWED",
+          lastValidationCode: "LEMON_SUPPORT_RENEWED",
         };
         scheduleStateSave();
         json(res, 200, {
@@ -3723,7 +4682,7 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, { status: applyDeveloperLicenseBypass(), update: updateInfo() });
       return;
     }
-    licenseStatus = { ...licenseStatus, supportUpdatesUntil: "2028-05-12", eligibleLatestVersion: "1.8.0", lastValidationCode: "PADDLE_SUPPORT_RENEWED" };
+    licenseStatus = { ...licenseStatus, supportUpdatesUntil: "2028-05-12", eligibleLatestVersion: "1.8.0", lastValidationCode: "LEMON_SUPPORT_RENEWED" };
     audit("updates.renew-support", { supportUpdatesUntil: licenseStatus.supportUpdatesUntil });
     scheduleStateSave();
     json(res, 200, { status: licenseStatus, update: updateInfo() });
@@ -3740,7 +4699,7 @@ const server = http.createServer(async (req, res) => {
         json(res, 200, {
           autoCollected: true,
           autoUploaded: false,
-          privacyChecklist: ["不含 Email", "不含完整路徑", "不含完整 license key", "不含 API key", "不含聊天內容", "不含螢幕截圖", "不含 Lemon/Paddle customer id 明文", "法務同意僅含版本、hash、同意時間"],
+          privacyChecklist: ["不含 Email", "不含完整路徑", "不含完整 license key", "不含 API key", "不含聊天內容", "不含螢幕截圖", "不含 Lemon customer id 明文", "法務同意僅含版本、hash、同意時間"],
           preview: response.payload,
         });
         return;
@@ -3753,7 +4712,7 @@ const server = http.createServer(async (req, res) => {
     json(res, 200, {
       autoCollected: true,
       autoUploaded: false,
-      privacyChecklist: ["不含 Email", "不含完整路徑", "不含完整 license key", "不含 API key", "不含聊天內容", "不含螢幕截圖", "不含 Lemon/Paddle customer id 明文", "法務同意僅含版本、hash、同意時間"],
+      privacyChecklist: ["不含 Email", "不含完整路徑", "不含完整 license key", "不含 API key", "不含聊天內容", "不含螢幕截圖", "不含 Lemon customer id 明文", "法務同意僅含版本、hash、同意時間"],
       preview: createDiagnosticReport({ faultCode: "CLWD-GW-2001" }),
     });
     return;
@@ -4037,12 +4996,12 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === "GET" && pathname === "/identity/session") {
     if (identityBackendEnabled && getBackendIdentityToken()) {
-      const response = await callBackendApi("/auth/session", {
+      const response = await callBackendApi("/api/auth/me", {
         method: "GET",
         headers: { Authorization: `Bearer ${getBackendIdentityToken()}` },
       });
-      if (response?.ok && response.payload?.session) {
-        const mapped = normalizeIdentitySessionFromBackend(response.payload.session);
+      if (response?.ok && response.payload?.account) {
+        const mapped = normalizeIdentitySessionFromBackend(response.payload.account);
         identitySession = ensureBackendIdentityDeveloper(mapped);
         json(res, 200, identitySession);
         return;
@@ -4098,6 +5057,32 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && pathname === "/identity/password-reset-code") {
+    try {
+      const email = typeof parsedUrl.searchParams.get("email") === "string"
+        ? parsedUrl.searchParams.get("email").trim().toLowerCase()
+        : "";
+      if (!email.includes("@")) {
+        json(res, 400, { error: "valid email required" });
+        return;
+      }
+      const latest = identityBackendEnabled ? getBackendPasswordResetRecord(email) : findPasswordResetByEmail(email);
+      if (!latest) {
+        json(res, 404, { error: "password reset record not found" });
+        return;
+      }
+      json(res, 200, {
+        email,
+        code: latest.code,
+        expiresAt: latest.expiresAt,
+        subject: "ClawDesk 密碼重設驗證信",
+      });
+    } catch {
+      json(res, 400, { error: "Invalid request" });
+    }
+    return;
+  }
+
   if (req.method === "POST" && pathname === "/identity/resend-verification") {
     try {
       const body = await readJson(req);
@@ -4113,14 +5098,9 @@ const server = http.createServer(async (req, res) => {
       }
       let verification = null;
       if (identityBackendEnabled) {
-        const response = await callBackendApi("/auth/register", {
+        const response = await callBackendApi("/api/auth/resend-verification", {
           method: "POST",
-          body: {
-            email,
-            displayName: user.displayName,
-            password: `__internal__${Date.now()}`,
-            organization: user.organization ?? "",
-          },
+          body: { email },
         });
         if (response?.ok && response.payload?.debugVerificationToken) {
           setBackendVerificationCode(email, response.payload.debugVerificationToken);
@@ -4156,7 +5136,7 @@ const server = http.createServer(async (req, res) => {
       if (identityBackendEnabled) {
         const confirmPayload = { email };
         if (code) confirmPayload.code = code;
-        const response = await callBackendApi("/auth/confirm", {
+        const response = await callBackendApi("/api/auth/verify-email", {
           method: "POST",
           body: confirmPayload,
         });
@@ -4215,7 +5195,7 @@ const server = http.createServer(async (req, res) => {
       }
       const existing = identityUsers.find((user) => user.email === email);
       if (identityBackendEnabled) {
-        const response = await callBackendApi("/auth/register", {
+        const response = await callBackendApi("/api/auth/register", {
           method: "POST",
           body: {
             email,
@@ -4372,7 +5352,7 @@ const server = http.createServer(async (req, res) => {
       const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
       const password = typeof body.password === "string" ? body.password : "";
       if (identityBackendEnabled) {
-        const response = await callBackendApi("/auth/login", {
+        const response = await callBackendApi("/api/auth/login", {
           method: "POST",
           body: { email, password },
         });
@@ -4393,6 +5373,11 @@ const server = http.createServer(async (req, res) => {
             createdAt: response.payload.session.account.createdAt ?? nowIso(),
           };
           const existing = identityUsers.find((item) => item.email === email);
+          if (developerIdentityEmails.has(email)) {
+            user.mode = existing?.mode ?? "enterprise";
+            user.role = existing?.role ?? "owner";
+            user.organization = existing?.organization ?? user.organization;
+          }
           if (existing) {
             Object.assign(existing, user);
           } else {
@@ -4522,12 +5507,110 @@ const server = http.createServer(async (req, res) => {
   }
 
   if (req.method === "POST" && pathname === "/identity/logout") {
+    if (identityBackendEnabled && getBackendIdentityToken()) {
+      await callBackendApi("/api/auth/logout", {
+        method: "POST",
+        headers: { Authorization: `Bearer ${getBackendIdentityToken()}` },
+      });
+    }
     identitySession = identitySessionSignedOut();
     setBackendIdentityToken("");
     safeModeLicense("HOBBY_MODE");
     audit("identity.logout", {});
     scheduleStateSave();
     json(res, 200, identitySession);
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/identity/forgot-password") {
+    try {
+      const body = await readJson(req);
+      const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+      if (!email.includes("@")) {
+        json(res, 400, { error: "valid email required" });
+        return;
+      }
+      if (identityBackendEnabled) {
+        const response = await callBackendApi("/api/auth/password/forgot", {
+          method: "POST",
+          body: { email },
+        });
+        if (!response?.ok) {
+          json(res, response?.status ?? 400, { error: response?.payload?.error || "password reset request failed" });
+          return;
+        }
+        if (response.payload?.debugResetToken) {
+          setBackendPasswordResetCode(email, response.payload.debugResetToken);
+        }
+        audit("identity.password-forgot", { emailHash: hashForAudit(email), backend: true });
+        scheduleStateSave();
+        json(res, 200, {
+          ok: true,
+          email,
+          expiresAt: response.payload?.expiresAt,
+          message: response.payload?.message ?? "password reset challenge issued",
+        });
+        return;
+      }
+      const user = identityUsers.find((item) => item.email === email);
+      if (user && user.emailVerified !== false) {
+        const reset = issueIdentityPasswordReset(user);
+        audit("identity.password-forgot", { emailHash: hashForAudit(email), backend: false });
+        scheduleStateSave();
+        json(res, 200, { ok: true, email, expiresAt: reset.expiresAt, message: "password reset challenge issued" });
+        return;
+      }
+      audit("identity.password-forgot.ignored", { emailHash: hashForAudit(email), backend: false });
+      json(res, 200, { ok: true, email, message: "If the account exists, a reset challenge has been issued." });
+    } catch {
+      json(res, 400, { error: "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/identity/reset-password") {
+    try {
+      const body = await readJson(req);
+      const email = typeof body.email === "string" ? body.email.trim().toLowerCase() : "";
+      const code = typeof body.code === "string" ? body.code.trim() : "";
+      const password = typeof body.password === "string" ? body.password : "";
+      if (!email.includes("@") || !code || password.length < 8) {
+        json(res, 400, { error: "email, code, and password are required" });
+        return;
+      }
+      if (identityBackendEnabled) {
+        const response = await callBackendApi("/api/auth/password/reset", {
+          method: "POST",
+          body: { email, code, password },
+        });
+        if (!response?.ok) {
+          json(res, response?.status ?? 400, { error: response?.payload?.error || "password reset failed" });
+          return;
+        }
+        consumeBackendPasswordReset(email, code);
+        audit("identity.password-reset", { emailHash: hashForAudit(email), backend: true });
+        scheduleStateSave();
+        json(res, 200, { ok: true, email, passwordUpdated: true });
+        return;
+      }
+      const user = identityUsers.find((item) => item.email === email);
+      if (!user) {
+        json(res, 404, { error: "account not found" });
+        return;
+      }
+      const reset = consumeIdentityPasswordReset({ email, code });
+      if (!reset) {
+        json(res, 400, { error: "invalid or expired reset code" });
+        return;
+      }
+      user.passwordHash = hashIdentityPassword(password);
+      identitySession = identitySessionSignedOut();
+      audit("identity.password-reset", { emailHash: hashForAudit(email), backend: false });
+      scheduleStateSave();
+      json(res, 200, { ok: true, email, passwordUpdated: true });
+    } catch {
+      json(res, 400, { error: "Invalid JSON" });
+    }
     return;
   }
 
@@ -4551,6 +5634,210 @@ const server = http.createServer(async (req, res) => {
       }
     }
     json(res, 200, providerSession);
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/provider/status") {
+    json(res, 200, {
+      ...providerSession,
+      credentialPolicy:
+        providerSession.activeProvider === "mock"
+          ? "no-secret"
+          : providerSession.accountEmail
+            ? "account-token-stub"
+            : "masked-in-memory",
+      fallback: providerSession.activeProvider === "mock" ? [] : ["mock", "local-model"],
+    });
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/provider/local-model/models") {
+    const endpoint = parsedUrl.searchParams.get("endpoint") || providerSession.endpoint || "http://127.0.0.1:11434";
+    const result = await readOllamaModels(endpoint);
+    if (!result.ok) {
+      json(res, result.status ?? 503, { error: result.error, endpoint });
+      return;
+    }
+    json(res, 200, { endpoint, models: result.models });
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/provider/local-model/test") {
+    try {
+      const body = await readJson(req);
+      const endpoint = typeof body.endpoint === "string" ? body.endpoint.trim() : providerSession.endpoint || "http://127.0.0.1:11434";
+      const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : providerSession.model || "llama3.3";
+      const prompt = typeof body.prompt === "string" && body.prompt.trim()
+        ? body.prompt.trim()
+        : "Reply briefly: ClawDesk LLM connection test succeeded.";
+      const result = await runOllamaChatOnce({ endpoint, model, prompt });
+      if (!result.ok) {
+        json(res, result.status ?? 503, { ok: false, error: result.error, endpoint, model });
+        return;
+      }
+      json(res, 200, {
+        ok: true,
+        endpoint,
+        model,
+        outputText: result.outputText,
+      });
+    } catch {
+      json(res, 400, { ok: false, error: "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/provider/local-model/vision-test") {
+    try {
+      const body = await readJson(req);
+      const endpoint = typeof body.endpoint === "string" ? body.endpoint.trim() : providerSession.endpoint || "http://127.0.0.1:11434";
+      const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : providerSession.model || "llama3.3";
+      const result = await runOllamaVisionProbe({ endpoint, model });
+      const normalizedUrl = normalizeEndpoint(endpoint);
+      const normalizedEndpoint = normalizedUrl ? normalizedUrl.toString().replace(/\/+$/, "") : endpoint;
+      const persisted = result.ok ? recordVisionProbe(normalizedEndpoint, model, result) : undefined;
+      json(res, result.ok ? 200 : result.status ?? 503, {
+        ...result,
+        endpoint,
+        mode: result.vision ? "vision-ready" : "metadata-only",
+        persisted,
+      });
+    } catch {
+      json(res, 400, { ok: false, vision: false, mode: "metadata-only", error: "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/provider/local-model/vision-clear") {
+    try {
+      const body = await readJson(req);
+      const endpoint = typeof body.endpoint === "string" ? body.endpoint.trim() : providerSession.endpoint || "http://127.0.0.1:11434";
+      const model = typeof body.model === "string" && body.model.trim() ? body.model.trim() : providerSession.model || "llama3.3";
+      const normalizedUrl = normalizeEndpoint(endpoint);
+      const normalizedEndpoint = normalizedUrl ? normalizedUrl.toString().replace(/\/+$/, "") : endpoint;
+      const cleared = clearVisionProbe(normalizedEndpoint, model);
+      json(res, 200, { ok: true, cleared, endpoint: normalizedEndpoint, model });
+    } catch {
+      json(res, 400, { ok: false, error: "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/provider/secret-ref/contract") {
+    json(res, 200, providerSecretRefContract());
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/provider/secret-ref/issue") {
+    try {
+      const body = await readJson(req);
+      const providerId = typeof body.providerId === "string" ? body.providerId.trim() : "";
+      const provider = llmProviderById(providerId);
+      if (!provider) {
+        json(res, 404, { error: "Unknown provider" });
+        return;
+      }
+      const authMode = typeof body.authMode === "string" && body.authMode.trim() ? body.authMode.trim() : provider.authMode;
+      const issuedAt = nowIso();
+      const payload = {
+        providerId,
+        authMode,
+        secretRef: providerSecretRef(providerId, authMode, body),
+        model: typeof body.model === "string" ? body.model.trim() : provider.modelDefault,
+        issuedAt,
+        status: "active",
+        tokenRefresh: tokenRefreshForAuthMode(authMode),
+      };
+      audit("provider.secret-ref.issue", { providerId, authMode, secretRef: payload.secretRef });
+      json(res, 200, payload);
+    } catch {
+      json(res, 400, { error: "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/provider/token-refresh") {
+    try {
+      const body = await readJson(req);
+      const secretRef = typeof body.secretRef === "string" ? body.secretRef.trim() : "";
+      if (!secretRef.startsWith("psr_")) {
+        json(res, 404, { error: "Unknown SecretRef" });
+        return;
+      }
+      const providerId = typeof body.providerId === "string" ? body.providerId.trim() : providerSession.activeProvider;
+      const expiresAt = new Date(Date.now() + 55 * 60 * 1000).toISOString();
+      const response = {
+        providerId,
+        secretRef,
+        status: providerSession.tokenRefresh?.mode === "refreshable" ? "refreshed" : "not-required",
+        accessTokenRef:
+          providerSession.tokenRefresh?.mode === "refreshable"
+            ? `ptr_${crypto.createHash("sha256").update(`${secretRef}:${expiresAt}`).digest("hex").slice(0, 24)}`
+            : undefined,
+        expiresAt: providerSession.tokenRefresh?.mode === "refreshable" ? expiresAt : undefined,
+      };
+      providerSession = {
+        ...providerSession,
+        tokenRefresh: {
+          ...(providerSession.tokenRefresh ?? tokenRefreshForAuthMode("mock")),
+          lastRefreshStatus: response.status === "refreshed" ? "refreshed" : "not-configured",
+          expiresAt: response.expiresAt,
+        },
+      };
+      audit("provider.token-refresh", { providerId, secretRef, status: response.status });
+      scheduleStateSave();
+      json(res, 200, response);
+    } catch {
+      json(res, 400, { error: "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/provider/openai/runtime-contract") {
+    json(res, 200, openAiRuntimeContract());
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/provider/openai/validate-key") {
+    try {
+      const result = await validateOpenAiKeyRuntime(await readJson(req));
+      audit("provider.openai.validate-key", {
+        status: result.payload.status ?? "failed",
+        live: Boolean(result.payload.live),
+        requestId: result.payload.requestId,
+      });
+      json(res, result.code, result.payload);
+    } catch {
+      json(res, 400, { error: "Invalid JSON", rawSecretResponse: false });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/provider/openai/chat-test") {
+    try {
+      const result = await runOpenAiChatRuntime(await readJson(req));
+      providerSession = {
+        ...providerSession,
+        runtime: {
+          providerId: result.payload.providerId ?? "openai-api",
+          apiStyle: "responses-api",
+          status: result.payload.status ?? "failed",
+          live: Boolean(result.payload.live),
+          checkedAt: result.payload.checkedAt,
+          requestId: result.payload.requestId,
+          message: result.payload.outputText ?? result.payload.error,
+        },
+      };
+      audit("provider.openai.chat-test", {
+        status: result.payload.status ?? "failed",
+        live: Boolean(result.payload.live),
+        requestId: result.payload.requestId,
+      });
+      scheduleStateSave();
+      json(res, result.code, result.payload);
+    } catch {
+      json(res, 400, { error: "Invalid JSON", rawSecretResponse: false });
+    }
     return;
   }
 
@@ -4788,19 +6075,19 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && req.url === "/openclaw/settings") {
+  if (req.method === "GET" && ["/compat/settings", "/openclaw/settings"].includes(req.url)) {
     json(res, 200, { sections: openClawSettingsSchema, profile: openClawSettingsProfile });
     return;
   }
 
-  if (req.method === "POST" && req.url === "/openclaw/settings") {
+  if (req.method === "POST" && ["/compat/settings", "/openclaw/settings"].includes(req.url)) {
     try {
       const body = await readJson(req);
       openClawSettingsProfile = {
         ...openClawSettingsProfile,
         ...body,
       };
-      audit("openclaw.settings.update", { sections: Object.keys(body).slice(0, 20) });
+      audit("compat.settings.update", { sections: Object.keys(body).slice(0, 20), legacyPath: req.url === "/openclaw/settings" });
       scheduleStateSave();
       json(res, 200, { sections: openClawSettingsSchema, profile: openClawSettingsProfile });
     } catch {
@@ -4906,7 +6193,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && pathname === "/openclaw/upstream/import-status") {
+  if (req.method === "GET" && ["/compat/upstream/import-status", "/openclaw/upstream/import-status"].includes(pathname)) {
     json(res, 200, {
       ...openClawUpstreamSnapshot,
       imported: true,
@@ -4923,7 +6210,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && pathname === "/openclaw/feature-parity") {
+  if (req.method === "GET" && ["/compat/feature-parity", "/openclaw/feature-parity"].includes(pathname)) {
     const summary = openClawFeatureParity.reduce((acc, item) => {
       acc[item.status] = (acc[item.status] ?? 0) + 1;
       return acc;
@@ -4936,7 +6223,133 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "GET" && pathname === "/openclaw/runtime-contract") {
+  if (req.method === "GET" && pathname === "/product-comparison") {
+    json(res, 200, {
+      items: productComparisonItems,
+      summary: summarizeProductComparison(),
+      strategy: "Windows GUI Agent workspace, not terminal-only clone or full communication gateway clone.",
+    });
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/safety-policy") {
+    json(res, 200, {
+      rules: defaultSafetyPolicyRules,
+      summary: summarizeSafetyPolicy(),
+      queue: safetyQueue,
+    });
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/safety-queue") {
+    json(res, 200, { queue: safetyQueue });
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/safety-queue/decision") {
+    try {
+      const body = await readJson(req);
+      const id = typeof body.id === "string" ? body.id.trim() : "";
+      const decision = typeof body.decision === "string" ? body.decision.trim().toLowerCase() : "";
+      const note = typeof body.note === "string" ? body.note.trim() : "";
+      if (!id || !["approve", "reject"].includes(decision)) {
+        json(res, 400, { error: "id and decision(approve|reject) are required" });
+        return;
+      }
+      const item = safetyQueue.find((entry) => entry.id === id);
+      if (!item) {
+        json(res, 404, { error: "queue item not found" });
+        return;
+      }
+      item.status = decision === "approve" ? "approved" : "rejected";
+      item.note = note || item.note || "已審批";
+      item.updatedAt = nowIso();
+      audit("safety.queue.decision", { id, action: item.action, decision, riskLevel: item.riskLevel });
+      scheduleStateSave();
+      json(res, 200, { item, queue: safetyQueue });
+    } catch {
+      json(res, 400, { error: "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/coding-workspace") {
+    json(res, 200, {
+      ...codingWorkspaceSnapshot,
+      adapterSummary: summarizeGatewayAdapter(),
+    });
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/coding-workspace/file-search") {
+    try {
+      const body = await readJson(req);
+      const query = typeof body.query === "string" ? body.query.trim() : "";
+      const maxResults = Number.isFinite(body.maxResults) ? Number(body.maxResults) : 8;
+      if (!query) {
+        json(res, 400, { error: "query is required" });
+        return;
+      }
+      const results = fileSearchPreview(query, maxResults).map((item) => ({
+        ...item,
+        preview: `Match in ${item.area}: ${item.path}`,
+      }));
+      audit("coding.file-search", { query, count: results.length });
+      json(res, 200, { query, count: results.length, results });
+    } catch {
+      json(res, 400, { error: "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/coding-workspace/patch-preview") {
+    try {
+      const body = await readJson(req);
+      const target = typeof body.target === "string" ? body.target.trim() : "";
+      const summary = typeof body.summary === "string" ? body.summary.trim() : "";
+      const riskLevel = typeof body.riskLevel === "string" ? body.riskLevel.trim().toLowerCase() : "medium";
+      if (!target || !summary) {
+        json(res, 400, { error: "target and summary are required" });
+        return;
+      }
+      const normalizedRisk = ["low", "medium", "high", "blocked"].includes(riskLevel) ? riskLevel : "medium";
+      const queueItem = createSafetyQueueItem(`patch.apply:${target}`, normalizedRisk, "Patch preview produced; waiting approval");
+      const preview = {
+        id: `preview-${crypto.randomUUID().slice(0, 8)}`,
+        target,
+        summary,
+        riskLevel: normalizedRisk,
+        requiresApproval: normalizedRisk !== "low",
+        queueItemId: queueItem.id,
+        createdAt: nowIso(),
+      };
+      audit("coding.patch-preview", { target, riskLevel: normalizedRisk, queueItemId: queueItem.id });
+      json(res, 200, { preview, queue: safetyQueue });
+    } catch {
+      json(res, 400, { error: "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/context-budget") {
+    json(res, 200, {
+      budget: defaultContextBudget,
+      recommendation: defaultContextBudget.recommendedAction,
+    });
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/gateway-adapter/contract") {
+    json(res, 200, {
+      mode: "windows-sidecar-contract",
+      methods: gatewayAdapterMethods,
+      summary: summarizeGatewayAdapter(),
+      productionGap: "Mock endpoint only; signed production Gateway adapter is still a release gate.",
+    });
+    return;
+  }
+
+  if (req.method === "GET" && ["/compat/runtime-contract", "/openclaw/runtime-contract"].includes(pathname)) {
     json(res, 200, {
       upstream: openClawUpstreamSnapshot,
       adapterMode: "windows-sidecar-contract",
@@ -4957,7 +6370,7 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  if (req.method === "POST" && pathname === "/openclaw/runtime/auth-plan") {
+  if (req.method === "POST" && ["/compat/runtime/auth-plan", "/openclaw/runtime/auth-plan"].includes(pathname)) {
     try {
       const body = await readJson(req);
       const providerId = typeof body.providerId === "string" ? body.providerId.trim() : "";
@@ -5059,7 +6472,7 @@ const server = http.createServer(async (req, res) => {
         ...providerSession,
         displayName: "OpenAI Codex OAuth",
         detail:
-          `OpenClaw upstream account auth 已登錄：${(body.accountEmail || "").trim()}，模型為 ${providerSession.model ?? "gpt-5.3-codex"}。` +
+          `上游帳號授權已登錄：${(body.accountEmail || "").trim()}，模型為 ${providerSession.model ?? "gpt-5.3-codex"}。` +
           "桌面端不保存網站密碼或 cookie。",
       };
       scheduleStateSave();
@@ -5152,9 +6565,17 @@ const server = http.createServer(async (req, res) => {
     try {
       const body = await readJson(req);
       const conversationId = typeof body.conversationId === "string" ? body.conversationId : "default";
-      const prompt = typeof body.prompt === "string" ? body.prompt : "empty prompt";
+      const prompt = typeof body.prompt === "string" && body.prompt.trim() ? body.prompt : "empty prompt";
+      const attachments = Array.isArray(body.attachments) ? body.attachments : [];
       json(res, 202, { accepted: true, conversationId });
-      void streamDemo(conversationId, prompt);
+      const openAiProviderId = normalizeOpenAiProviderId(providerSession.activeProvider);
+      if (providerSession.activeProvider === "local-model" || providerSession.activeProvider === "ollama") {
+        void streamOllamaRuntime(conversationId, prompt, attachments);
+      } else if (openAiProviderId) {
+        void streamOpenAiRuntimeDemo(conversationId, prompt, attachments);
+      } else {
+        void streamDemo(conversationId, prompt, attachments);
+      }
     } catch {
       json(res, 400, { error: "Invalid JSON" });
     }

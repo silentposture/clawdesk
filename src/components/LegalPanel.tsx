@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import type { LegalConsentRecord } from "../lib/legalConsent";
 import { buildLegalExportPackage } from "../lib/legalExport";
 import { saveLegalExport } from "../lib/tauri";
+import { useI18n } from "../lib/i18n";
 
 interface LegalPanelProps {
   gatewayBaseUrl?: string;
@@ -24,7 +25,12 @@ interface LegalNotice {
   purpose: string;
 }
 
+const LEGAL_DEVELOPER_NAME = "Alisonsoftware";
+const LEGAL_PRODUCT_NAME = "ClawDesk";
+const SUPPORT_EMAIL = "alison.ai.tech.studio@gmail.com";
+
 export function LegalPanel({ gatewayBaseUrl, legalConsent, onClose }: LegalPanelProps): JSX.Element {
+  const { t } = useI18n();
   const [documents, setDocuments] = useState<LegalDocument[]>([]);
   const [notices, setNotices] = useState<LegalNotice[]>([]);
   const [exportPreview, setExportPreview] = useState<string>();
@@ -46,7 +52,7 @@ export function LegalPanel({ gatewayBaseUrl, legalConsent, onClose }: LegalPanel
       setDocuments(((await documentResponse.json()) as { documents: LegalDocument[] }).documents);
       setNotices(((await noticesResponse.json()) as { notices: LegalNotice[] }).notices);
     } catch {
-      setError("無法讀取版權與授權資料。");
+      setError(t("legal.loadError"));
     }
   }
 
@@ -61,17 +67,17 @@ export function LegalPanel({ gatewayBaseUrl, legalConsent, onClose }: LegalPanel
 
   function createExportPreview() {
     setExportPreview(createExportPayload());
-    setMessage("法務摘要已在畫面中產生，尚未寫入檔案。");
+    setMessage(t("legal.previewReady"));
     setError(undefined);
   }
 
   async function exportJsonFile() {
     try {
       const savedPath = await saveLegalExport("clawdesk-legal-summary.json", createExportPayload());
-      setMessage(savedPath ? `已匯出：${savedPath}` : "已取消匯出，未寫入檔案。");
+      setMessage(savedPath ? t("legal.exported", { path: savedPath }) : t("legal.exportCancelled"));
       setError(undefined);
     } catch (error) {
-      setError(error instanceof Error ? error.message : "法務摘要匯出失敗。");
+      setError(error instanceof Error ? error.message : t("legal.exportError"));
     }
   }
 
@@ -80,45 +86,74 @@ export function LegalPanel({ gatewayBaseUrl, legalConsent, onClose }: LegalPanel
       <section className="legal-panel" role="dialog" aria-modal="true" aria-labelledby="legal-title">
         <header className="provider-header">
           <div>
-            <h2 id="legal-title">版權與授權中心</h2>
-            <p>ClawDesk 採閉源商業授權，同時顯示安裝同意、訂閱揭露、使用者內容權利與 OpenClaw MIT 聲明。</p>
+            <h2 id="legal-title">{t("legal.title")}</h2>
+            <p>{t("legal.subtitle")}</p>
           </div>
-          <button className="icon-button" type="button" aria-label="關閉" onClick={onClose}>
+          <button className="icon-button" type="button" aria-label={t("common.close")} onClick={onClose}>
             <X size={18} />
           </button>
         </header>
         <div className="commercial-grid">
+          <section className="commercial-card">
+            <Copyright size={23} />
+            <h3>{t("legal.developer.title")}</h3>
+            <dl className="status-list">
+              <div>
+                <dt>{t("legal.developer.developer")}</dt>
+                <dd>{LEGAL_DEVELOPER_NAME}</dd>
+              </div>
+              <div>
+                <dt>{t("legal.developer.product")}</dt>
+                <dd>{LEGAL_PRODUCT_NAME}</dd>
+              </div>
+              <div>
+                <dt>{t("legal.developer.statusLabel")}</dt>
+                <dd>{t("legal.developer.status")}</dd>
+              </div>
+            </dl>
+            <p>{t("legal.developer.disclaimer")}</p>
+          </section>
+          <section className="commercial-card">
+            <FileText size={23} />
+            <h3>{t("legal.support.title")}</h3>
+            <p>
+              {t("legal.support.email")}
+              <a href={`mailto:${SUPPORT_EMAIL}`}>{SUPPORT_EMAIL}</a>
+            </p>
+            <p>{t("legal.support.beta")}</p>
+            <small>{t("legal.support.guard")}</small>
+          </section>
           {legalConsent ? (
             <section className="commercial-card legal-consent-status">
               <Copyright size={23} />
-              <h3>已同意條款紀錄</h3>
+              <h3>{t("legal.consent.title")}</h3>
               <dl className="status-list">
                 <div>
-                  <dt>版本</dt>
+                  <dt>{t("legal.consent.version")}</dt>
                   <dd>{legalConsent.version}</dd>
                 </div>
                 <div>
-                  <dt>同意時間</dt>
+                  <dt>{t("legal.consent.acceptedAt")}</dt>
                   <dd>{new Date(legalConsent.acceptedAt).toLocaleString()}</dd>
                 </div>
                 <div>
-                  <dt>文件 hash</dt>
+                  <dt>{t("legal.consent.hash")}</dt>
                   <dd>{legalConsent.documentHash}</dd>
                 </div>
               </dl>
               <div className="panel-actions">
                 <button className="secondary-button" type="button" onClick={createExportPreview}>
-                  產生法務匯出摘要
+                  {t("legal.exportPreview")}
                 </button>
                 <button className="primary-button" type="button" onClick={exportJsonFile}>
-                  匯出 JSON 檔
+                  {t("legal.exportJson")}
                 </button>
               </div>
             </section>
           ) : null}
           <section className="commercial-card">
             <Copyright size={23} />
-            <h3>法律文件</h3>
+            <h3>{t("legal.documents.title")}</h3>
             <div className="stack-list">
               {documents.map((document) => (
                 <article key={document.id}>
@@ -133,7 +168,7 @@ export function LegalPanel({ gatewayBaseUrl, legalConsent, onClose }: LegalPanel
                   ) : null}
                   {document.sourceUrl ? (
                     <small>
-                      參考來源：<a href={document.sourceUrl} target="_blank" rel="noreferrer">官方文件</a>
+                      {t("legal.documents.source")}<a href={document.sourceUrl} target="_blank" rel="noreferrer">{t("legal.documents.official")}</a>
                     </small>
                   ) : null}
                 </article>
@@ -142,7 +177,7 @@ export function LegalPanel({ gatewayBaseUrl, legalConsent, onClose }: LegalPanel
           </section>
           <section className="commercial-card">
             <FileText size={23} />
-            <h3>第三方 NOTICE</h3>
+            <h3>{t("legal.notices.title")}</h3>
             <div className="stack-list">
               {notices.map((notice) => (
                 <article key={notice.package}>

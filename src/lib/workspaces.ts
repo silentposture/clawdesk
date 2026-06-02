@@ -31,7 +31,7 @@ export const initialWorkspaceState: WorkspaceState = {
       id: "desktop-mvp",
       name: "ClawDesk 商業桌面版",
       category: "AI 代理",
-      description: "OpenClaw-compatible、Windows 11 x64 優先的桌面代理主線。",
+      description: "Windows 11 x64 優先的桌面代理主線。",
       pinned: true,
       updatedAt: "剛剛",
     },

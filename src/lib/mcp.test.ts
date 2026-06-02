@@ -68,7 +68,7 @@ describe("MCP connector catalog", () => {
         },
       ],
     };
-    const preview = planMcpAction(devConnector, "terminal.command.plan", "~/OpenClaw Project");
+    const preview = planMcpAction(devConnector, "terminal.command.plan", "~/ClawDesk Project");
     expect(preview.requiresApproval).toBe(true);
     expect(preview.risk).toBe("high");
   });

@@ -4,6 +4,7 @@ import { setTimeout as delay } from "node:timers/promises";
 function hasDocker() {
   const result = spawnSync("bash", ["-lc", "command -v docker >/dev/null 2>&1 && echo ok"], {
     encoding: "utf8",
+    windowsHide: process.platform === "win32",
   });
   return result.status === 0;
 }
@@ -14,6 +15,7 @@ function runCommand(label, command, args) {
     stdio: "inherit",
     cwd: process.cwd(),
     env: process.env,
+    windowsHide: process.platform === "win32",
   });
   if (child.status !== 0) {
     process.exitCode = child.status ?? 1;
@@ -82,6 +84,7 @@ async function killLocalPorts(ports = []) {
   for (const port of ports) {
     const pids = spawnSync("bash", ["-lc", `lsof -ti tcp:${port} || true`], {
       encoding: "utf8",
+      windowsHide: process.platform === "win32",
     }).stdout
       .split("\n")
       .map((line) => line.trim())
@@ -89,7 +92,7 @@ async function killLocalPorts(ports = []) {
 
     for (const pid of pids) {
       console.log(`關閉端口服務: ${port} -> pid ${pid}`);
-      spawnSync("kill", ["-TERM", pid], { stdio: "ignore" });
+      spawnSync("kill", ["-TERM", pid], { stdio: "ignore", windowsHide: process.platform === "win32" });
     }
   }
   if (ports.length > 0) {
@@ -100,6 +103,7 @@ async function killLocalPorts(ports = []) {
 async function isPortInUse(port) {
   const pids = spawnSync("bash", ["-lc", `lsof -ti tcp:${port} || true`], {
     encoding: "utf8",
+    windowsHide: process.platform === "win32",
   }).stdout
     .split("\n")
     .map((line) => line.trim())
@@ -156,6 +160,7 @@ async function run() {
     const child = spawn(process.execPath, ["scripts/run-local-stack.mjs", "--check"], {
       cwd: process.cwd(),
       stdio: "inherit",
+      windowsHide: process.platform === "win32",
     });
     child.on("exit", (code, signal) => {
       process.exitCode = code ?? (signal ? 1 : 0);
@@ -192,6 +197,7 @@ async function run() {
       const child = spawn(process.execPath, ["scripts/run-local-stack.mjs"], {
         cwd: process.cwd(),
         stdio: "inherit",
+        windowsHide: process.platform === "win32",
       });
       child.on("exit", (code, signal) => {
         process.exitCode = code ?? (signal ? 1 : 0);

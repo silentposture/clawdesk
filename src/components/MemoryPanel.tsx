@@ -1,6 +1,7 @@
 import { Database, Pin, Scissors, X } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ContextStatus, MemoryItem } from "../lib/memory";
+import { useI18n } from "../lib/i18n";
 import { Tooltip } from "./Tooltip";
 
 interface MemoryPanelProps {
@@ -9,10 +10,11 @@ interface MemoryPanelProps {
 }
 
 export function MemoryPanel({ gatewayBaseUrl, onClose }: MemoryPanelProps): JSX.Element {
+  const { t } = useI18n();
   const [items, setItems] = useState<MemoryItem[]>([]);
   const [context, setContext] = useState<ContextStatus>();
-  const [title, setTitle] = useState("新的長期記憶");
-  const [body, setBody] = useState("使用者偏好：以繁體中文回答。");
+  const [title, setTitle] = useState(() => t("memory.defaultTitle"));
+  const [body, setBody] = useState(() => t("memory.defaultBody"));
 
   useEffect(() => {
     void load();
@@ -49,28 +51,28 @@ export function MemoryPanel({ gatewayBaseUrl, onClose }: MemoryPanelProps): JSX.
       <section className="memory-panel" role="dialog" aria-modal="true" aria-labelledby="memory-title">
         <header className="provider-header">
           <div>
-            <h2 id="memory-title">記憶與 Context</h2>
-            <p>SQLite mock 管索引與權限，Markdown/YAML mock 保留可讀記憶；長對話透過 rolling summary 壓縮。</p>
+            <h2 id="memory-title">{t("memory.title")}</h2>
+            <p>{t("memory.subtitle")}</p>
           </div>
-          <button className="icon-button" type="button" aria-label="關閉" onClick={onClose}>
+          <button className="icon-button" type="button" aria-label={t("common.close")} onClick={onClose}>
             <X size={18} />
           </button>
         </header>
         <div className="commercial-grid">
           <section className="commercial-card">
             <Database size={23} />
-            <h3>長期記憶</h3>
-            <label>標題<input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
-            <label>內容<textarea value={body} onChange={(event) => setBody(event.target.value)} /></label>
+            <h3>{t("memory.longTerm")}</h3>
+            <label>{t("memory.fieldTitle")}<input value={title} onChange={(event) => setTitle(event.target.value)} /></label>
+            <label>{t("memory.fieldBody")}<textarea value={body} onChange={(event) => setBody(event.target.value)} /></label>
             <button className="primary-button" type="button" onClick={addMemory}>
               <Pin size={16} />
-              新增釘選記憶
+              {t("memory.addPinned")}
             </button>
             <div className="stack-list">
               {items.map((item) => (
                 <article key={item.id}>
                   <strong>{item.title}</strong>
-                  <small>{item.agentId} · {item.source} · {item.shared ? "共享" : "隔離"}</small>
+                  <small>{item.agentId} · {item.source} · {item.shared ? t("memory.shared") : t("memory.isolated")}</small>
                   <p>{item.body}</p>
                 </article>
               ))}
@@ -78,21 +80,21 @@ export function MemoryPanel({ gatewayBaseUrl, onClose }: MemoryPanelProps): JSX.
           </section>
           <section className="commercial-card">
             <Scissors size={23} />
-            <h3>Context 壓縮</h3>
+            <h3>{t("memory.contextCompression")}</h3>
             {context ? (
               <>
                 <dl className="status-list">
-                  <div><dt>模型上限</dt><dd>{context.modelContextLimit.toLocaleString()} tokens</dd></div>
-                  <div><dt>估算使用</dt><dd>{context.estimatedTokens.toLocaleString()} tokens</dd></div>
-                  <div><dt>壓縮比</dt><dd>{context.compressionRatio}</dd></div>
+                  <div><dt>{t("memory.modelLimit")}</dt><dd>{context.modelContextLimit.toLocaleString()} tokens</dd></div>
+                  <div><dt>{t("memory.estimatedUse")}</dt><dd>{context.estimatedTokens.toLocaleString()} tokens</dd></div>
+                  <div><dt>{t("memory.compressionRatio")}</dt><dd>{context.compressionRatio}</dd></div>
                 </dl>
                 <p>{context.rollingSummary}</p>
                 <ul>{context.pinnedFacts.map((fact) => <li key={fact}>{fact}</li>)}</ul>
               </>
             ) : null}
-            <Tooltip text="保留釘選事實，把舊對話轉成摘要，降低 Context 佔用。">
+            <Tooltip text={t("memory.compressTooltip")}>
               <button className="secondary-button" type="button" onClick={compress}>
-                壓縮 Context
+                {t("memory.compress")}
               </button>
             </Tooltip>
           </section>

@@ -5,7 +5,7 @@ describe("ergonomics scoring", () => {
   it("scores desktop task paths with tooltip and risk prompt coverage", () => {
     const check = scoreErgonomicsCheck({
       id: "license-activation",
-      taskName: "啟用 Keygen 授權",
+      taskName: "啟用 Lemon Squeezy 授權",
       viewport: "desktop",
       steps: 4,
       keyboardReachable: true,

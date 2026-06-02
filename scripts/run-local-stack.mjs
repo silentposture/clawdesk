@@ -4,7 +4,7 @@ import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 const backendPort = Number(process.env.CLAWDESK_BACKEND_PORT ?? 19090);
-const gatewayPort = Number(process.env.OPENCLAW_MOCK_PORT ?? 18890);
+const gatewayPort = Number(process.env.CLAWDESK_MOCK_PORT ?? process.env.OPENCLAW_MOCK_PORT ?? 18890);
 const checkMode = process.argv.includes("--check");
 const heartbeatMs = Number(process.env.CLAWDESK_LOCAL_STACK_HEARTBEAT_MS ?? "10000");
 const root = process.cwd();
@@ -46,6 +46,7 @@ function spawnCommand(command, args, env = {}) {
       ...env,
     },
     stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: process.platform === "win32",
   });
 
   child.stdout.setEncoding("utf8");
@@ -95,12 +96,13 @@ async function start() {
   const backend = spawnCommand(process.execPath, ["backend/server.mjs"], {
     CLAWDESK_BACKEND_PORT: String(backendPort),
     CLAWDESK_BACKEND_STATE_FILE: backendStateFile,
-    CLAWDESK_LICENSE_HMAC_KEY: "dev-keygen-hmac-key",
+    CLAWDESK_LICENSE_HMAC_KEY: "dev-lemon-hmac-key",
     NODE_ENV: "production",
     NODE_OPTIONS: "--max-old-space-size=128",
   });
 
   const gateway = spawnCommand(process.execPath, ["sidecars/mock-gateway/server.mjs"], {
+    CLAWDESK_MOCK_PORT: String(gatewayPort),
     OPENCLAW_MOCK_PORT: String(gatewayPort),
     CLAWDESK_IDENTITY_BACKEND_URL: `http://127.0.0.1:${backendPort}`,
     CLAWDESK_MOCK_STATE_FILE: gatewayStateFile,

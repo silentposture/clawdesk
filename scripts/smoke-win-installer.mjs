@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -8,7 +9,10 @@ const reportDir = path.join(cwd, "artifacts", "win-installer-smoke");
 const reportFile = path.join(reportDir, `${new Date().toISOString().replace(/[:.]/g, "_")}-report.json`);
 
 function parseArgs(argv) {
-  return { build: !argv.includes("--no-build") };
+  return {
+    build: !argv.includes("--no-build"),
+    requireSignature: argv.includes("--require-signature"),
+  };
 }
 
 function commandInvocation(command, args) {
@@ -25,6 +29,7 @@ function run(command, args, options = {}) {
     encoding: "utf8",
     stdio: options.stdio ?? ["ignore", "pipe", "pipe"],
     shell: false,
+    windowsHide: process.platform === "win32",
   });
   return {
     ok: result.status === 0,
@@ -46,6 +51,11 @@ async function newestInstaller() {
   installers.sort((a, b) => b.mtimeMs - a.mtimeMs);
   if (!installers[0]) throw new Error(`No NSIS installer found under ${bundleDir}`);
   return installers[0];
+}
+
+async function sha256(filePath) {
+  const buffer = await fs.readFile(filePath);
+  return createHash("sha256").update(buffer).digest("hex");
 }
 
 async function writeReport(report) {
@@ -98,7 +108,13 @@ async function main() {
       if (!/ClawDesk/i.test(installer.name)) throw new Error(`Installer name does not include ClawDesk: ${installer.name}`);
       if (!/0\.1\.0/.test(installer.name)) throw new Error(`Installer name does not include package version: ${installer.name}`);
       if (installer.bytes < 1024 * 1024) throw new Error(`Installer is unexpectedly small: ${installer.bytes} bytes`);
-      return installer;
+      return { ...installer, sha256: await sha256(installer.filePath) };
+    });
+
+    await check("release metadata is current", async () => {
+      const result = run("npm", ["run", "release:metadata:win:check", "--", ...(options.requireSignature ? ["--require-signature"] : [])]);
+      if (!result.ok) throw new Error(`release metadata check failed with status ${result.status}: ${result.stderr || result.stdout}`);
+      return { requireSignature: options.requireSignature };
     });
 
     report.status = "pass";
@@ -110,3 +126,5 @@ async function main() {
 }
 
 await main();
+
+

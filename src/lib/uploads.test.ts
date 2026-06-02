@@ -10,13 +10,13 @@ describe("multimodal uploads", () => {
   });
 
   it("copies incoming files into the project uploads folder", () => {
-    expect(sandboxUploadPath("~/OpenClaw Project", "report.docx")).toBe("~/OpenClaw Project/uploads/report.docx");
+    expect(sandboxUploadPath("~/ClawDesk Project", "report.docx")).toBe("~/ClawDesk Project/uploads/report.docx");
   });
 
   it("creates upload records without mutating the source path", () => {
-    const item = createUploadItem("~/OpenClaw Project", "/Users/demo/Desktop/photo.png", "2.1 MB");
+    const item = createUploadItem("~/ClawDesk Project", "/Users/demo/Desktop/photo.png", "2.1 MB");
     expect(item.sourcePath).toBe("/Users/demo/Desktop/photo.png");
-    expect(item.sandboxPath).toBe("~/OpenClaw Project/uploads/photo.png");
+    expect(item.sandboxPath).toBe("~/ClawDesk Project/uploads/photo.png");
     expect(item.kind).toBe("image");
   });
 });

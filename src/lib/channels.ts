@@ -110,7 +110,7 @@ export const defaultChannels: CommunicationChannel[] = [
       {
         id: "discord-channel",
         title: "選擇允許頻道",
-        instruction: "只填入要讓 OpenClaw 使用的 server/channel。",
+        instruction: "只填入要讓 ClawDesk 使用的 server/channel。",
         helperText: "避免整個伺服器都能叫用 AI。",
         userAction: "填寫允許 server/channel。",
       },
