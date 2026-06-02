@@ -32,6 +32,11 @@ These are issue drafts for the public OSS roadmap.
 - Label: `diagnostics`, `roadmap`
 - Goal: standardize redacted bundles for bug reports and release review.
 
+## Multi-target Orchestration
+
+- Label: `feature`, `roadmap`
+- Goal: unify safe dispatch across SSH terminals, remote desktop sessions, and local targets under a single control plane.
+
 ## Security Hardening
 
 - Label: `security`, `roadmap`
@@ -46,4 +51,3 @@ These are issue drafts for the public OSS roadmap.
 
 - Label: `release`, `roadmap`
 - Goal: tag the first alpha only after blockers and evidence are current.
-

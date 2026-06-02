@@ -15,6 +15,8 @@ This directory contains the public OSS documentation for ClawDesk's AI desktop w
 - [Public OSS evidence snapshot](public-oss-evidence.md)
 - [Maintenance cadence](maintenance.md)
 - [Roadmap issues](roadmap-issues.md)
+- [Feature map](feature-map.md)
+- [Target orchestration](target-orchestration.md)
 - [Codex for Open Source application pack](codex-for-oss-application.md)
 
 ## Legacy docs

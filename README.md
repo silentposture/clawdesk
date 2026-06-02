@@ -41,6 +41,8 @@ See:
 - [Agent bridge](docs/agent-bridge.md)
 - [Transport](docs/transport.md)
 - [Release process](docs/release-process.md)
+- [Feature map](docs/feature-map.md)
+- [Target orchestration](docs/target-orchestration.md)
 
 ## Build and run
 
