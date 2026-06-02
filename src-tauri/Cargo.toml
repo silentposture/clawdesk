@@ -1,7 +1,7 @@
 [package]
 name = "clawdesk-desktop"
 version = "0.1.0"
-license = "MIT"
+license = "SEE LICENSE IN LICENSE"
 description = "ClawDesk desktop AI workspace MVP"
 authors = ["ClawDesk Contributors"]
 edition = "2021"
