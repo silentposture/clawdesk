@@ -1,10 +1,12 @@
-# ClawDesk 桌面版 MVP
+# ClawDesk Desktop MVP
 
-本倉庫以 `PolyForm Noncommercial 1.0.0` 對外公開，Windows 主線在根目錄，macOS 版本在 [ClawDesk-MAC](https://github.com/silentposture/clawdesk-mac)。
+This repository publishes the Windows mainline and is released under `PolyForm Noncommercial 1.0.0`. The macOS version lives in [ClawDesk-MAC](https://github.com/silentposture/clawdesk-mac).
 
-ClawDesk 是 OpenClaw-compatible、local-first 的 Windows 桌面 AI Agent。此倉庫允許公開檢視、fork、修改、提交 PR 與多人協作補強，但禁止商用、再販售、代管收費或任何以本專案直接或間接獲利的用途。第一版使用 mock Gateway sidecar，因此可以先把桌面外殼、串流事件合約、Live Canvas、權限流程、授權、診斷與 Agent 管理做好，不需要先接 upstream OpenClaw repo。
+ClawDesk is an OpenClaw-compatible, local-first Windows desktop AI agent. Public inspection, forks, PRs, and multi-editor collaboration are welcome, but commercial use, resale, hosted paid use, and any direct or indirect monetization are prohibited. New public documentation is written in English first; legacy Chinese text remains only where it has not yet been migrated.
 
-## 目前主線
+The first release uses a mock Gateway sidecar, so we can ship the desktop shell, streaming event contract, Live Canvas, permission flow, licensing, diagnostics, and Agent management without waiting on the upstream OpenClaw repo.
+
+## Current Focus
 
 - 優先支援 Windows 11 x64 桌面 app 體驗。
 - 產品名稱、Tauri `productName` 與視窗標題為 `ClawDesk`；npm package、Cargo crate 與 bundle identifier 保留原值以避免破壞 build path。
@@ -13,7 +15,7 @@ ClawDesk 是 OpenClaw-compatible、local-first 的 Windows 桌面 AI Agent。此
 - macOS 版本在 [ClawDesk-MAC](https://github.com/silentposture/clawdesk-mac)；Linux 原生整合保留架構接口，不作為目前主要開發目標。
 - 核心功能預設全部開放，不設付費解鎖或功能鎖；授權與帳號面板僅保留作相容性、測試與協作驗證。
 
-## 瀏覽器開發模式
+## Browser Dev Mode
 
 啟動 mock Gateway：
 
@@ -35,7 +37,7 @@ http://127.0.0.1:5173/
 
 瀏覽器開發模式會連到 `http://127.0.0.1:18790` 的 mock Gateway。
 
-## Windows Tauri 桌面 App 模式
+## Windows Tauri Desktop App Mode
 
 請先安裝 Rust toolchain：
 

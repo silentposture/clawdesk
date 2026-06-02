@@ -1,19 +1,19 @@
 # Contributing to ClawDesk
 
-ClawDesk 目前以非商業、source-available 的方式公開，歡迎 fork、修改、提交 PR、補強測試與文件。
+ClawDesk is published as noncommercial, source-available software. Forks, PRs, test improvements, documentation improvements, and multi-editor collaboration are welcome. New contributor-facing text should be written in English first; legacy Chinese text should be migrated or treated as historical notes.
 
 ## What to contribute
 
-- 修正 bug、補強測試、改善驗證流程
-- 補齊文件、runbook、release gate、CI
-- 針對 source integrity、build reproducibility、cross-platform parity 提出改進
-- 把仍然殘留的商業措辭改成歷史註記或移除
+- Fix bugs, strengthen tests, and improve verification flows
+- Fill in documentation, runbooks, release gates, and CI
+- Improve source integrity, build reproducibility, and cross-platform parity
+- Remove or reword any remaining commercial phrasing
 
 ## What not to contribute
 
-- 任何會讓本專案變成商業收費、付費解鎖、訂閱牆或代管收費服務的變更
-- secrets、token、私鑰、付款憑證或其他敏感資料
-- 只為格式而改的雜訊型 PR，除非有明確理由
+- Any change that turns this project into a commercial paid product, paywall, subscription wall, or hosted paid service
+- Secrets, tokens, private keys, payment credentials, or any other sensitive data
+- Noise-only formatting PRs unless there is a clear reason
 
 ## Local checks
 
