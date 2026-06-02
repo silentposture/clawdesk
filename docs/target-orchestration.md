@@ -26,7 +26,7 @@ The control plane chooses a target and then chooses the safest adapter for the r
 ## Safety rules
 
 - Pair before any remote dispatch.
-- Verify SSH host keys before shell dispatch.
+- Verify SSH host keys before shell dispatch, and persist them in the gateway-managed known_hosts file.
 - Require human approval for execute-safe actions.
 - Only allowlisted commands may flow through `execute_safe`.
 - Keep secrets out of the profile, logs, and debug bundles.
@@ -67,9 +67,10 @@ flowchart TD
 1. The user selects a target from the registry.
 2. The control plane resolves the safest available adapter.
 3. The policy layer checks pairing, authentication, host-key verification, and command safety.
-4. Observe / inspect / debug requests can proceed when the target is ready.
-5. Execute-safe requests are queued for approval before command dispatch, then can run through the local-shell or SSH safe connector.
-6. The target returns screen state, terminal output, or diagnostic evidence back into the shell.
+4. SSH host-key verification stores the trusted key in a gateway-managed known_hosts file before command execution.
+5. Observe / inspect / debug requests can proceed when the target is ready.
+6. Execute-safe requests are queued for approval before command dispatch, then can run through the local-shell or SSH safe connector.
+7. The target returns screen state, terminal output, or diagnostic evidence back into the shell.
 
 ## What is not implemented yet
 

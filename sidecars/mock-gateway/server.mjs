@@ -2561,7 +2561,7 @@ function updatePrimaryTargetAdapterState(target, updater) {
   };
 }
 
-function applyTargetConnectionActionState(target, action) {
+async function applyTargetConnectionActionState(target, action) {
   const now = nowIso();
   const baseTarget = normalizeTargetProfileState(target);
   const adapter = Array.isArray(baseTarget.adapters) ? baseTarget.adapters[0] : undefined;
@@ -2656,9 +2656,11 @@ function applyTargetConnectionActionState(target, action) {
       };
     }
 
+    await ensureTargetKnownHostsFile(baseTarget);
+
     return {
       allowed: true,
-      reason: "SSH host key verified.",
+      reason: "SSH host key verified and stored in the gateway-managed known_hosts file.",
       target: updatePrimaryTargetAdapterState(
         {
           ...baseTarget,
@@ -7158,7 +7160,7 @@ const server = http.createServer(async (req, res) => {
         json(res, 404, { error: "target not found" });
         return;
       }
-      const result = applyTargetConnectionActionState(target, action);
+      const result = await applyTargetConnectionActionState(target, action);
       if (result.allowed && result.target) {
         targetRegistry = {
           ...targetRegistry,

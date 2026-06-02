@@ -780,6 +780,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 onChange={(event) => setDraft((current) => ({ ...current, knownHostFingerprint: event.target.value }))}
                 placeholder="ssh-ed25519 AAAA..."
               />
+              {draft.kind === "ssh-terminal" ? <small>驗證時會寫入 gateway 管理的 known_hosts，不會顯示實際路徑。</small> : null}
             </label>
             <label>
               <span>Session mode</span>
