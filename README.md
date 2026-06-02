@@ -14,6 +14,7 @@ The first release uses a mock Gateway sidecar, so we can ship the desktop shell,
 - Target the Windows NSIS installer first for packaging.
 - The macOS version lives in [ClawDesk-MAC](https://github.com/silentposture/clawdesk-mac); Linux native integration remains as an architectural interface and is not a primary development target right now.
 - Keep all core features open by default, with no paid unlocks or feature locks; the license and account panels are retained only for compatibility, testing, and collaboration verification.
+- The release, payment, signing, and beta sections later in this README are legacy planning notes kept for provenance. They do not change the current free, noncommercial, open-source policy in this repository.
 
 ## Browser Dev Mode
 
