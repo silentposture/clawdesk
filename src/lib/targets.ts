@@ -355,7 +355,7 @@ export function targetConnectionReadinessIssues(target: TargetProfile): string[]
   }
 
   if (target.kind === "ssh-terminal" && !connection.knownHostFingerprint) {
-    issues.push("SSH host fingerprint is required for host-key verification.");
+    issues.push("SSH host key is required for host-key verification.");
   }
 
   return issues;
@@ -481,7 +481,7 @@ export function applyTargetConnectionAction(target: TargetProfile, action: Targe
     if (!baseTarget.connection.knownHostFingerprint) {
       return {
         allowed: false,
-        reason: "Record the SSH host fingerprint before verification.",
+        reason: "Record the SSH host key before verification.",
         action,
         target: baseTarget,
       };
@@ -609,6 +609,7 @@ function adapterIsReachable(target: TargetProfile, adapter: TargetAdapter): bool
   if (target.kind !== "local-shell" && !target.paired) return false;
   if ((adapter.kind === "ssh-terminal" || adapter.kind === "remote-desktop") && !adapter.authenticated) return false;
   if (adapter.kind === "ssh-terminal" && !adapter.hostKeyVerified) return false;
+  if ((adapter.kind === "ssh-terminal" || adapter.kind === "remote-desktop") && targetConnectionReadinessIssues(target).length > 0) return false;
   return true;
 }
 

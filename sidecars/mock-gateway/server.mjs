@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { spawn } from "node:child_process";
 
 const port = Number(process.env.CLAWDESK_MOCK_PORT ?? process.env.OPENCLAW_MOCK_PORT ?? 18890);
 const host = "127.0.0.1";
@@ -363,6 +364,35 @@ const defaultTargetRegistry = {
     },
   ],
 };
+const SAFE_COMMAND_PATTERNS = [
+  /^ls(\s|$)/i,
+  /^dir(\s|$)/i,
+  /^pwd(\s|$)/i,
+  /^Get-Location(\s|$)/i,
+  /^whoami(\s|$)/i,
+  /^hostname(\s|$)/i,
+  /^git status(\s|$)/i,
+  /^git diff(\s|$)/i,
+  /^git log(\s|$)/i,
+  /^Get-ChildItem(\s|$)/i,
+  /^Get-Content(\s|$)/i,
+  /^cat(\s|$)/i,
+  /^type(\s|$)/i,
+];
+const BLOCKED_COMMAND_PATTERNS = [
+  /\brm\s+-rf\b/i,
+  /\bdel\b/i,
+  /\brmdir\b/i,
+  /\bremove-item\b/i,
+  /\bformat\b/i,
+  /\bshutdown\b/i,
+  /\brestart-computer\b/i,
+  /\bstop-process\b/i,
+  /\bsudo\b/i,
+  /\bchmod\s+777\b/i,
+  /\bcurl\b.*\|\s*sh/i,
+  /\bwget\b.*\|\s*sh/i,
+];
 let targetRegistry = cloneTargetRegistryState(defaultTargetRegistry);
 let targetDispatches = [];
 const openClawRuntimeSurfaces = [
@@ -2215,10 +2245,309 @@ function targetConnectionReadinessIssuesState(target) {
   }
 
   if (target.kind === "ssh-terminal" && !connection.knownHostFingerprint) {
-    issues.push("SSH host fingerprint is required for host-key verification.");
+    issues.push("SSH host key is required for host-key verification.");
   }
 
   return issues;
+}
+
+function classifyShellCommandState(command) {
+  const normalized = command.trim();
+  if (!normalized) return "blocked";
+
+  if (BLOCKED_COMMAND_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return "blocked";
+  }
+
+  if (SAFE_COMMAND_PATTERNS.some((pattern) => pattern.test(normalized))) {
+    return "allowlisted";
+  }
+
+  return "needs-review";
+}
+
+function sanitizeTargetStorageKey(value) {
+  const normalized = value.trim().toLowerCase().replace(/[^a-z0-9._-]+/g, "-");
+  return normalized.replace(/^-+|-+$/g, "") || "target";
+}
+
+function targetConnectionStorageDir(targetId) {
+  return path.join(homeDir, ".clawdesk", "targets", sanitizeTargetStorageKey(targetId));
+}
+
+function targetKnownHostsPath(targetId) {
+  return path.join(targetConnectionStorageDir(targetId), "known_hosts");
+}
+
+function extractTargetHost(target) {
+  const endpoint = target.adapters?.[0]?.endpoint ?? "";
+  if (!endpoint) return "";
+
+  try {
+    const parsed = new URL(endpoint);
+    return parsed.hostname.trim();
+  } catch {
+    return endpoint.replace(/^ssh:\/\//i, "").split(/[/:]/)[0].trim();
+  }
+}
+
+function buildKnownHostEntry(target) {
+  const host = extractTargetHost(target);
+  const keyMaterial = target.connection?.knownHostFingerprint?.trim() ?? "";
+  if (!host) {
+    throw new Error("SSH host name is required to build a known_hosts entry.");
+  }
+  if (!keyMaterial) {
+    throw new Error("SSH host key is required before command execution.");
+  }
+
+  if (keyMaterial.startsWith(`${host} `)) {
+    return keyMaterial;
+  }
+
+  return `${host} ${keyMaterial}`;
+}
+
+async function ensureTargetKnownHostsFile(target) {
+  const knownHostsPath = targetKnownHostsPath(target.id);
+  await fs.mkdir(path.dirname(knownHostsPath), { recursive: true });
+  const entry = buildKnownHostEntry(target);
+  await fs.writeFile(knownHostsPath, `${entry}\n`, "utf8");
+  return knownHostsPath;
+}
+
+function spawnAndCollect(command, args, options = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: { ...process.env, ...(options.env ?? {}) },
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let settled = false;
+
+    child.stdout?.on("data", (chunk) => {
+      stdout += chunk.toString("utf8");
+      if (stdout.length > 32_768) {
+        stdout = `${stdout.slice(0, 32_000)}…[truncated]`;
+      }
+    });
+    child.stderr?.on("data", (chunk) => {
+      stderr += chunk.toString("utf8");
+      if (stderr.length > 32_768) {
+        stderr = `${stderr.slice(0, 32_000)}…[truncated]`;
+      }
+    });
+    child.on("error", (error) => {
+      if (settled) return;
+      settled = true;
+      resolve({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        stdout,
+        stderr,
+        exitCode: null,
+      });
+    });
+    child.on("close", (exitCode) => {
+      if (settled) return;
+      settled = true;
+      resolve({
+        ok: true,
+        stdout,
+        stderr,
+        exitCode: typeof exitCode === "number" ? exitCode : null,
+      });
+    });
+  });
+}
+
+async function executeTargetCommandState(target, command) {
+  const now = nowIso();
+  const baseTarget = normalizeTargetProfileState(target);
+  const adapter = Array.isArray(baseTarget.adapters) ? baseTarget.adapters[0] : undefined;
+  const normalizedCommand = typeof command === "string" ? command.trim() : "";
+
+  if (!normalizedCommand) {
+    return { allowed: false, reason: "A command is required.", target: baseTarget };
+  }
+
+  const commandSafety = classifyShellCommandState(normalizedCommand);
+  if (commandSafety === "blocked") {
+    return {
+      allowed: false,
+      reason: "The requested command is blocked by the safe-dispatch policy.",
+      target: baseTarget,
+    };
+  }
+
+  if (commandSafety === "needs-review") {
+    return {
+      allowed: false,
+      reason: "The requested command needs human review before execution.",
+      target: baseTarget,
+    };
+  }
+
+  if (!adapter) {
+    return { allowed: false, reason: "This target does not expose a connection adapter.", target: baseTarget };
+  }
+
+  if (baseTarget.kind !== "local-shell" && baseTarget.kind !== "mock" && baseTarget.state !== "ready") {
+    return {
+      allowed: false,
+      reason: "This target is not ready for command execution yet.",
+      target: baseTarget,
+    };
+  }
+
+  if (baseTarget.kind === "ssh-terminal") {
+    const readinessIssues = targetConnectionReadinessIssuesState(baseTarget);
+    if (readinessIssues.length > 0) {
+      return {
+        allowed: false,
+        reason: readinessIssues[0],
+        target: baseTarget,
+      };
+    }
+
+    if (!baseTarget.connection.username) {
+      return {
+        allowed: false,
+        reason: "SSH username is required.",
+        target: baseTarget,
+      };
+    }
+
+    if (baseTarget.connection.credentialMode === "none") {
+      return {
+        allowed: false,
+        reason: "SSH command execution requires ssh-agent or platform-managed credentials.",
+        target: baseTarget,
+      };
+    }
+
+    const knownHostsPath = await ensureTargetKnownHostsFile(baseTarget);
+    const host = extractTargetHost(baseTarget);
+    const sshExecutable = process.platform === "win32" ? "ssh.exe" : "ssh";
+    const remoteTarget = `${baseTarget.connection.username}@${host}`;
+    const execution = await spawnAndCollect(
+      sshExecutable,
+      [
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
+        "-o",
+        `UserKnownHostsFile=${knownHostsPath}`,
+        "-o",
+        `GlobalKnownHostsFile=${process.platform === "win32" ? "NUL" : "/dev/null"}`,
+        "-o",
+        "ConnectTimeout=10",
+        "-p",
+        String(baseTarget.connection.port ?? 22),
+        remoteTarget,
+        normalizedCommand,
+      ],
+      { cwd: homeDir },
+    );
+
+    if (!execution.ok) {
+      return {
+        allowed: false,
+        reason: execution.error || "Failed to start the SSH client.",
+        target: baseTarget,
+      };
+    }
+
+    const nextTarget = {
+      ...baseTarget,
+      lastSeenAt: now,
+    };
+    return {
+      allowed: true,
+      reason: execution.exitCode === 0 ? "SSH command executed successfully." : "SSH command finished with a non-zero exit code.",
+      target: nextTarget,
+      execution: {
+        mode: "ssh-terminal",
+        command: normalizedCommand,
+        stdout: execution.stdout,
+        stderr: execution.stderr,
+        exitCode: execution.exitCode,
+        startedAt: now,
+        finishedAt: nowIso(),
+        targetId: baseTarget.id,
+        targetName: baseTarget.displayName,
+      },
+    };
+  }
+
+  if (baseTarget.kind === "mock") {
+    return {
+      allowed: true,
+      reason: "Mock target simulated the safe command.",
+      target: {
+        ...baseTarget,
+        lastSeenAt: now,
+      },
+      execution: {
+        mode: "mock",
+        command: normalizedCommand,
+        stdout: `Mock execution: ${normalizedCommand}\n`,
+        stderr: "",
+        exitCode: 0,
+        startedAt: now,
+        finishedAt: now,
+        targetId: baseTarget.id,
+        targetName: baseTarget.displayName,
+      },
+    };
+  }
+
+  const localShellExecutable = process.platform === "win32" ? "powershell.exe" : "sh";
+  const localShellArgs =
+    process.platform === "win32"
+      ? ["-NoProfile", "-NonInteractive", "-Command", normalizedCommand]
+      : ["-lc", normalizedCommand];
+  let localShellCwd = homeDir;
+  try {
+    await fs.access(projectRoot);
+    localShellCwd = projectRoot;
+  } catch {
+    localShellCwd = homeDir;
+  }
+  const execution = await spawnAndCollect(localShellExecutable, localShellArgs, { cwd: localShellCwd });
+
+  if (!execution.ok) {
+    return {
+      allowed: false,
+      reason: execution.error || "Failed to start the local shell.",
+      target: baseTarget,
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: execution.exitCode === 0 ? "Local shell command executed successfully." : "Local shell command finished with a non-zero exit code.",
+    target: {
+      ...baseTarget,
+      lastSeenAt: now,
+    },
+    execution: {
+      mode: "local-shell",
+      command: normalizedCommand,
+      stdout: execution.stdout,
+      stderr: execution.stderr,
+      exitCode: execution.exitCode,
+      startedAt: now,
+      finishedAt: nowIso(),
+      targetId: baseTarget.id,
+      targetName: baseTarget.displayName,
+    },
+  };
 }
 
 function updatePrimaryTargetAdapterState(target, updater) {
@@ -2322,7 +2651,7 @@ function applyTargetConnectionActionState(target, action) {
     if (!baseTarget.connection.knownHostFingerprint) {
       return {
         allowed: false,
-        reason: "Record the SSH host fingerprint before verification.",
+        reason: "Record the SSH host key before verification.",
         target: baseTarget,
       };
     }
@@ -6745,6 +7074,72 @@ const server = http.createServer(async (req, res) => {
       });
     } catch {
       json(res, 400, { error: "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/targets/execute") {
+    try {
+      const body = await readJson(req);
+      const preview = body.preview ?? body;
+      const request = preview.request ?? body.request ?? {};
+      const command = typeof request.command === "string" ? request.command : typeof body.command === "string" ? body.command : "";
+      const targetId = typeof body.targetId === "string" ? body.targetId.trim() : typeof preview.target?.id === "string" ? preview.target.id.trim() : "";
+      const record = body.record ?? preview.record ?? null;
+      if (!targetId || !record || typeof record !== "object" || typeof record.id !== "string") {
+        json(res, 400, { error: "targetId and record are required" });
+        return;
+      }
+      const target = targetRegistry.targets.find((entry) => entry.id === targetId);
+      if (!target) {
+        json(res, 404, { error: "target not found" });
+        return;
+      }
+
+      const execution = await executeTargetCommandState(target, command);
+      if (!execution.allowed) {
+        audit("targets.execute.rejected", {
+          targetId,
+          category: request.category ?? "execute_safe",
+          reason: execution.reason,
+        });
+        json(res, 200, {
+          allowed: false,
+          reason: execution.reason,
+          execution: execution.execution,
+          target: execution.target,
+          registry: cloneTargetRegistryState(targetRegistry),
+          dispatches: targetDispatches.slice(0, 200),
+        });
+        return;
+      }
+
+      targetRegistry = {
+        ...targetRegistry,
+        targets: targetRegistry.targets.map((entry) => (entry.id === targetId ? execution.target : entry)),
+      };
+      targetDispatches.unshift(record);
+      targetDispatches = targetDispatches.slice(0, 200);
+      audit("targets.execute", {
+        targetId,
+        category: request.category ?? "execute_safe",
+        runner: execution.execution?.mode,
+        exitCode: execution.execution?.exitCode,
+        stdoutBytes: execution.execution?.stdout?.length ?? 0,
+        stderrBytes: execution.execution?.stderr?.length ?? 0,
+      });
+      scheduleStateSave();
+      json(res, 200, {
+        allowed: true,
+        reason: execution.reason,
+        target: execution.target,
+        execution: execution.execution,
+        record,
+        registry: cloneTargetRegistryState(targetRegistry),
+        dispatches: targetDispatches.slice(0, 200),
+      });
+    } catch (error) {
+      json(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON" });
     }
     return;
   }

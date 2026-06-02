@@ -40,7 +40,8 @@ export interface GatewayAdapterMethod {
   | "targetsRegistry"
   | "targetsSave"
   | "targetsDispatchPreview"
-  | "targetsDispatch";
+  | "targetsDispatch"
+  | "targetsExecute";
   method: "GET" | "POST";
   path: string;
   status: CodingWorkspaceStatus;
@@ -104,6 +105,7 @@ export const gatewayAdapterMethods: GatewayAdapterMethod[] = [
   { name: "targetsSave", method: "POST", path: "/targets", status: "mock", purpose: "儲存 target registry 與 default target 選擇。" },
   { name: "targetsDispatchPreview", method: "POST", path: "/targets/dispatch-preview", status: "mock", purpose: "建立 target dispatch 預覽與 audit record。" },
   { name: "targetsDispatch", method: "POST", path: "/targets/dispatch", status: "mock", purpose: "儲存 target dispatch record 與 audit trail。" },
+  { name: "targetsExecute", method: "POST", path: "/targets/execute", status: "partial", purpose: "執行 allowlisted local-shell 或 SSH safe command，回傳 stdout/stderr 摘要。" },
 ];
 
 export const defaultContextBudget: ContextBudget = {

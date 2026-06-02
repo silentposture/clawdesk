@@ -76,6 +76,11 @@ describe("target orchestration contract", () => {
         paired: true,
         state: "ready",
         adapterOverrides: { authenticated: true },
+        connectionOverrides: {
+          username: "ops-user",
+          credentialMode: "platform-managed",
+          sessionMode: "observe",
+        },
       }),
       createTargetProfile({
         id: "builder-ssh",
@@ -85,6 +90,11 @@ describe("target orchestration contract", () => {
         paired: true,
         state: "ready",
         adapterOverrides: { authenticated: true, hostKeyVerified: true },
+        connectionOverrides: {
+          username: "builder",
+          credentialMode: "ssh-agent",
+          knownHostFingerprint: "ssh-ed25519 AAAA...builder",
+        },
       }),
     ]);
 
@@ -110,6 +120,11 @@ describe("target orchestration contract", () => {
         paired: true,
         state: "offline",
         adapterOverrides: { authenticated: true, hostKeyVerified: true },
+        connectionOverrides: {
+          username: "builder",
+          credentialMode: "ssh-agent",
+          knownHostFingerprint: "ssh-ed25519 AAAA...offline",
+        },
       }),
     ], "local-builder");
 
@@ -131,6 +146,11 @@ describe("target orchestration contract", () => {
       paired: true,
       state: "ready",
       adapterOverrides: { authenticated: true, hostKeyVerified: true },
+      connectionOverrides: {
+        username: "builder",
+        credentialMode: "ssh-agent",
+        knownHostFingerprint: "ssh-ed25519 AAAA...builder",
+      },
     });
 
     const safeDecision = decideTargetDispatch(target, {
@@ -161,6 +181,11 @@ describe("target orchestration contract", () => {
       paired: true,
       state: "ready",
       adapterOverrides: { authenticated: true, hostKeyVerified: true },
+      connectionOverrides: {
+        username: "builder",
+        credentialMode: "ssh-agent",
+        knownHostFingerprint: "ssh-ed25519 AAAA...builder",
+      },
     });
 
     const decision = decideTargetDispatch(target, {

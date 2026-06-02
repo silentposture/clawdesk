@@ -38,6 +38,7 @@ The control plane chooses a target and then chooses the safest adapter for the r
 - Unit coverage: [`src/lib/targets.test.ts`](../src/lib/targets.test.ts)
 - Target registry UI: [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
 - Pairing, host-key verification, connect, disconnect, and refresh actions: [`src/lib/targets.ts`](../src/lib/targets.ts), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
+- Allowlisted local-shell and SSH safe command execution through the gateway: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
 - Mock gateway storage for registry, connection state, and dispatch logs: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
 - Existing approval and policy primitives: [`src/lib/security.ts`](../src/lib/security.ts), [`src/lib/permissions.ts`](../src/lib/permissions.ts), [`src/components/PermissionModal.tsx`](../src/components/PermissionModal.tsx)
 - Current gateway and desktop shell integration: [`src/lib/tauri.ts`](../src/lib/tauri.ts), [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/App.tsx`](../src/App.tsx)
@@ -67,20 +68,20 @@ flowchart TD
 2. The control plane resolves the safest available adapter.
 3. The policy layer checks pairing, authentication, host-key verification, and command safety.
 4. Observe / inspect / debug requests can proceed when the target is ready.
-5. Execute-safe requests are queued for approval before command dispatch.
+5. Execute-safe requests are queued for approval before command dispatch, then can run through the local-shell or SSH safe connector.
 6. The target returns screen state, terminal output, or diagnostic evidence back into the shell.
 
 ## What is not implemented yet
 
-- A production SSH connector.
+- A production SSH connector with interactive terminal/session management.
 - A production remote desktop connector.
 - A production audit trail for remote sessions.
 - Any claim that this is a full remote desktop clone.
 
 ## Next implementation steps
 
-1. Add credential storage for SSH and remote-desktop connectors.
+1. Add credential storage for SSH and remote-desktop connectors beyond ssh-agent / platform-managed defaults.
 2. Add a remote-desktop adapter contract for screen/control sessions.
 3. Route dispatch decisions through the existing permission queue.
 4. Add audit-friendly session summaries for each target.
-5. Introduce real transport/session execution once the safe contract is stable.
+5. Introduce interactive SSH terminal sessions and a production remote desktop transport once the safe contract is stable.

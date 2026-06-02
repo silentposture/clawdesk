@@ -58,6 +58,18 @@ interface DispatchPreviewState {
   record: TargetDispatchRecord;
 }
 
+interface TargetExecutionState {
+  mode: string;
+  command: string;
+  stdout: string;
+  stderr: string;
+  exitCode: number | null;
+  startedAt: string;
+  finishedAt: string;
+  targetId: string;
+  targetName: string;
+}
+
 const initialRegistry = defaultTargetRegistry();
 const initialTarget = initialRegistry.targets[0];
 
@@ -239,6 +251,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const [dispatchSummary, setDispatchSummary] = useState("檢視指定 target 的目前狀態。");
   const [dispatchCommand, setDispatchCommand] = useState("git status");
   const [preview, setPreview] = useState<DispatchPreviewState>();
+  const [execution, setExecution] = useState<TargetExecutionState>();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
@@ -267,6 +280,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         setDraft(draftFromTarget(nextTarget));
       }
       setPreview(undefined);
+      setExecution(undefined);
       setMessage("已使用本機預設 target 登錄。");
       setError(undefined);
       return;
@@ -291,6 +305,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         setDraft(createDraft("ssh-terminal"));
       }
       setPreview(undefined);
+      setExecution(undefined);
       setMessage("已讀取 gateway target registry。");
     } catch {
       setRegistry(cloneTargetRegistry(initialRegistry));
@@ -301,6 +316,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         setDraft(draftFromTarget(nextTarget));
       }
       setPreview(undefined);
+      setExecution(undefined);
       setError("無法讀取 gateway 的 target registry，已切回本機預設清單。");
     } finally {
       setBusy(false);
@@ -311,6 +327,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setSelectedTargetId(target.id);
     setDraft(draftFromTarget(target));
     setPreview(undefined);
+    setExecution(undefined);
     setMessage(undefined);
     setError(undefined);
   }
@@ -320,6 +337,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setSelectedTargetId(nextDraft.id);
     setDraft(nextDraft);
     setPreview(undefined);
+    setExecution(undefined);
     setMessage(`已建立 ${defaultDisplayNameForKind(kind)} 的草稿。`);
     setError(undefined);
   }
@@ -348,10 +366,12 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         setRegistry(cloneTargetRegistry(nextRegistry));
       }
       setPreview(undefined);
+      setExecution(undefined);
       setMessage(statusMessage);
     } catch {
       setRegistry(cloneTargetRegistry(nextRegistry));
       setPreview(undefined);
+      setExecution(undefined);
       setMessage(`${statusMessage}（僅保留本機狀態，gateway 儲存失敗）`);
       setError(undefined);
     } finally {
@@ -419,6 +439,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         setSelectedTargetId(nextTarget.id);
         setDraft(draftFromTarget(nextTarget));
         setPreview(undefined);
+        setExecution(undefined);
         setMessage(payload.reason || result.reason);
       } catch {
         const nextRegistry = upsertTarget(registry, result.target);
@@ -426,6 +447,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         setSelectedTargetId(result.target.id);
         setDraft(draftFromTarget(result.target));
         setPreview(undefined);
+        setExecution(undefined);
         setMessage(`${result.reason}（僅保留本機狀態，gateway 連線更新失敗）`);
       } finally {
         setBusy(false);
@@ -438,12 +460,14 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setSelectedTargetId(result.target.id);
     setDraft(draftFromTarget(result.target));
     setPreview(undefined);
+    setExecution(undefined);
     setMessage(result.reason);
   }
 
   async function previewDispatch() {
     const snapshot = createPreviewSnapshot(draftTarget);
     setPreview(snapshot);
+    setExecution(undefined);
     setMessage(`已產生 ${snapshot.target.displayName} 的派發預覽。`);
     setError(undefined);
 
@@ -464,6 +488,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   async function queueDispatch() {
     const snapshot = createPreviewSnapshot(draftTarget);
     setPreview(snapshot);
+    setExecution(undefined);
 
     if (gatewayBaseUrl) {
       try {
@@ -490,6 +515,73 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setDispatches((current) => [snapshot.record, ...current].slice(0, 100));
     setMessage(`已建立 ${snapshot.record.targetName} 的派發紀錄。`);
     setError(undefined);
+  }
+
+  async function executeSafeDispatch() {
+    const snapshot = createPreviewSnapshot(draftTarget);
+    setPreview(snapshot);
+    setError(undefined);
+
+    if (snapshot.request.category !== "execute_safe") {
+      setExecution(undefined);
+      setError("只有 execute_safe 分類才能直接執行。");
+      return;
+    }
+
+    if (!snapshot.decision.allowed) {
+      setExecution(undefined);
+      setError(snapshot.decision.reason);
+      return;
+    }
+
+    if (!gatewayBaseUrl) {
+      setExecution(undefined);
+      setError("需要 gateway 才能執行實際連線。");
+      return;
+    }
+
+    setBusy(true);
+    try {
+      const response = await fetch(`${gatewayBaseUrl}/targets/execute`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ preview: snapshot, record: snapshot.record }),
+      });
+      if (!response.ok) throw new Error("bad response");
+      const payload = (await response.json()) as {
+        allowed?: boolean;
+        reason?: string;
+        execution?: TargetExecutionState;
+        record?: TargetDispatchRecord;
+        dispatches?: TargetDispatchRecord[];
+        registry?: TargetRegistry;
+        target?: TargetProfile;
+      };
+      if (!payload.allowed) {
+        setExecution(undefined);
+        setMessage(undefined);
+        setError(payload.reason || "執行失敗。");
+        return;
+      }
+
+      const nextTarget = payload.target ?? snapshot.target;
+      const nextRegistry = payload.registry ?? upsertTarget(registry, nextTarget);
+      setRegistry(cloneTargetRegistry(nextRegistry));
+      if (Array.isArray(payload.dispatches)) {
+        setDispatches(payload.dispatches);
+      } else if (payload.record) {
+        setDispatches((current) => [payload.record!, ...current.filter((item) => item.id !== payload.record!.id)].slice(0, 100));
+      }
+      setSelectedTargetId(nextTarget.id);
+      setDraft(draftFromTarget(nextTarget));
+      setExecution(payload.execution);
+      setMessage(`${payload.reason ?? "命令已執行"} · ${payload.execution?.mode ?? "unknown"}`);
+    } catch {
+      setExecution(undefined);
+      setError("安全命令執行失敗，請先確認 ssh / PowerShell 可用且 target 已正確配對。");
+    } finally {
+      setBusy(false);
+    }
   }
 
   return (
@@ -682,7 +774,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               />
             </label>
             <label>
-              <span>SSH known host fingerprint</span>
+              <span>SSH known host key</span>
               <input
                 value={draft.knownHostFingerprint}
                 onChange={(event) => setDraft((current) => ({ ...current, knownHostFingerprint: event.target.value }))}
@@ -807,6 +899,15 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 <Server size={16} />
                 預覽
               </button>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => void executeSafeDispatch()}
+                disabled={busy || !preview || preview.request.category !== "execute_safe" || !preview.decision.allowed}
+              >
+                <Send size={16} />
+                審批並執行
+              </button>
               <button className="secondary-button" type="button" onClick={() => void queueDispatch()} disabled={busy || !draftSummaryReady(dispatchSummary)}>
                 <Send size={16} />
                 建立紀錄
@@ -826,6 +927,21 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
             ) : (
               <div className="mcp-empty">尚未產生預覽，請先按「預覽」。</div>
             )}
+
+            {execution ? (
+              <div className="mcp-preview target-execution-result">
+                <span>最近執行結果</span>
+                <strong>{execution.targetName}</strong>
+                <p>{execution.mode} · exit {execution.exitCode ?? "unknown"}</p>
+                <small>command：{execution.command}</small>
+                {execution.stdout ? (
+                  <pre>{execution.stdout}</pre>
+                ) : null}
+                {execution.stderr ? (
+                  <pre className="target-execution-stderr">{execution.stderr}</pre>
+                ) : null}
+              </div>
+            ) : null}
 
             <dl className="status-list">
               <div>

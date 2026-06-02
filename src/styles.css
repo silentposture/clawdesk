@@ -1390,6 +1390,29 @@ th {
   overflow-wrap: anywhere;
 }
 
+.target-execution-result {
+  border: 1px solid #d8e1db;
+  background: #f6fbf8;
+}
+
+.target-execution-result pre {
+  margin: 0;
+  padding: 10px;
+  border-radius: 8px;
+  background: #13211b;
+  color: #f2f8f4;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.target-execution-result .target-execution-stderr {
+  margin-top: 8px;
+  background: #341c1c;
+}
+
 .quick-setup,
 .legal-consent-panel,
 .security-panel,
