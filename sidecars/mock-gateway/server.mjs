@@ -1719,7 +1719,7 @@ let identitySession = {
 const identityPasswordSalt = "clawdesk-mock-identity-v1";
 const seededIdentityAccounts = [
   {
-    email: process.env.CLAWDESK_DEVELOPER_EMAIL ?? "huangkuoling@gmail.com",
+    email: process.env.CLAWDESK_DEVELOPER_EMAIL ?? "support@clawdesk.example",
     displayName: "huangkuoling",
     password: process.env.CLAWDESK_DEVELOPER_PASSWORD ?? "ChangeMe123!",
     mode: process.env.CLAWDESK_DEVELOPER_MODE === "personal" ? "personal" : "enterprise",
@@ -1789,9 +1789,9 @@ const legalDocuments = [
   {
     id: "developer-disclosure",
     title: "開發者與發行者聲明",
-    summary: "ClawDesk 由 Alisonsoftware 以個人開發者 / independent publisher 名義開發與發行。",
+    summary: "ClawDesk 由 ClawDesk Contributors 以 OSS 社群專案名義開發與發行。",
     details: [
-      "Alisonsoftware 不以公司、代理商、系統整合商、財務顧問、法律顧問、稅務顧問或代管服務提供者身分對外表示。",
+      "ClawDesk Contributors 不以公司、代理商、系統整合商、財務顧問、法律顧問、稅務顧問或代管服務提供者身分對外表示。",
       "除非另有書面揭露，ClawDesk 與 OpenClaw、OpenAI、Microsoft、Google、Lemon Squeezy 或其他第三方服務沒有隸屬、背書或贊助關係。",
       "完整聲明已打包於 app resources：legal/DEVELOPER_DISCLOSURE.md。",
     ],
@@ -1862,7 +1862,7 @@ const legalDocuments = [
   {
     id: "support-contact",
     title: "客服與聯絡入口",
-    summary: "客服聯絡信箱為 alison.ai.tech.studio@gmail.com；目前 Beta 不承諾 24/7、企業 SLA 或代管部署。",
+    summary: "客服聯絡信箱為 support@clawdesk.example；目前 OSS launch 不承諾 24/7、企業 SLA 或代管部署。",
     details: [
       "release guard 會在 beta-direct 模式要求 CLAWDESK_SUPPORT_EMAIL 或 CLAWDESK_SUPPORT_URL。",
       "支援範圍草案已打包於 app resources：support/CONTACT.md。",

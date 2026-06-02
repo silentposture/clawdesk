@@ -162,7 +162,7 @@ const steps = [
     command: "npm",
     args: ["run", "gateway:doctor"],
     requiredForBeta: true,
-    nextAction: "Point CLAWDESK_GATEWAY_BASE_URL to an HTTPS API host such as https://api.naviaworks.net.",
+    nextAction: "Point CLAWDESK_GATEWAY_BASE_URL to an HTTPS API host such as https://api.clawdesk.example.",
   },
   {
     id: "gateway-compose",

@@ -5,7 +5,7 @@ import path from "node:path";
 import tls from "node:tls";
 
 const cwd = process.cwd();
-const host = process.env.CLAWDESK_PUBLIC_GATEWAY_HOST || "api.naviaworks.net";
+const host = process.env.CLAWDESK_PUBLIC_GATEWAY_HOST || "api.clawdesk.example";
 const reportDir = path.join(cwd, "artifacts", "gateway-public-doctor");
 const timeoutMs = Number(process.env.CLAWDESK_PUBLIC_GATEWAY_TIMEOUT_MS ?? 8000);
 
@@ -136,8 +136,8 @@ const report = {
   nextActions: blockers.length === 0
     ? ["Set CLAWDESK_GATEWAY_BASE_URL to this host and run npm run gateway:doctor."]
     : [
-        "Create DNS A/AAAA record for api.naviaworks.net.",
-        "Install a valid TLS certificate for api.naviaworks.net.",
+        "Create DNS A/AAAA record for api.clawdesk.example.",
+        "Install a valid TLS certificate for api.clawdesk.example.",
         "Start the production Gateway and expose GET /health through HTTPS.",
       ],
 };

@@ -70,7 +70,7 @@ const report = {
   nextActions: composeConfigOk
     ? [
         "Deploy this compose file on the API host or VPS.",
-        "Terminate TLS in a reverse proxy and point https://api.naviaworks.net to clawdesk-gateway:19130.",
+        "Terminate TLS in a reverse proxy and point https://api.clawdesk.example to clawdesk-gateway:19130.",
         "Run npm run gateway:doctor after DNS/TLS is live.",
       ]
     : [

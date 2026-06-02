@@ -306,7 +306,7 @@ try {
   });
 
   await check("developer account bypasses license key checks", async () => {
-    const developerEmail = process.env.CLAWDESK_DEVELOPER_EMAIL ?? "huangkuoling@gmail.com";
+    const developerEmail = process.env.CLAWDESK_DEVELOPER_EMAIL ?? "support@clawdesk.example";
     const developerPassword = process.env.CLAWDESK_DEVELOPER_PASSWORD ?? "ChangeMe123!";
     const devLogin = await postJson("/identity/login", {
       email: developerEmail,

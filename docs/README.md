@@ -20,4 +20,4 @@ This directory contains the public OSS documentation for ClawDesk.
 - The `download/`, `legal/`, `payments/`, `support/`, and `archive/` folders contain older planning material.
 - Those files are preserved for provenance only and must not override the current README, LICENSE, SECURITY, CONTRIBUTING, ROADMAP, and CHANGELOG policy.
 - If a legacy doc conflicts with the current OSS launch docs, the current docs win.
-
+- See [archive/README.md](archive/README.md) for the historical archive index.

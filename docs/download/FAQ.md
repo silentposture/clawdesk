@@ -4,7 +4,7 @@ This document is retained for provenance only. It does not define the current OS
 
 # Download FAQ
 
-This FAQ describes the old beta-planning lane. The current public OSS launch docs take precedence.
+This FAQ describes the historical download lane. The current public OSS launch docs take precedence.
 
 ## Support
 
@@ -21,5 +21,4 @@ This FAQ describes the old beta-planning lane. The current public OSS launch doc
 
 - Download pages must point to redacted, public-safe metadata only.
 - Generated pages should be checked before publish.
-- Historical commercial copy should be archived or redacted before any public OSS release.
-
+- Historical legacy copy should be archived or redacted before any public OSS release.

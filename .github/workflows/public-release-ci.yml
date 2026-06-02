@@ -1,0 +1,19 @@
+name: Public Release CI
+
+on:
+  push:
+    branches:
+      - "**"
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  public-release-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Check public release surface
+        run: sh scripts/check-public-release.sh
+

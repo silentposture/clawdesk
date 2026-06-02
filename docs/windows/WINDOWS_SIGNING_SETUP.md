@@ -45,7 +45,7 @@ npm run release:metadata:win:check -- --require-signature
 `.env.production`：
 
 ```text
-WINDOWS_SIGNING_CERTIFICATE_SUBJECT=Alisonsoftware
+WINDOWS_SIGNING_CERTIFICATE_SUBJECT=ClawDesk Contributors
 WINDOWS_SIGNING_TIMESTAMP_URL=http://timestamp.digicert.com
 ```
 

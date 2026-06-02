@@ -54,7 +54,7 @@ const appServer = cliOptions.appServer === "preview" ? "preview" : "dev";
 const gatewayBaseUrl = `http://127.0.0.1:${gatewayPort}`;
 const appUrl = `http://127.0.0.1:${appPort}/?clawdesk-gateway-port=${gatewayPort}&clawdesk-gateway-strict=1`;
 
-const accountEmail = process.env.CLAWDESK_ACCOUNT_EMAIL ?? process.env.CLAWDESK_DEVELOPER_EMAIL ?? "huangkuoling@gmail.com";
+const accountEmail = process.env.CLAWDESK_ACCOUNT_EMAIL ?? process.env.CLAWDESK_DEVELOPER_EMAIL ?? "support@clawdesk.example";
 const accountPassword = process.env.CLAWDESK_ACCOUNT_PASSWORD ?? process.env.CLAWDESK_DEVELOPER_PASSWORD ?? "ChangeMe123!";
 const developerEmail = process.env.CLAWDESK_DEVELOPER_EMAIL ?? accountEmail;
 const developerPassword = process.env.CLAWDESK_DEVELOPER_PASSWORD ?? "ChangeMe123!";

@@ -73,7 +73,7 @@ if (metadata.installer.signature.status !== "valid") {
 
 const manifest = {
   createdAt: new Date().toISOString(),
-  publishTarget: "https://naviaworks.net/clawdesk/",
+  publishTarget: "https://clawdesk.example/clawdesk/",
   sourceMetadata: "artifacts/windows-release/latest-windows-beta.json",
   copied,
   warnings,
@@ -93,7 +93,7 @@ await fs.writeFile(
 Upload this folder's contents to:
 
 \`\`\`text
-https://naviaworks.net/clawdesk/
+https://clawdesk.example/clawdesk/
 \`\`\`
 
 Entry point:

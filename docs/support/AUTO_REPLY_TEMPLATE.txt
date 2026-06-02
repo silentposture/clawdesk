@@ -2,30 +2,25 @@ Subject: [ClawDesk Support] We received your request
 
 Hi,
 
-Thanks for contacting ClawDesk support.
-Your request has been received and queued for review.
+Thanks for contacting ClawDesk support. Your request has been received and queued for review.
 
-Support email: alison.ai.tech.studio@gmail.com
-Product: ClawDesk Windows Beta
-Developer/Publisher: Alisonsoftware
+Support email: support@clawdesk.example
+Product: ClawDesk
+Developer/Publisher: ClawDesk Contributors
 
 Please include:
 1) App version
-2) Error code (if available)
-3) License status screenshot or text
-4) Steps to reproduce
-
-For refund/cancellation requests, include your checkout order identifier.
-For license activation requests, include the license key hash (do not send full key in plaintext).
+2) Steps to reproduce
+3) Error code or message, if available
+4) Redacted logs or screenshots, if needed
 
 Current support scope:
-- Installer / signature / hash verification
-- License activation and entitlement downgrade checks
-- Diagnostics export guidance
-- Provider and workspace setup guidance
+- Installer and build verification
+- Debug bundle and redaction guidance
+- Issue triage and reproducible bug reports
 
 This mailbox does not provide legal, tax, investment, security consulting, managed deployment, enterprise SLA, or 24/7 response commitment.
 
 Best regards,
 ClawDesk Support
-Alisonsoftware
+ClawDesk Contributors

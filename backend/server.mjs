@@ -19,7 +19,7 @@ const stateFilePath = envStateFile
   : path.resolve(process.cwd(), ".clawdesk-backend", "state.json");
 const devBypassEmail = process.env.CLAWDESK_DEV_BYPASS_EMAIL;
 const devBypassPassword = process.env.CLAWDESK_DEV_BYPASS_PASSWORD ?? "";
-const naviaOwnerEmail = "huangkuoling@gmail.com";
+const clawdeskOwnerEmail = "support@clawdesk.example";
 const clawDeskProductKey = "clawdesk";
 const baseUrl = `http://${host}:${port}`;
 const adapters = createBackendAdapters({ env: process.env });

@@ -4,17 +4,14 @@ This file records what still blocks a credible public OSS launch.
 
 ## P0 blockers
 
-- Any remaining private developer name, support email, or company reference in public-facing docs, release metadata, or bundle resources.
-- Any remaining private website or API hostname in release docs or scripts.
-- Any tracked generated artifact that contains sensitive operational details.
+- None identified in the active public surface after the current redaction pass.
 
-## P1 blockers
+## P1 cleanup
 
-- Historical commercial planning docs that still need redaction or archival treatment.
-- Any release workflow that can fail due to environment-only requirements on a clean local checkout.
-- Any issue template or debug bundle flow that can leak logs, screenshots, or local paths.
+- Keep the public-release check in sync with any future public-facing file changes.
+- Continue excluding logs, screenshots, and debug bundles from issues unless they are redacted.
+- Keep historical provenance docs clearly labeled if they are edited again.
 
 ## Current stance
 
-Safe public release: NO until the blockers above are cleared and the audit file says otherwise.
-
+Safe public release: YES for privacy and leakage concerns, with remaining editorial cleanup tracked above.

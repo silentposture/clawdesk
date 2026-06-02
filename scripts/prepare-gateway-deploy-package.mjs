@@ -40,7 +40,7 @@ await fs.writeFile(path.join(outDir, "infra", "certbot-www", ".gitkeep"), "", "u
 
 const runbook = `# ClawDesk Gateway VPS Deploy Package
 
-Target host: api.naviaworks.net
+Target host: api.clawdesk.example
 
 ## 1. Copy Files
 
@@ -62,7 +62,7 @@ cp .env.production.example .env.production
 
 Fill at least:
 
-- CLAWDESK_GATEWAY_BASE_URL=https://api.naviaworks.net
+- CLAWDESK_GATEWAY_BASE_URL=https://api.clawdesk.example
 - CLAWDESK_BACKEND_ADAPTER_MODE=production
 - LEMON_SQUEEZY_WEBHOOK_SECRET
 - LEMON_SQUEEZY_STORE_ID
@@ -78,14 +78,14 @@ Do not commit or publish .env.production.
 The proxy expects Let's Encrypt files at:
 
 \`\`\`text
-/etc/letsencrypt/live/api.naviaworks.net/fullchain.pem
-/etc/letsencrypt/live/api.naviaworks.net/privkey.pem
+/etc/letsencrypt/live/api.clawdesk.example/fullchain.pem
+/etc/letsencrypt/live/api.clawdesk.example/privkey.pem
 \`\`\`
 
 Obtain the certificate using your preferred method. Example on Linux with certbot standalone:
 
 \`\`\`bash
-sudo certbot certonly --standalone -d api.naviaworks.net
+sudo certbot certonly --standalone -d api.clawdesk.example
 \`\`\`
 
 ## 4. Start Gateway
@@ -98,16 +98,16 @@ docker compose -f docker-compose.production-gateway.yml -f docker-compose.produc
 ## 5. Verify From Development Machine
 
 \`\`\`powershell
-$env:CLAWDESK_GATEWAY_BASE_URL="https://api.naviaworks.net"
+$env:CLAWDESK_GATEWAY_BASE_URL="https://api.clawdesk.example"
 npm run gateway:doctor
 npm run beta:readiness
 \`\`\`
 
 Expected public endpoints:
 
-- https://api.naviaworks.net/health
-- https://api.naviaworks.net/contract
-- https://api.naviaworks.net/webhooks/lemon
+- https://api.clawdesk.example/health
+- https://api.clawdesk.example/contract
+- https://api.clawdesk.example/webhooks/license
 
 `;
 
@@ -119,8 +119,8 @@ const manifest = {
   outDir,
   copied,
   warnings,
-  targetHost: "api.naviaworks.net",
-  publicUrl: "https://api.naviaworks.net",
+  targetHost: "api.clawdesk.example",
+  publicUrl: "https://api.clawdesk.example",
 };
 
 await fs.writeFile(path.join(outDir, "gateway-deploy-manifest.json"), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");

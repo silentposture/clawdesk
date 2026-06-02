@@ -1,12 +1,12 @@
 # Historical Planning Draft
 
-This document is retained for provenance only. It does not define the current OSS licensing or release policy.
+This file is retained for provenance only. It does not define the current OSS licensing or release policy.
 
 # Payment / License Setup Notes
 
-ClawDesk is now prepared as a public OSS project. Any future paid workflow must be documented separately and must not override the current OSS policy.
+ClawDesk is now prepared as a public OSS project. Any future monetized workflow must be documented separately and must not override the current OSS policy.
 
-## If a commercial lane is ever added later
+## If a future monetized lane is ever added later
 
 - Keep API keys, webhook secrets, and customer data server-side only.
 - Never store secrets in the desktop app.
@@ -22,4 +22,3 @@ ClawDesk is now prepared as a public OSS project. Any future paid workflow must 
 ## Placeholder webhook
 
 - `https://api.clawdesk.example/webhooks/license`
-

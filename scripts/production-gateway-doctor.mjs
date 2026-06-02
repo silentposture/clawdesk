@@ -30,7 +30,7 @@ function normalizeBaseUrl(rawValue) {
     const url = new URL(value);
     const issues = [];
     if (url.protocol !== "https:") issues.push("must-use-https");
-    if (url.hostname === "naviaworks.net" || url.hostname === "www.naviaworks.net") {
+    if (url.hostname === "clawdesk.example" || url.hostname === "www.clawdesk.example") {
       issues.push("must-use-api-host-not-homepage");
     }
     if (url.pathname && url.pathname !== "/") issues.push("base-url-should-not-include-path");
@@ -164,7 +164,7 @@ const report = {
   nextActions: blockers.length === 0
     ? ["Run npm run beta:env:doctor, then npm run release:guard:beta after Lemon/signing env are present."]
     : [
-        "Point CLAWDESK_GATEWAY_BASE_URL to a real HTTPS API host, for example https://api.naviaworks.net.",
+        "Point CLAWDESK_GATEWAY_BASE_URL to a real HTTPS API host, for example https://api.clawdesk.example.",
         "Ensure the Gateway exposes GET /health and GET /contract with the ClawDesk production contract.",
       ],
 };

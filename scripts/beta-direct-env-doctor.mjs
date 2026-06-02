@@ -109,7 +109,7 @@ const trustedSigning = [
   "AZURE_TRUSTED_SIGNING_ENDPOINT",
 ];
 
-const gatewayUrl = urlStatus("CLAWDESK_GATEWAY_BASE_URL", { rejectHomepageHost: "naviaworks.net" });
+const gatewayUrl = urlStatus("CLAWDESK_GATEWAY_BASE_URL", { rejectHomepageHost: "clawdesk.example" });
 const supportDoc = await readSupportDocPresence();
 const supportOk = supportRequiredAny.some((name) => Boolean(process.env[name])) || supportDoc.hasEmail || supportDoc.hasUrl;
 const pfxOk = pfxSigning.every((name) => Boolean(process.env[name]));

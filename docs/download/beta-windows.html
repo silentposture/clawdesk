@@ -1,27 +1,25 @@
 <!doctype html>
-<html lang="zh-Hant">
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="author" content="Alisonsoftware" />
     <meta
       name="description"
-      content="Download ClawDesk Windows x64 Beta, verify SHA256, review legal notices, and contact Alisonsoftware support."
+      content="Historical ClawDesk Windows download page retained for provenance only."
     />
-    <title>ClawDesk Windows Beta Download</title>
+    <meta name="author" content="ClawDesk Contributors" />
+    <title>ClawDesk Windows Download Archive</title>
     <style>
       :root {
         color-scheme: light;
         --bg: #f7f9fb;
         --panel: #ffffff;
-        --text: #1b2430;
-        --muted: #5d6875;
-        --line: #d9e0e8;
+        --text: #18222d;
+        --muted: #596472;
+        --line: #d8e0e8;
         --accent: #0f766e;
         --accent-strong: #0b5f59;
-        --warning: #9a3412;
-        --warning-bg: #fff7ed;
-        --shadow: 0 20px 60px rgba(20, 33, 48, 0.12);
+        --shadow: 0 18px 48px rgba(20, 33, 48, 0.08);
       }
 
       * {
@@ -32,12 +30,7 @@
         margin: 0;
         background: var(--bg);
         color: var(--text);
-        font-family:
-          "Segoe UI",
-          "Noto Sans TC",
-          "Microsoft JhengHei",
-          system-ui,
-          sans-serif;
+        font-family: "Segoe UI", "Noto Sans TC", system-ui, sans-serif;
         line-height: 1.6;
       }
 
@@ -46,62 +39,58 @@
       }
 
       .wrap {
-        width: min(1120px, calc(100% - 32px));
+        width: min(1040px, calc(100% - 32px));
         margin: 0 auto;
       }
 
-      header {
+      header,
+      footer {
+        background: rgba(255, 255, 255, 0.85);
         border-bottom: 1px solid var(--line);
-        background: rgba(255, 255, 255, 0.86);
       }
 
-      .topbar {
+      footer {
+        border-bottom: 0;
+        border-top: 1px solid var(--line);
+      }
+
+      .bar {
+        min-height: 64px;
         display: flex;
         align-items: center;
         justify-content: space-between;
         gap: 16px;
-        min-height: 64px;
       }
 
       .brand {
-        font-size: 18px;
         font-weight: 700;
-        letter-spacing: 0;
-      }
-
-      .support-link {
-        font-size: 14px;
-        color: var(--muted);
-        text-decoration: none;
       }
 
       .hero {
         display: grid;
-        grid-template-columns: minmax(0, 1.2fr) minmax(320px, 0.8fr);
-        gap: 32px;
-        padding: 56px 0 36px;
-        align-items: start;
+        grid-template-columns: minmax(0, 1.3fr) minmax(280px, 0.7fr);
+        gap: 24px;
+        padding: 56px 0 40px;
       }
 
       h1 {
-        margin: 0 0 16px;
-        font-size: clamp(34px, 5vw, 58px);
+        margin: 0 0 12px;
+        font-size: clamp(30px, 4.5vw, 52px);
         line-height: 1.08;
-        letter-spacing: 0;
       }
 
       .lead {
-        margin: 0 0 24px;
+        margin: 0 0 20px;
         color: var(--muted);
         font-size: 18px;
-        max-width: 760px;
+        max-width: 720px;
       }
 
       .actions {
         display: flex;
         flex-wrap: wrap;
         gap: 12px;
-        margin: 24px 0;
+        margin-top: 20px;
       }
 
       .button {
@@ -113,64 +102,63 @@
         border-radius: 8px;
         border: 1px solid var(--accent);
         background: var(--accent);
-        color: white;
+        color: #fff;
         font-weight: 700;
         text-decoration: none;
       }
 
       .button.secondary {
-        background: white;
+        background: #fff;
         color: var(--accent-strong);
-      }
-
-      .notice {
-        border: 1px solid #fed7aa;
-        background: var(--warning-bg);
-        color: var(--warning);
-        border-radius: 8px;
-        padding: 14px 16px;
-        font-size: 14px;
       }
 
       .card {
         background: var(--panel);
         border: 1px solid var(--line);
-        border-radius: 8px;
+        border-radius: 10px;
         box-shadow: var(--shadow);
-        padding: 22px;
+        padding: 20px;
       }
 
-      .release-title {
-        margin: 0 0 14px;
-        font-size: 18px;
+      .notice {
+        margin-top: 18px;
+        border: 1px solid #fed7aa;
+        background: #fff7ed;
+        color: #9a3412;
+        border-radius: 8px;
+        padding: 14px 16px;
       }
 
       dl {
         display: grid;
-        grid-template-columns: 112px minmax(0, 1fr);
+        grid-template-columns: 112px 1fr;
         gap: 10px 14px;
         margin: 0;
       }
 
       dt {
         color: var(--muted);
-        font-size: 13px;
         font-weight: 700;
+        font-size: 13px;
       }
 
       dd {
         margin: 0;
-        min-width: 0;
         overflow-wrap: anywhere;
-        font-family: Consolas, "Cascadia Mono", monospace;
-        font-size: 13px;
       }
 
       .sections {
         display: grid;
         grid-template-columns: repeat(3, minmax(0, 1fr));
         gap: 18px;
-        padding: 14px 0 56px;
+        padding-bottom: 56px;
+      }
+
+      .section-card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 18px 20px;
       }
 
       h2 {
@@ -178,15 +166,8 @@
         font-size: 20px;
       }
 
-      .section-card {
-        background: var(--panel);
-        border: 1px solid var(--line);
-        border-radius: 8px;
-        padding: 20px;
-      }
-
       ul {
-        margin: 12px 0 0;
+        margin: 10px 0 0;
         padding-left: 20px;
       }
 
@@ -194,23 +175,16 @@
         margin-top: 8px;
       }
 
-      footer {
-        border-top: 1px solid var(--line);
-        padding: 24px 0;
-        color: var(--muted);
-        font-size: 14px;
-      }
-
-      @media (max-width: 820px) {
+      @media (max-width: 840px) {
         .hero,
         .sections {
           grid-template-columns: 1fr;
         }
 
-        .topbar {
-          align-items: flex-start;
+        .bar {
           flex-direction: column;
-          padding: 14px 0;
+          align-items: flex-start;
+          padding: 12px 0;
         }
 
         dl {
@@ -221,89 +195,81 @@
   </head>
   <body>
     <header>
-      <div class="wrap topbar">
+      <div class="wrap bar">
         <div class="brand">ClawDesk</div>
-        <a class="support-link" href="mailto:alison.ai.tech.studio@gmail.com">alison.ai.tech.studio@gmail.com</a>
+        <a href="mailto:support@clawdesk.example">support@clawdesk.example</a>
       </div>
     </header>
 
     <main class="wrap">
-      <section class="hero" aria-labelledby="download-title">
+      <section class="hero" aria-labelledby="archive-title">
         <div>
-          <h1 id="download-title">ClawDesk Windows x64 Beta</h1>
+          <h1 id="archive-title">Historical Windows Download Archive</h1>
           <p class="lead">
-            Windows 11 x64 直售 Beta。下載前請確認版本、SHA256、簽章狀態與法務文件；Microsoft Store 與 macOS
-            暫不作為第一批落地主線。
+            This page is retained for provenance only. It documents an older download lane and does not represent the current OSS launch policy.
           </p>
-          <p>ClawDesk is developed and published by Alisonsoftware as an individual developer / independent publisher.</p>
+          <p>
+            The active public docs live in <a href="../README.md">README.md</a>,
+            <a href="../LICENSE">LICENSE</a>, and the files under <a href="../">docs/</a>.
+          </p>
           <div class="actions">
-            <a class="button" href="./ClawDesk_0.1.0_x64-setup.exe">Download Windows Installer</a>
-            <a class="button secondary" href="./FAQ.md">Read FAQ</a>
+            <a class="button" href="../README.md">Read current README</a>
+            <a class="button secondary" href="../release-process.md">Release process</a>
           </div>
           <div class="notice">
-            目前下載頁會公開顯示 installer hash 與簽章狀態。若 Signature 不是 valid，該 build 只能作為測試候選，不應公開收費販售。
+            There is no active download flow documented here. Do not treat this page as an active distribution surface.
           </div>
         </div>
 
-        <aside class="card" aria-labelledby="release-title">
-          <h2 class="release-title" id="release-title">Release Metadata</h2>
+        <aside class="card" aria-labelledby="metadata-title">
+          <h2 id="metadata-title">Archive metadata</h2>
           <dl>
-            <dt>Version</dt>
-            <dd>0.1.0</dd>
+            <dt>Status</dt>
+            <dd>Historical only</dd>
             <dt>Developer</dt>
-            <dd>Alisonsoftware</dd>
-            <dt>Installer</dt>
-            <dd>ClawDesk_0.1.0_x64-setup.exe</dd>
-            <dt>SHA256</dt>
-            <dd>63c6f48106809adb57eb5879748a23a8fb3286a44ca9e8f19f2f2e12312d9e69</dd>
-            <dt>Signature</dt>
-            <dd>invalid</dd>
-            <dt>Updated</dt>
-            <dd>2026-05-18</dd>
+            <dd>ClawDesk Contributors</dd>
             <dt>Support</dt>
-            <dd><a href="mailto:alison.ai.tech.studio@gmail.com">alison.ai.tech.studio@gmail.com</a></dd>
+            <dd><a href="mailto:support@clawdesk.example">support@clawdesk.example</a></dd>
+            <dt>Policy</dt>
+            <dd>See README.md and LICENSE for the active OSS launch terms.</dd>
           </dl>
         </aside>
       </section>
 
-      <section class="sections" aria-label="Download requirements">
+      <section class="sections" aria-label="Archive guidance">
         <article class="section-card">
-          <h2>Before Installing</h2>
+          <h2>What this page is</h2>
           <ul>
-            <li>確認檔名與版本符合下載頁。</li>
-            <li>比對 SHA256 是否完全一致。</li>
-            <li>正式付費 Beta 必須顯示有效 Authenticode signature。</li>
+            <li>A historical snapshot of an older download lane.</li>
+            <li>Not a live installer or release surface.</li>
+            <li>Not a substitute for the active repository docs.</li>
           </ul>
         </article>
 
         <article class="section-card">
-          <h2>SmartScreen</h2>
-          <p>
-            第一批 Beta 仍可能因 Windows reputation 不足顯示 SmartScreen 警告。請先核對檔名、版本、SHA256 與開發者資訊，再決定是否安裝。
-          </p>
-          <p><a href="./FAQ.md#安裝被-smartscreen-擋住">SmartScreen FAQ</a></p>
+          <h2>What to use now</h2>
+          <ul>
+            <li>README, LICENSE, SECURITY, CONTRIBUTING, and ROADMAP.</li>
+            <li>docs/security-model.md for approval and redaction rules.</li>
+            <li>docs/release-process.md for release hygiene and evidence checks.</li>
+          </ul>
         </article>
 
         <article class="section-card">
-          <h2>Legal And Support</h2>
+          <h2>Public release rule</h2>
           <ul>
-            <li><a href="../legal/EULA.md">EULA</a></li>
-            <li><a href="../legal/DEVELOPER_DISCLOSURE.md">Developer Disclosure</a></li>
-            <li><a href="../legal/PRIVACY.md">Privacy</a></li>
-            <li><a href="../legal/REFUND_POLICY.md">Refund Policy</a></li>
-            <li><a href="../legal/DIGITAL_CONTENT_WAIVER.md">Digital Content Waiver</a></li>
-            <li><a href="../legal/AI_AGENT_RISK_NOTICE.md">AI Agent Risk Notice</a></li>
-            <li><a href="../legal/OPENCLAW_MIT_NOTICE.md">OpenClaw MIT Notice</a></li>
-            <li><a href="../legal/THIRD_PARTY_NOTICES.md">ThirdPartyNotices</a></li>
-            <li><a href="../support/CONTACT.md">Support Contact</a></li>
+            <li>No private support contacts.</li>
+            <li>No private hostnames or local paths.</li>
+            <li>No claim of production readiness without matching evidence.</li>
           </ul>
         </article>
       </section>
     </main>
 
     <footer>
-      <div class="wrap">
-        <p>Developer: Alisonsoftware. Support: alison.ai.tech.studio@gmail.com.</p>
+      <div class="wrap bar">
+        <p>ClawDesk Contributors</p>
+        <p>support@clawdesk.example</p>
       </div>
     </footer>
   </body>

@@ -108,13 +108,13 @@ ${blockers.length > 0 ? blockers.map((item) => `- ${item.label}: ${item.nextActi
 1. Lemon Squeezy
    - Reply with \`lemon-onboarding/lemon-reply-email.txt\`.
    - After approval, create ClawDesk product and variants from \`lemon-onboarding/lemon-product-setup.md\`.
-   - Create webhook URL \`https://api.naviaworks.net/webhooks/lemon\`.
+   - Create webhook URL \`https://api.clawdesk.example/webhooks/license\`.
    - Fill \`LEMON_SQUEEZY_*\` values in \`.env.production\`.
 
 2. Production Gateway
    - Deploy \`deploy/docker-compose.production-gateway.yml\` to the API host.
-   - Point \`https://api.naviaworks.net\` to the Gateway through HTTPS reverse proxy.
-   - Set \`CLAWDESK_GATEWAY_BASE_URL=https://api.naviaworks.net\`.
+   - Point \`https://api.clawdesk.example\` to the Gateway through HTTPS reverse proxy.
+   - Set \`CLAWDESK_GATEWAY_BASE_URL=https://api.clawdesk.example\`.
 
 3. Windows signing
    - Choose exactly one method from \`docs/WINDOWS_SIGNING_SETUP.md\`.
@@ -122,7 +122,7 @@ ${blockers.length > 0 ? blockers.map((item) => `- ${item.label}: ${item.nextActi
    - Sign installer, regenerate metadata, and verify signature.
 
 4. Website
-   - Upload \`website/clawdesk/\` to \`https://naviaworks.net/clawdesk/\`.
+   - Upload \`website/clawdesk/\` to \`https://clawdesk.example/clawdesk/\`.
    - Do not publish as paid Beta until installer signature is \`valid\` and \`npm run beta:readiness:check\` passes.
 
 ## Final Commands After External Tasks

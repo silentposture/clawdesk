@@ -1,13 +1,5 @@
 # Historical Planning Draft
 
-This document is a legacy commercial planning note. It is retained for provenance only and does not describe the current free, noncommercial, open-source policy. See `README.md`, `LICENSE`, and `CONTRIBUTING.md` for the active policy.
+This file is retained for provenance only. The current OSS launch does not include a purchase, refund, or cancellation flow.
 
-# ClawDesk Beta Refund Policy Draft
-
-This draft is for operational readiness and must be reviewed before paid sale.
-
-For the first paid Windows Beta, purchases should use hosted checkout and email-based support. Refunds are processed by the merchant platform. When a refund or cancellation webhook is received, ClawDesk entitlement is downgraded to safe-mode, preserving export and diagnostics access.
-
-Safe-mode keeps local data accessible but disables paid agent, workflow, update, and connector features.
-
-Support mailbox, refund window, jurisdiction-specific rights, and digital content consent language must be finalized before launch.
+If a future monetized lane is added, its refund rules must be documented separately and must not override the active OSS policy.

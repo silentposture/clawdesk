@@ -1,9 +1,10 @@
-# ClawDesk Beta Privacy Draft
+# ClawDesk Privacy Note
 
-This draft covers the Windows direct-download Beta and requires legal review before public sale.
+ClawDesk is intended to keep data local-first.
 
-ClawDesk stores workspace settings, license entitlement state, machine binding hashes, and diagnostic reports locally unless the user explicitly submits or exports a report. The app must not store full license keys, payment secrets, full API keys, plaintext email in diagnostics, full local file paths, screenshots, or chat contents inside support bundles.
+- Workspace settings, logs, and diagnostics stay on the device unless the user exports them.
+- Debug bundles must be redacted before sharing.
+- Examples and docs must not include plaintext secrets, private endpoints, or personal data.
+- No hosted account or payment processing is implied by the current OSS launch docs.
 
-Payments are handled by hosted checkout. The desktop app does not process or store card details.
-
-Support diagnostics may include app version, build channel, operating system summary, redacted errors, release status, and legal consent hash.
+This note is a project policy summary, not a substitute for jurisdiction-specific legal review.
