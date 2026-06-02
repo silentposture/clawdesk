@@ -38,6 +38,20 @@ Use this text if OpenAI support or an in-product feedback flow is available.
 Official support entry point:
 - Open the chat bubble at the bottom-right of [help.openai.com](https://help.openai.com/).
 
+## Short version for the support bubble
+
+> Hello OpenAI team,
+>
+> I’m requesting consideration for any currently available eligible ChatGPT Pro promotional trial invite.
+>
+> My project, ClawDesk, is a public Apache-2.0 OSS repo focused on AI-agent-first desktop orchestration, local-first control, human-approved automation, redacted diagnostics, and transparent release hygiene.
+>
+> Public evidence snapshot: [public-oss-evidence.md](public-oss-evidence.md)
+>
+> If my account is eligible for any invite or regional promotion, I’d appreciate being considered.
+>
+> Thank you.
+
 > Hello OpenAI team,
 >
 > I’d like to request consideration for any currently available eligible ChatGPT Pro promotional trial invite.
