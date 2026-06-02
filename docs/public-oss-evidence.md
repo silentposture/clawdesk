@@ -6,7 +6,7 @@ This snapshot records the current public-release posture of ClawDesk. Refresh it
 
 - Public GitHub repository: `https://github.com/silentposture/clawdesk.git`
 - Current launch-prep branch: `oss-launch-prep`
-- Latest known commit on this branch: `6073965`
+- Latest known commit on this branch: `a20d467`
 - Anonymous GitHub access check: successful `git ls-remote` against the repository returned `HEAD` and `refs/heads/oss-launch-prep`
 
 ## Public-release evidence
@@ -23,6 +23,7 @@ This snapshot records the current public-release posture of ClawDesk. Refresh it
 - Public release audit in `docs/audit/public-release-audit.md`
 - Public release blockers in `PUBLIC_RELEASE_BLOCKERS.md`
 - Lightweight CI in `.github/workflows/public-release-ci.yml`
+- Maintenance cadence in `docs/maintenance.md`
 
 ## Agentic-program evidence
 

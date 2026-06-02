@@ -13,6 +13,7 @@ This directory contains the public OSS documentation for ClawDesk.
 - [MVP scope](mvp.md)
 - [Public release audit](audit/public-release-audit.md)
 - [Public OSS evidence snapshot](public-oss-evidence.md)
+- [Maintenance cadence](maintenance.md)
 - [Roadmap issues](roadmap-issues.md)
 - [Codex OSS application draft](codex-for-oss-application.md)
 - [ChatGPT Pro trial request pack](OPENAI_TRIAL_REQUEST.md)

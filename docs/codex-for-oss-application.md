@@ -58,5 +58,6 @@ ClawDesk is an experimental AI-agent-first desktop orchestration layer for guard
 ## Evidence snapshot
 
 - [Public OSS evidence snapshot](public-oss-evidence.md)
+- [Maintenance cadence](maintenance.md)
 - Anonymous GitHub access to `https://github.com/silentposture/clawdesk.git` has been verified from this workspace.
 - The public-release scan, dependency audit, and current branch state are recorded in the evidence snapshot and should be refreshed before any external request.
