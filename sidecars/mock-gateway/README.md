@@ -42,6 +42,13 @@
 - `POST /mcp/preview`
 - `GET /workflows`
 - `POST /workflows`
+- `GET /targets`
+- `POST /targets`
+- `POST /targets/credential-ref/issue`
+- `POST /targets/connection`
+- `POST /targets/dispatch-preview`
+- `POST /targets/dispatch`
+- `POST /targets/execute`
 - `GET /compat/settings`
 - `POST /compat/settings`
 - Legacy aliases: `GET /openclaw/settings`, `POST /openclaw/settings`

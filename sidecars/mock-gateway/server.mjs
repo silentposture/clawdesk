@@ -395,6 +395,8 @@ const BLOCKED_COMMAND_PATTERNS = [
 ];
 let targetRegistry = cloneTargetRegistryState(defaultTargetRegistry);
 let targetDispatches = [];
+// Ephemeral in-memory SSH credential vault; never persisted to snapshotState().
+const targetCredentialVault = new Map();
 const openClawRuntimeSurfaces = [
   {
     id: "provider-auth",
@@ -2244,6 +2246,10 @@ function targetConnectionReadinessIssuesState(target) {
     issues.push("Secret-ref mode requires a credential reference.");
   }
 
+  if (connection.credentialMode === "secret-ref" && connection.credentialRef && !resolveTargetCredentialRefState(connection.credentialRef)) {
+    issues.push("Secret-ref credential is not registered in the gateway vault.");
+  }
+
   if (target.kind === "ssh-terminal" && !connection.knownHostFingerprint) {
     issues.push("SSH host key is required for host-key verification.");
   }
@@ -2277,6 +2283,49 @@ function targetConnectionStorageDir(targetId) {
 
 function targetKnownHostsPath(targetId) {
   return path.join(targetConnectionStorageDir(targetId), "known_hosts");
+}
+
+function targetCredentialRefStorageKey(credentialRef) {
+  return sanitizeTargetStorageKey(credentialRef);
+}
+
+function issueTargetCredentialRefState({ targetId, label, kind, privateKey }) {
+  const normalizedPrivateKey = typeof privateKey === "string" ? privateKey.trim() : "";
+  if (!targetId || !normalizedPrivateKey) {
+    throw new Error("targetId and privateKey are required to issue a credential ref.");
+  }
+
+  const credentialRef = `tcr_${crypto
+    .createHash("sha256")
+    .update(`clawdesk-target-credential:${targetId}:${kind ?? "ssh-private-key"}:${normalizedPrivateKey}`)
+    .digest("hex")
+    .slice(0, 24)}`;
+
+  targetCredentialVault.set(targetCredentialRefStorageKey(credentialRef), {
+    credentialRef,
+    targetId,
+    label: typeof label === "string" && label.trim() ? label.trim() : undefined,
+    kind: kind ?? "ssh-private-key",
+    privateKey: normalizedPrivateKey,
+    createdAt: nowIso(),
+    status: "active",
+  });
+
+  return {
+    credentialRef,
+    targetId,
+    label: typeof label === "string" && label.trim() ? label.trim() : undefined,
+    kind: kind ?? "ssh-private-key",
+    createdAt: nowIso(),
+    status: "active",
+    maskedSecret: maskSecret(normalizedPrivateKey),
+  };
+}
+
+function resolveTargetCredentialRefState(credentialRef) {
+  const normalizedRef = typeof credentialRef === "string" ? credentialRef.trim() : "";
+  if (!normalizedRef) return undefined;
+  return targetCredentialVault.get(targetCredentialRefStorageKey(normalizedRef));
 }
 
 function extractTargetHost(target) {
@@ -2314,6 +2363,36 @@ async function ensureTargetKnownHostsFile(target) {
   const entry = buildKnownHostEntry(target);
   await fs.writeFile(knownHostsPath, `${entry}\n`, "utf8");
   return knownHostsPath;
+}
+
+async function materializeTargetCredentialFile(target) {
+  const credentialRef = target.connection?.credentialRef?.trim() ?? "";
+  if (target.connection?.credentialMode !== "secret-ref" || !credentialRef) {
+    return null;
+  }
+
+  const entry = resolveTargetCredentialRefState(credentialRef);
+  if (!entry) {
+    throw new Error("SSH credential ref is not registered in the gateway vault.");
+  }
+
+  const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "clawdesk-ssh-key-"));
+  const privateKeyPath = path.join(tempDir, "id_ed25519");
+  await fs.writeFile(privateKeyPath, `${entry.privateKey.trim().replace(/\r\n/g, "\n").replace(/\r/g, "\n")}\n`, "utf8");
+  try {
+    await fs.chmod(privateKeyPath, 0o600);
+  } catch {
+    // chmod is best-effort on Windows; ssh.exe still reads the key file.
+  }
+
+  return {
+    credentialRef,
+    kind: entry.kind,
+    privateKeyPath,
+    cleanup: async () => {
+      await fs.rm(tempDir, { recursive: true, force: true });
+    },
+  };
 }
 
 function spawnAndCollect(command, args, options = {}) {
@@ -2434,9 +2513,9 @@ async function executeTargetCommandState(target, command) {
     const host = extractTargetHost(baseTarget);
     const sshExecutable = process.platform === "win32" ? "ssh.exe" : "ssh";
     const remoteTarget = `${baseTarget.connection.username}@${host}`;
-    const execution = await spawnAndCollect(
-      sshExecutable,
-      [
+    const credentialMaterial = await materializeTargetCredentialFile(baseTarget);
+    try {
+      const sshArgs = [
         "-o",
         "BatchMode=yes",
         "-o",
@@ -2447,42 +2526,47 @@ async function executeTargetCommandState(target, command) {
         `GlobalKnownHostsFile=${process.platform === "win32" ? "NUL" : "/dev/null"}`,
         "-o",
         "ConnectTimeout=10",
-        "-p",
-        String(baseTarget.connection.port ?? 22),
-        remoteTarget,
-        normalizedCommand,
-      ],
-      { cwd: homeDir },
-    );
+      ];
+      if (credentialMaterial) {
+        sshArgs.push("-o", "IdentitiesOnly=yes", "-i", credentialMaterial.privateKeyPath);
+      }
+      sshArgs.push("-p", String(baseTarget.connection.port ?? 22), remoteTarget, normalizedCommand);
+      const execution = await spawnAndCollect(sshExecutable, sshArgs, { cwd: homeDir });
 
-    if (!execution.ok) {
-      return {
-        allowed: false,
-        reason: execution.error || "Failed to start the SSH client.",
-        target: baseTarget,
+      if (!execution.ok) {
+        return {
+          allowed: false,
+          reason: execution.error || "Failed to start the SSH client.",
+          target: baseTarget,
+        };
+      }
+
+      const nextTarget = {
+        ...baseTarget,
+        lastSeenAt: now,
       };
+      return {
+        allowed: true,
+        reason: execution.exitCode === 0 ? "SSH command executed successfully." : "SSH command finished with a non-zero exit code.",
+        target: nextTarget,
+        execution: {
+          mode: "ssh-terminal",
+          credentialSource: baseTarget.connection.credentialMode,
+          command: normalizedCommand,
+          stdout: execution.stdout,
+          stderr: execution.stderr,
+          exitCode: execution.exitCode,
+          startedAt: now,
+          finishedAt: nowIso(),
+          targetId: baseTarget.id,
+          targetName: baseTarget.displayName,
+        },
+      };
+    } finally {
+      if (credentialMaterial) {
+        await credentialMaterial.cleanup().catch(() => undefined);
+      }
     }
-
-    const nextTarget = {
-      ...baseTarget,
-      lastSeenAt: now,
-    };
-    return {
-      allowed: true,
-      reason: execution.exitCode === 0 ? "SSH command executed successfully." : "SSH command finished with a non-zero exit code.",
-      target: nextTarget,
-      execution: {
-        mode: "ssh-terminal",
-        command: normalizedCommand,
-        stdout: execution.stdout,
-        stderr: execution.stderr,
-        exitCode: execution.exitCode,
-        startedAt: now,
-        finishedAt: nowIso(),
-        targetId: baseTarget.id,
-        targetName: baseTarget.displayName,
-      },
-    };
   }
 
   if (baseTarget.kind === "mock") {
@@ -7139,6 +7223,39 @@ const server = http.createServer(async (req, res) => {
         record,
         registry: cloneTargetRegistryState(targetRegistry),
         dispatches: targetDispatches.slice(0, 200),
+      });
+    } catch (error) {
+      json(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/targets/credential-ref/issue") {
+    try {
+      const body = await readJson(req);
+      const targetId = typeof body.targetId === "string" ? body.targetId.trim() : "";
+      const target = targetRegistry.targets.find((entry) => entry.id === targetId);
+      const kind = typeof body.kind === "string" && body.kind.trim() ? body.kind.trim() : "ssh-private-key";
+      const privateKey = typeof body.privateKey === "string" ? body.privateKey : typeof body.secret === "string" ? body.secret : "";
+      const label = typeof body.label === "string" ? body.label : "";
+      if (!targetId || !target || target.kind !== "ssh-terminal") {
+        json(res, 400, { error: "SSH targetId is required" });
+        return;
+      }
+      if (kind !== "ssh-private-key") {
+        json(res, 400, { error: "Unsupported credential kind" });
+        return;
+      }
+      const payload = issueTargetCredentialRefState({ targetId, label, kind, privateKey });
+      audit("targets.credential-ref.issue", {
+        targetId,
+        targetName: target.displayName,
+        credentialRef: payload.credentialRef,
+        kind: payload.kind,
+      });
+      json(res, 200, {
+        ...payload,
+        targetName: target.displayName,
       });
     } catch (error) {
       json(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON" });

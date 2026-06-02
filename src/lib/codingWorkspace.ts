@@ -34,14 +34,15 @@ export interface GatewayAdapterMethod {
     | "providerStatus"
     | "workflow"
     | "diagnostics"
-  | "providerSecretRef"
-  | "providerOpenAiRuntime"
-  | "memory"
-  | "targetsRegistry"
-  | "targetsSave"
-  | "targetsDispatchPreview"
-  | "targetsDispatch"
-  | "targetsExecute";
+    | "providerSecretRef"
+    | "providerOpenAiRuntime"
+    | "memory"
+    | "targetsRegistry"
+    | "targetsSave"
+    | "targetsCredentialRefIssue"
+    | "targetsDispatchPreview"
+    | "targetsDispatch"
+    | "targetsExecute";
   method: "GET" | "POST";
   path: string;
   status: CodingWorkspaceStatus;
@@ -103,9 +104,10 @@ export const gatewayAdapterMethods: GatewayAdapterMethod[] = [
   { name: "memory", method: "POST", path: "/memory/items", status: "mock", purpose: "建立與查詢本機記憶；後續接 durable store/vector store。" },
   { name: "targetsRegistry", method: "GET", path: "/targets", status: "mock", purpose: "讀取多電腦 target registry 與 dispatch log。" },
   { name: "targetsSave", method: "POST", path: "/targets", status: "mock", purpose: "儲存 target registry 與 default target 選擇。" },
+  { name: "targetsCredentialRefIssue", method: "POST", path: "/targets/credential-ref/issue", status: "partial", purpose: "將 SSH private key 發行成 gateway-managed credential ref，供安全 SSH dispatch 使用。" },
   { name: "targetsDispatchPreview", method: "POST", path: "/targets/dispatch-preview", status: "mock", purpose: "建立 target dispatch 預覽與 audit record。" },
   { name: "targetsDispatch", method: "POST", path: "/targets/dispatch", status: "mock", purpose: "儲存 target dispatch record 與 audit trail。" },
-  { name: "targetsExecute", method: "POST", path: "/targets/execute", status: "partial", purpose: "執行 allowlisted local-shell 或 SSH safe command，回傳 stdout/stderr 摘要。" },
+  { name: "targetsExecute", method: "POST", path: "/targets/execute", status: "partial", purpose: "執行 allowlisted local-shell 或 SSH safe command，必要時可經 gateway-managed SSH credential ref，並回傳 stdout/stderr 摘要。" },
 ];
 
 export const defaultContextBudget: ContextBudget = {

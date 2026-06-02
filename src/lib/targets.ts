@@ -327,7 +327,19 @@ export function summarizeTargetConnectionProfile(target: TargetProfile): string 
   const parts: string[] = [target.connection.credentialMode, target.connection.sessionMode];
   if (target.connection.username) parts.push(target.connection.username);
   if (target.connection.port) parts.push(`port ${target.connection.port}`);
+  if (target.connection.credentialMode === "secret-ref" && target.connection.credentialRef) {
+    parts.push(`ref ${maskTargetCredentialRef(target.connection.credentialRef)}`);
+  }
   return parts.filter(Boolean).join(" · ") || "未設定連線資訊";
+}
+
+function maskTargetCredentialRef(value: string): string {
+  const normalized = value.trim();
+  if (!normalized) return "";
+  if (normalized.length <= 10) {
+    return `${normalized.slice(0, 4)}…`;
+  }
+  return `${normalized.slice(0, 6)}…${normalized.slice(-4)}`;
 }
 
 export function targetConnectionReadinessIssues(target: TargetProfile): string[] {

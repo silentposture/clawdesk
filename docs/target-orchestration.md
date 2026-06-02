@@ -27,6 +27,7 @@ The control plane chooses a target and then chooses the safest adapter for the r
 
 - Pair before any remote dispatch.
 - Verify SSH host keys before shell dispatch, and persist them in the gateway-managed known_hosts file.
+- Issue SSH private keys as gateway-managed credential refs for secret-ref dispatch flows when ssh-agent is not used.
 - Require human approval for execute-safe actions.
 - Only allowlisted commands may flow through `execute_safe`.
 - Keep secrets out of the profile, logs, and debug bundles.
@@ -38,7 +39,7 @@ The control plane chooses a target and then chooses the safest adapter for the r
 - Unit coverage: [`src/lib/targets.test.ts`](../src/lib/targets.test.ts)
 - Target registry UI: [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
 - Pairing, host-key verification, connect, disconnect, and refresh actions: [`src/lib/targets.ts`](../src/lib/targets.ts), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
-- Allowlisted local-shell and SSH safe command execution through the gateway: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
+- Gateway-managed SSH credential ref issuance and allowlisted local-shell / SSH safe command execution through the gateway: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
 - Mock gateway storage for registry, connection state, and dispatch logs: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
 - Existing approval and policy primitives: [`src/lib/security.ts`](../src/lib/security.ts), [`src/lib/permissions.ts`](../src/lib/permissions.ts), [`src/components/PermissionModal.tsx`](../src/components/PermissionModal.tsx)
 - Current gateway and desktop shell integration: [`src/lib/tauri.ts`](../src/lib/tauri.ts), [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/App.tsx`](../src/App.tsx)
@@ -81,7 +82,7 @@ flowchart TD
 
 ## Next implementation steps
 
-1. Add credential storage for SSH and remote-desktop connectors beyond ssh-agent / platform-managed defaults.
+1. Add durable credential storage for SSH and remote-desktop connectors beyond the current gateway-managed secret-ref vault / ssh-agent / platform-managed defaults.
 2. Add a remote-desktop adapter contract for screen/control sessions.
 3. Route dispatch decisions through the existing permission queue.
 4. Add audit-friendly session summaries for each target.

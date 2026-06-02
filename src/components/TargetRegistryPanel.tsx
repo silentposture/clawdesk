@@ -60,6 +60,7 @@ interface DispatchPreviewState {
 
 interface TargetExecutionState {
   mode: string;
+  credentialSource?: string;
   command: string;
   stdout: string;
   stderr: string;
@@ -252,6 +253,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const [dispatchCommand, setDispatchCommand] = useState("git status");
   const [preview, setPreview] = useState<DispatchPreviewState>();
   const [execution, setExecution] = useState<TargetExecutionState>();
+  const [sshPrivateKeyDraft, setSshPrivateKeyDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
@@ -265,6 +267,10 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     .split(/[\n,]/g)
     .map((item) => item.trim())
     .filter(Boolean).length;
+
+  function clearSensitiveDraftState() {
+    setSshPrivateKeyDraft("");
+  }
 
   useEffect(() => {
     void loadTargets();
@@ -281,6 +287,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       }
       setPreview(undefined);
       setExecution(undefined);
+      clearSensitiveDraftState();
       setMessage("已使用本機預設 target 登錄。");
       setError(undefined);
       return;
@@ -306,6 +313,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       }
       setPreview(undefined);
       setExecution(undefined);
+      clearSensitiveDraftState();
       setMessage("已讀取 gateway target registry。");
     } catch {
       setRegistry(cloneTargetRegistry(initialRegistry));
@@ -317,6 +325,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       }
       setPreview(undefined);
       setExecution(undefined);
+      clearSensitiveDraftState();
       setError("無法讀取 gateway 的 target registry，已切回本機預設清單。");
     } finally {
       setBusy(false);
@@ -328,6 +337,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setDraft(draftFromTarget(target));
     setPreview(undefined);
     setExecution(undefined);
+    clearSensitiveDraftState();
     setMessage(undefined);
     setError(undefined);
   }
@@ -338,6 +348,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setDraft(nextDraft);
     setPreview(undefined);
     setExecution(undefined);
+    clearSensitiveDraftState();
     setMessage(`已建立 ${defaultDisplayNameForKind(kind)} 的草稿。`);
     setError(undefined);
   }
@@ -367,11 +378,13 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       }
       setPreview(undefined);
       setExecution(undefined);
+      clearSensitiveDraftState();
       setMessage(statusMessage);
     } catch {
       setRegistry(cloneTargetRegistry(nextRegistry));
       setPreview(undefined);
       setExecution(undefined);
+      clearSensitiveDraftState();
       setMessage(`${statusMessage}（僅保留本機狀態，gateway 儲存失敗）`);
       setError(undefined);
     } finally {
@@ -440,6 +453,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         setDraft(draftFromTarget(nextTarget));
         setPreview(undefined);
         setExecution(undefined);
+        clearSensitiveDraftState();
         setMessage(payload.reason || result.reason);
       } catch {
         const nextRegistry = upsertTarget(registry, result.target);
@@ -448,6 +462,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         setDraft(draftFromTarget(result.target));
         setPreview(undefined);
         setExecution(undefined);
+        clearSensitiveDraftState();
         setMessage(`${result.reason}（僅保留本機狀態，gateway 連線更新失敗）`);
       } finally {
         setBusy(false);
@@ -461,6 +476,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setDraft(draftFromTarget(result.target));
     setPreview(undefined);
     setExecution(undefined);
+    clearSensitiveDraftState();
     setMessage(result.reason);
   }
 
@@ -468,6 +484,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     const snapshot = createPreviewSnapshot(draftTarget);
     setPreview(snapshot);
     setExecution(undefined);
+    clearSensitiveDraftState();
     setMessage(`已產生 ${snapshot.target.displayName} 的派發預覽。`);
     setError(undefined);
 
@@ -489,6 +506,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     const snapshot = createPreviewSnapshot(draftTarget);
     setPreview(snapshot);
     setExecution(undefined);
+    clearSensitiveDraftState();
 
     if (gatewayBaseUrl) {
       try {
@@ -521,6 +539,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     const snapshot = createPreviewSnapshot(draftTarget);
     setPreview(snapshot);
     setError(undefined);
+    clearSensitiveDraftState();
 
     if (snapshot.request.category !== "execute_safe") {
       setExecution(undefined);
@@ -575,10 +594,69 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setSelectedTargetId(nextTarget.id);
       setDraft(draftFromTarget(nextTarget));
       setExecution(payload.execution);
+      clearSensitiveDraftState();
       setMessage(`${payload.reason ?? "命令已執行"} · ${payload.execution?.mode ?? "unknown"}`);
     } catch {
       setExecution(undefined);
       setError("安全命令執行失敗，請先確認 ssh / PowerShell 可用且 target 已正確配對。");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function issueSshCredentialRef() {
+    if (!gatewayBaseUrl) {
+      setError("需要 gateway 才能發行 SSH credential ref。");
+      return;
+    }
+
+    if (draft.kind !== "ssh-terminal") {
+      setError("只有 SSH target 才能發行 credential ref。");
+      return;
+    }
+
+    const privateKey = sshPrivateKeyDraft.trim();
+    if (!privateKey) {
+      setError("請先貼上 SSH private key。");
+      return;
+    }
+
+    setBusy(true);
+    setError(undefined);
+    try {
+      const response = await fetch(`${gatewayBaseUrl}/targets/credential-ref/issue`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetId: draftTarget.id,
+          kind: "ssh-private-key",
+          label: draft.displayName.trim() || defaultDisplayNameForKind(draft.kind),
+          privateKey,
+        }),
+      });
+      const payload = (await response.json()) as {
+        credentialRef?: string;
+        maskedSecret?: string;
+        targetName?: string;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "SSH credential ref issuance failed");
+      }
+      if (!payload.credentialRef) {
+        throw new Error("SSH credential ref was not returned by the gateway.");
+      }
+
+      setDraft((current) => ({
+        ...current,
+        credentialMode: "secret-ref",
+        credentialRef: payload.credentialRef ?? current.credentialRef,
+      }));
+      setSshPrivateKeyDraft("");
+      setMessage(`已發行 SSH credential ref ${payload.credentialRef}${payload.maskedSecret ? ` · ${payload.maskedSecret}` : ""}`);
+      setError(undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "SSH credential ref issuance failed");
     } finally {
       setBusy(false);
     }
@@ -699,6 +777,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                       note: "",
                     };
                   });
+                  clearSensitiveDraftState();
                 }}
               >
                 {kindOptions.map((option) => (
@@ -773,6 +852,17 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 placeholder="例如 ssh-builder-secret"
               />
             </label>
+            {draft.kind === "ssh-terminal" ? (
+              <label>
+                <span>SSH private key</span>
+                <textarea
+                  value={sshPrivateKeyDraft}
+                  onChange={(event) => setSshPrivateKeyDraft(event.target.value)}
+                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                />
+                <small>只會發行成 gateway-managed credential ref，不會寫入 repo 或 debug bundle。</small>
+              </label>
+            ) : null}
             <label>
               <span>SSH known host key</span>
               <input
@@ -827,6 +917,12 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               </section>
             ) : null}
             <div className="panel-actions">
+              {draft.kind === "ssh-terminal" ? (
+                <button className="secondary-button" type="button" onClick={() => void issueSshCredentialRef()} disabled={busy || !sshPrivateKeyDraft.trim()}>
+                  <Send size={16} />
+                  發行 SSH credential ref
+                </button>
+              ) : null}
               <button className="secondary-button" type="button" onClick={() => void runConnectionAction("pair")} disabled={busy}>
                 Pair
               </button>
@@ -934,6 +1030,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 <span>最近執行結果</span>
                 <strong>{execution.targetName}</strong>
                 <p>{execution.mode} · exit {execution.exitCode ?? "unknown"}</p>
+                <small>credential source：{execution.credentialSource ?? "unknown"}</small>
                 <small>command：{execution.command}</small>
                 {execution.stdout ? (
                   <pre>{execution.stdout}</pre>

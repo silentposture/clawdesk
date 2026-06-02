@@ -43,6 +43,29 @@ describe("target orchestration contract", () => {
     expect(summarizeTargetConnectionProfile(sshTarget)).toContain("control");
   });
 
+  it("summarizes secret-ref credential profiles with a masked ref", () => {
+    const target = createTargetProfile({
+      id: "builder-ssh",
+      displayName: "Builder SSH",
+      kind: "ssh-terminal",
+      endpoint: "ssh://builder.example",
+      paired: true,
+      state: "ready",
+      adapterOverrides: { authenticated: true, hostKeyVerified: true },
+      connectionOverrides: {
+        username: "builder",
+        credentialMode: "secret-ref",
+        credentialRef: "tcr_abcdef1234567890",
+        knownHostFingerprint: "ssh-ed25519 AAAA...builder",
+      },
+    });
+
+    const summary = summarizeTargetConnectionProfile(target);
+    expect(summary).toContain("secret-ref");
+    expect(summary).toContain("ref tcr_ab");
+    expect(summary).toContain("…7890");
+  });
+
   it("keeps remote default targets offline until paired", () => {
     const registry = defaultTargetRegistry();
     const sshTarget = registry.targets.find((target) => target.id === "builder-ssh");
