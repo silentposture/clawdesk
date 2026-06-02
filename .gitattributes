@@ -1,0 +1,2 @@
+docs/legal/*.md text eol=lf
+src/lib/legalConsentManifest.ts text eol=lf
