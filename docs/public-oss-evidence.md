@@ -6,7 +6,7 @@ This snapshot records the current public-release posture of ClawDesk. Refresh it
 
 - Public GitHub repository: `https://github.com/silentposture/clawdesk.git`
 - Current launch-prep branch: `oss-launch-prep`
-- Latest known commit on this branch: `a20d467`
+- Latest known commit on this branch: `9fd65ba`
 - Anonymous GitHub access check: successful `git ls-remote` against the repository returned `HEAD` and `refs/heads/oss-launch-prep`
 
 ## Public-release evidence
