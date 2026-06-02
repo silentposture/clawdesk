@@ -1,6 +1,7 @@
 export type TargetKind = "local-shell" | "ssh-terminal" | "remote-desktop" | "mock";
 export type TargetConnectionState = "offline" | "connecting" | "ready" | "degraded";
 export type TargetDispatchCategory = "observe" | "inspect" | "debug" | "execute_safe" | "request_approval";
+export type TargetConnectionAction = "pair" | "verify_host_key" | "connect" | "disconnect" | "refresh";
 export type ShellCommandSafety = "allowlisted" | "needs-review" | "blocked";
 
 export interface TargetAdapter {
@@ -61,6 +62,13 @@ export interface TargetDispatchRecord {
   command?: string;
   decision: TargetDispatchDecision;
   createdAt: string;
+}
+
+export interface TargetConnectionResult {
+  allowed: boolean;
+  reason: string;
+  action: TargetConnectionAction;
+  target: TargetProfile;
 }
 
 export interface TargetProfileInput {
@@ -201,9 +209,9 @@ export function defaultTargetRegistry(): TargetRegistry {
       displayName: "Builder SSH",
       kind: "ssh-terminal",
       endpoint: "ssh://builder.example.internal",
-      state: "ready",
-      paired: true,
-      adapterOverrides: { authenticated: true, hostKeyVerified: true },
+      state: "offline",
+      paired: false,
+      adapterOverrides: { authenticated: false, hostKeyVerified: false },
       trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
     }),
     createTargetProfile({
@@ -211,9 +219,9 @@ export function defaultTargetRegistry(): TargetRegistry {
       displayName: "Ops Remote Desktop",
       kind: "remote-desktop",
       endpoint: "rdp://ops.example.internal",
-      state: "ready",
-      paired: true,
-      adapterOverrides: { authenticated: true },
+      state: "offline",
+      paired: false,
+      adapterOverrides: { authenticated: false },
       trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
     }),
     createTargetProfile({
@@ -270,6 +278,190 @@ export function listReadyTargets(registry: TargetRegistry): TargetProfile[] {
 
 export function summarizeTargetProfile(target: TargetProfile): string {
   return `${target.displayName} · ${target.kind} · ${target.state}${target.paired ? " · paired" : ""}`;
+}
+
+function cloneTargetProfile(target: TargetProfile): TargetProfile {
+  return {
+    ...target,
+    trustedWorkspaces: [...target.trustedWorkspaces],
+    adapters: target.adapters.map((adapter) => ({ ...adapter })),
+  };
+}
+
+function updatePrimaryAdapter(target: TargetProfile, updater: (adapter: TargetAdapter) => TargetAdapter): TargetProfile {
+  const [primaryAdapter, ...restAdapters] = target.adapters;
+  if (!primaryAdapter) return cloneTargetProfile(target);
+  const updatedPrimary = updater({ ...primaryAdapter });
+  return {
+    ...target,
+    adapters: [updatedPrimary, ...restAdapters.map((adapter) => ({ ...adapter }))],
+  };
+}
+
+export function applyTargetConnectionAction(target: TargetProfile, action: TargetConnectionAction): TargetConnectionResult {
+  const now = new Date().toISOString();
+  const baseTarget = cloneTargetProfile(target);
+  const adapter = baseTarget.adapters[0];
+
+  if (!adapter) {
+    return {
+      allowed: false,
+      reason: "This target does not expose a connection adapter.",
+      action,
+      target: baseTarget,
+    };
+  }
+
+  if (action === "disconnect") {
+    return {
+      allowed: true,
+      reason: "The target was marked offline.",
+      action,
+      target: {
+        ...baseTarget,
+        state: "offline",
+        lastSeenAt: now,
+      },
+    };
+  }
+
+  if (action === "refresh") {
+    return {
+      allowed: true,
+      reason: "The target status was refreshed.",
+      action,
+      target: {
+        ...baseTarget,
+        lastSeenAt: now,
+      },
+    };
+  }
+
+  if (action === "pair") {
+    if (baseTarget.kind === "local-shell" || baseTarget.kind === "mock") {
+      return {
+        allowed: true,
+        reason: "Local targets remain paired and ready.",
+        action,
+        target: {
+          ...baseTarget,
+          paired: true,
+          state: "ready",
+          lastSeenAt: now,
+          adapters: baseTarget.adapters.map((item) => ({
+            ...item,
+            authenticated: true,
+            hostKeyVerified: true,
+          })),
+        },
+      };
+    }
+
+    return {
+      allowed: true,
+      reason: "The target was paired and moved into connecting state.",
+      action,
+      target: updatePrimaryAdapter(
+        {
+          ...baseTarget,
+          paired: true,
+          state: "connecting",
+          lastSeenAt: now,
+        },
+        (current) => ({
+          ...current,
+          authenticated: true,
+          hostKeyVerified: baseTarget.kind === "ssh-terminal" ? false : current.hostKeyVerified,
+        }),
+      ),
+    };
+  }
+
+  if (action === "verify_host_key") {
+    if (baseTarget.kind !== "ssh-terminal") {
+      return {
+        allowed: false,
+        reason: "SSH host-key verification only applies to SSH targets.",
+        action,
+        target: baseTarget,
+      };
+    }
+
+    if (!baseTarget.paired) {
+      return {
+        allowed: false,
+        reason: "Pair the SSH target before verifying its host key.",
+        action,
+        target: baseTarget,
+      };
+    }
+
+    return {
+      allowed: true,
+      reason: "SSH host key verified.",
+      action,
+      target: updatePrimaryAdapter(
+        {
+          ...baseTarget,
+          state: baseTarget.state === "offline" ? "connecting" : baseTarget.state,
+          lastSeenAt: now,
+        },
+        (current) => ({
+          ...current,
+          authenticated: true,
+          hostKeyVerified: true,
+        }),
+      ),
+    };
+  }
+
+  if (action === "connect") {
+    if (baseTarget.kind !== "local-shell" && !baseTarget.paired) {
+      return {
+        allowed: false,
+        reason: "Remote targets must be paired before connecting.",
+        action,
+        target: baseTarget,
+      };
+    }
+
+    if ((baseTarget.kind === "ssh-terminal" || baseTarget.kind === "remote-desktop") && !adapter.authenticated) {
+      return {
+        allowed: false,
+        reason: "Remote targets must be authenticated before connecting.",
+        action,
+        target: baseTarget,
+      };
+    }
+
+    if (baseTarget.kind === "ssh-terminal" && !adapter.hostKeyVerified) {
+      return {
+        allowed: false,
+        reason: "SSH host key verification must be completed before connecting.",
+        action,
+        target: baseTarget,
+      };
+    }
+
+    return {
+      allowed: true,
+      reason: "The target is now marked ready for dispatch.",
+      action,
+      target: {
+        ...baseTarget,
+        paired: true,
+        state: "ready",
+        lastSeenAt: now,
+      },
+    };
+  }
+
+  return {
+    allowed: false,
+    reason: "Unknown connection action.",
+    action,
+    target: baseTarget,
+  };
 }
 
 export function createTargetDispatchRecord(

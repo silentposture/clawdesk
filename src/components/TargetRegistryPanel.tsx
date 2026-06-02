@@ -1,6 +1,7 @@
 import { CircleAlert, CircleCheck, Plus, RefreshCw, Save, Send, Server, X } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
+  applyTargetConnectionAction,
   cloneTargetRegistry,
   createTargetDispatchRecord,
   createTargetProfile,
@@ -10,6 +11,7 @@ import {
   summarizeTargetRegistry,
   upsertTarget,
   type TargetConnectionState,
+  type TargetConnectionAction,
   type TargetDispatchCategory,
   type TargetDispatchDecision,
   type TargetDispatchRecord,
@@ -170,6 +172,13 @@ function dispatchStatusLabel(decision: TargetDispatchDecision): string {
 function dispatchStatusClass(decision: TargetDispatchDecision): string {
   if (!decision.allowed) return "risk-blocked";
   return decision.requiresApproval ? "risk-medium" : "risk-low";
+}
+
+function formatLastSeenAt(value?: string): string {
+  if (!value) return "未記錄";
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) return value;
+  return parsed.toLocaleString();
 }
 
 export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryPanelProps): JSX.Element {
@@ -334,6 +343,62 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     const decision = decideTargetDispatch(target, request);
     const record = createTargetDispatchRecord(target, request, decision, createDispatchId());
     return { target, request, decision, record };
+  }
+
+  async function runConnectionAction(action: TargetConnectionAction) {
+    const currentTarget = draftTarget;
+    const result = applyTargetConnectionAction(currentTarget, action);
+    if (!result.allowed) {
+      setError(result.reason);
+      setMessage(undefined);
+      return;
+    }
+
+    if (gatewayBaseUrl) {
+      setBusy(true);
+      setError(undefined);
+      try {
+        const response = await fetch(`${gatewayBaseUrl}/targets/connection`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ targetId: currentTarget.id, action }),
+        });
+        if (!response.ok) throw new Error("bad response");
+        const payload = (await response.json()) as { allowed?: boolean; reason?: string; target?: TargetProfile; registry?: TargetRegistry; dispatches?: TargetDispatchRecord[] };
+        if (payload.allowed === false) {
+          setError(payload.reason || result.reason);
+          setMessage(undefined);
+          return;
+        }
+        const nextTarget = payload.target ?? result.target;
+        const nextRegistry = payload.registry ?? upsertTarget(registry, nextTarget);
+        setRegistry(cloneTargetRegistry(nextRegistry));
+        if (Array.isArray(payload.dispatches)) {
+          setDispatches(payload.dispatches);
+        }
+        setSelectedTargetId(nextTarget.id);
+        setDraft(draftFromTarget(nextTarget));
+        setPreview(undefined);
+        setMessage(payload.reason || result.reason);
+      } catch {
+        const nextRegistry = upsertTarget(registry, result.target);
+        setRegistry(cloneTargetRegistry(nextRegistry));
+        setSelectedTargetId(result.target.id);
+        setDraft(draftFromTarget(result.target));
+        setPreview(undefined);
+        setMessage(`${result.reason}（僅保留本機狀態，gateway 連線更新失敗）`);
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
+
+    const nextRegistry = upsertTarget(registry, result.target);
+    setRegistry(cloneTargetRegistry(nextRegistry));
+    setSelectedTargetId(result.target.id);
+    setDraft(draftFromTarget(result.target));
+    setPreview(undefined);
+    setMessage(result.reason);
   }
 
   async function previewDispatch() {
@@ -537,6 +602,46 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               />
               <small>目前解析出 {trustedWorkspaceCount} 個 trusted workspace。</small>
             </label>
+            <section className="target-connection-summary">
+              <div>
+                <strong>配對狀態</strong>
+                <span>{draft.paired ? "paired" : "not paired"}</span>
+              </div>
+              <div>
+                <strong>認證</strong>
+                <span>{draft.authenticated ? "authenticated" : "not authenticated"}</span>
+              </div>
+              <div>
+                <strong>SSH host key</strong>
+                <span>{draft.hostKeyVerified ? "verified" : "not verified"}</span>
+              </div>
+              <div>
+                <strong>Last seen</strong>
+                <span>{formatLastSeenAt(selectedTarget?.lastSeenAt)}</span>
+              </div>
+            </section>
+            <div className="panel-actions">
+              <button className="secondary-button" type="button" onClick={() => void runConnectionAction("pair")} disabled={busy}>
+                Pair
+              </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => void runConnectionAction("verify_host_key")}
+                disabled={busy || draft.kind !== "ssh-terminal"}
+              >
+                Verify host key
+              </button>
+              <button className="primary-button" type="button" onClick={() => void runConnectionAction("connect")} disabled={busy}>
+                Connect
+              </button>
+              <button className="secondary-button" type="button" onClick={() => void runConnectionAction("disconnect")} disabled={busy}>
+                Disconnect
+              </button>
+              <button className="secondary-button" type="button" onClick={() => void runConnectionAction("refresh")} disabled={busy}>
+                Refresh
+              </button>
+            </div>
             <div className="panel-actions">
               <button className="primary-button" type="button" onClick={() => void saveDraft(false)} disabled={busy}>
                 <Save size={16} />

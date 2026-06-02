@@ -1364,6 +1364,32 @@ th {
   margin-left: auto;
 }
 
+.target-connection-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  border: 1px solid #d8e1db;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f7faf7;
+}
+
+.target-connection-summary div {
+  display: grid;
+  gap: 2px;
+}
+
+.target-connection-summary strong {
+  color: #42514b;
+  font-size: 12px;
+}
+
+.target-connection-summary span {
+  color: #5f6e67;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
 .quick-setup,
 .legal-consent-panel,
 .security-panel,
@@ -3018,6 +3044,10 @@ th {
   .coding-workspace-layout,
   .subagent-grid,
   .target-registry-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .target-connection-summary {
     grid-template-columns: 1fr;
   }
 

@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
+  applyTargetConnectionAction,
   classifyShellCommand,
   createTargetProfile,
   createTargetRegistry,
   createTargetDispatchRecord,
+  defaultTargetRegistry,
   decideTargetDispatch,
   selectTargetForDispatch,
   summarizeTargetRegistry,
@@ -36,6 +38,20 @@ describe("target orchestration contract", () => {
     expect(remoteDesktop.adapters[0].supportsScreen).toBe(true);
     expect(remoteDesktop.adapters[0].supportsTerminal).toBe(false);
     expect(summarizeTargetProfile(remoteDesktop)).toContain("paired");
+  });
+
+  it("keeps remote default targets offline until paired", () => {
+    const registry = defaultTargetRegistry();
+    const sshTarget = registry.targets.find((target) => target.id === "builder-ssh");
+    const remoteDesktop = registry.targets.find((target) => target.id === "ops-rdp");
+
+    expect(sshTarget?.state).toBe("offline");
+    expect(sshTarget?.paired).toBe(false);
+    expect(sshTarget?.adapters[0]?.authenticated).toBe(false);
+    expect(sshTarget?.adapters[0]?.hostKeyVerified).toBe(false);
+    expect(remoteDesktop?.state).toBe("offline");
+    expect(remoteDesktop?.paired).toBe(false);
+    expect(remoteDesktop?.adapters[0]?.authenticated).toBe(false);
   });
 
   it("classifies shell commands into safe, review, and blocked buckets", () => {
@@ -158,6 +174,47 @@ describe("target orchestration contract", () => {
     expect(record.targetName).toBe(target.displayName);
     expect(record.decision.allowed).toBe(true);
     expect(record.createdAt).toBe("2026-06-03T12:00:00.000Z");
+  });
+
+  it("supports the SSH pairing and host key verification flow before connecting", () => {
+    const target = createTargetProfile({
+      id: "builder-ssh",
+      displayName: "Builder SSH",
+      kind: "ssh-terminal",
+      endpoint: "ssh://builder.example",
+      paired: false,
+      state: "offline",
+    });
+
+    const pairResult = applyTargetConnectionAction(target, "pair");
+    expect(pairResult.allowed).toBe(true);
+    expect(pairResult.target.paired).toBe(true);
+    expect(pairResult.target.state).toBe("connecting");
+    expect(pairResult.target.adapters[0].authenticated).toBe(true);
+    expect(pairResult.target.adapters[0].hostKeyVerified).toBe(false);
+
+    const hostKeyResult = applyTargetConnectionAction(pairResult.target, "verify_host_key");
+    expect(hostKeyResult.allowed).toBe(true);
+    expect(hostKeyResult.target.adapters[0].hostKeyVerified).toBe(true);
+
+    const connectResult = applyTargetConnectionAction(hostKeyResult.target, "connect");
+    expect(connectResult.allowed).toBe(true);
+    expect(connectResult.target.state).toBe("ready");
+  });
+
+  it("blocks SSH host-key verification before pairing", () => {
+    const target = createTargetProfile({
+      id: "builder-ssh",
+      displayName: "Builder SSH",
+      kind: "ssh-terminal",
+      endpoint: "ssh://builder.example",
+      paired: false,
+      state: "offline",
+    });
+
+    const result = applyTargetConnectionAction(target, "verify_host_key");
+    expect(result.allowed).toBe(false);
+    expect(result.reason).toContain("Pair the SSH target");
   });
 
   it("blocks execute_safe on remote desktop targets without a terminal adapter", () => {

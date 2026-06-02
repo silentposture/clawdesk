@@ -293,15 +293,15 @@ const defaultTargetRegistry = {
       id: "builder-ssh",
       displayName: "Builder SSH",
       kind: "ssh-terminal",
-      state: "ready",
-      paired: true,
+      state: "offline",
+      paired: false,
       trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
       adapters: [
         {
           kind: "ssh-terminal",
           endpoint: "ssh://builder.example.internal",
-          authenticated: true,
-          hostKeyVerified: true,
+          authenticated: false,
+          hostKeyVerified: false,
           supportsTerminal: true,
           supportsScreen: false,
           supportsClipboard: false,
@@ -313,14 +313,14 @@ const defaultTargetRegistry = {
       id: "ops-rdp",
       displayName: "Ops Remote Desktop",
       kind: "remote-desktop",
-      state: "ready",
-      paired: true,
+      state: "offline",
+      paired: false,
       trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
       adapters: [
         {
           kind: "remote-desktop",
           endpoint: "rdp://ops.example.internal",
-          authenticated: true,
+          authenticated: false,
           hostKeyVerified: false,
           supportsTerminal: false,
           supportsScreen: true,
@@ -2119,6 +2119,170 @@ function normalizeTargetRegistryState(registry) {
     cloned.defaultTargetId = cloned.targets[0]?.id;
   }
   return cloned;
+}
+
+function cloneTargetProfileState(target) {
+  return JSON.parse(JSON.stringify(target));
+}
+
+function updatePrimaryTargetAdapterState(target, updater) {
+  const cloned = cloneTargetProfileState(target);
+  const [primaryAdapter, ...restAdapters] = Array.isArray(cloned.adapters) ? cloned.adapters : [];
+  if (!primaryAdapter) return cloned;
+  const updatedPrimary = updater({ ...primaryAdapter });
+  return {
+    ...cloned,
+    adapters: [updatedPrimary, ...restAdapters.map((adapter) => ({ ...adapter }))],
+  };
+}
+
+function applyTargetConnectionActionState(target, action) {
+  const now = nowIso();
+  const baseTarget = cloneTargetProfileState(target);
+  const adapter = Array.isArray(baseTarget.adapters) ? baseTarget.adapters[0] : undefined;
+
+  if (!adapter) {
+    return { allowed: false, reason: "This target does not expose a connection adapter.", target: baseTarget };
+  }
+
+  if (action === "disconnect") {
+    return {
+      allowed: true,
+      reason: "The target was marked offline.",
+      target: {
+        ...baseTarget,
+        state: "offline",
+        lastSeenAt: now,
+      },
+    };
+  }
+
+  if (action === "refresh") {
+    return {
+      allowed: true,
+      reason: "The target status was refreshed.",
+      target: {
+        ...baseTarget,
+        lastSeenAt: now,
+      },
+    };
+  }
+
+  if (action === "pair") {
+    if (baseTarget.kind === "local-shell" || baseTarget.kind === "mock") {
+      return {
+        allowed: true,
+        reason: "Local targets remain paired and ready.",
+        target: {
+          ...baseTarget,
+          paired: true,
+          state: "ready",
+          lastSeenAt: now,
+          adapters: baseTarget.adapters.map((item) => ({
+            ...item,
+            authenticated: true,
+            hostKeyVerified: true,
+          })),
+        },
+      };
+    }
+
+    return {
+      allowed: true,
+      reason: "The target was paired and moved into connecting state.",
+      target: updatePrimaryTargetAdapterState(
+        {
+          ...baseTarget,
+          paired: true,
+          state: "connecting",
+          lastSeenAt: now,
+        },
+        (current) => ({
+          ...current,
+          authenticated: true,
+          hostKeyVerified: baseTarget.kind === "ssh-terminal" ? false : current.hostKeyVerified,
+        }),
+      ),
+    };
+  }
+
+  if (action === "verify_host_key") {
+    if (baseTarget.kind !== "ssh-terminal") {
+      return {
+        allowed: false,
+        reason: "SSH host-key verification only applies to SSH targets.",
+        target: baseTarget,
+      };
+    }
+
+    if (!baseTarget.paired) {
+      return {
+        allowed: false,
+        reason: "Pair the SSH target before verifying its host key.",
+        target: baseTarget,
+      };
+    }
+
+    return {
+      allowed: true,
+      reason: "SSH host key verified.",
+      target: updatePrimaryTargetAdapterState(
+        {
+          ...baseTarget,
+          state: baseTarget.state === "offline" ? "connecting" : baseTarget.state,
+          lastSeenAt: now,
+        },
+        (current) => ({
+          ...current,
+          authenticated: true,
+          hostKeyVerified: true,
+        }),
+      ),
+    };
+  }
+
+  if (action === "connect") {
+    if (baseTarget.kind !== "local-shell" && !baseTarget.paired) {
+      return {
+        allowed: false,
+        reason: "Remote targets must be paired before connecting.",
+        target: baseTarget,
+      };
+    }
+
+    if ((baseTarget.kind === "ssh-terminal" || baseTarget.kind === "remote-desktop") && !adapter.authenticated) {
+      return {
+        allowed: false,
+        reason: "Remote targets must be authenticated before connecting.",
+        target: baseTarget,
+      };
+    }
+
+    if (baseTarget.kind === "ssh-terminal" && !adapter.hostKeyVerified) {
+      return {
+        allowed: false,
+        reason: "SSH host key verification must be completed before connecting.",
+        target: baseTarget,
+      };
+    }
+
+    return {
+      allowed: true,
+      reason: "The target is now marked ready for dispatch.",
+      target: {
+        ...baseTarget,
+        paired: true,
+        state: "ready",
+        lastSeenAt: now,
+      },
+    };
+  }
+
+  return {
+    allowed: false,
+    reason: "Unknown connection action.",
+    target: baseTarget,
+  };
 }
 
 function audit(action, details = {}) {
@@ -6465,6 +6629,49 @@ const server = http.createServer(async (req, res) => {
         record,
         dispatches: targetDispatches.slice(0, 200),
         registry: cloneTargetRegistryState(targetRegistry),
+      });
+    } catch {
+      json(res, 400, { error: "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/targets/connection") {
+    try {
+      const body = await readJson(req);
+      const targetId = typeof body.targetId === "string" ? body.targetId.trim() : "";
+      const action = typeof body.action === "string" ? body.action.trim() : "";
+      if (!targetId || !action) {
+        json(res, 400, { error: "targetId and action are required" });
+        return;
+      }
+      const target = targetRegistry.targets.find((entry) => entry.id === targetId);
+      if (!target) {
+        json(res, 404, { error: "target not found" });
+        return;
+      }
+      const result = applyTargetConnectionActionState(target, action);
+      if (result.allowed && result.target) {
+        targetRegistry = {
+          ...targetRegistry,
+          targets: targetRegistry.targets.map((entry) => (entry.id === targetId ? result.target : entry)),
+        };
+        audit("targets.connection", {
+          targetId,
+          action,
+          state: result.target.state,
+          allowed: result.allowed,
+        });
+        scheduleStateSave();
+      } else {
+        audit("targets.connection.rejected", { targetId, action, allowed: result.allowed, reason: result.reason });
+      }
+      json(res, 200, {
+        allowed: result.allowed,
+        reason: result.reason,
+        target: result.target,
+        registry: cloneTargetRegistryState(targetRegistry),
+        dispatches: targetDispatches.slice(0, 200),
       });
     } catch {
       json(res, 400, { error: "Invalid JSON" });
