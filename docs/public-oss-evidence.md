@@ -6,7 +6,7 @@ This snapshot records the current public-release posture of ClawDesk. Refresh it
 
 - Public GitHub repository: `https://github.com/silentposture/clawdesk.git`
 - Current launch-prep branch: `oss-launch-prep`
-- Latest known commit on this branch: `9fd65ba`
+- Latest known commit on this branch: `d04feaf`
 - Anonymous GitHub access check: successful `git ls-remote` against the repository returned `HEAD` and `refs/heads/oss-launch-prep`
 
 ## Public-release evidence
@@ -34,4 +34,4 @@ This snapshot records the current public-release posture of ClawDesk. Refresh it
 
 ## Submission note
 
-Use this file as the factual backing for any OpenAI support or promo request. Do not claim production readiness, invite eligibility, or promotional approval that has not been granted.
+Use this file as the factual backing for the Codex for Open Source application packet or any other OpenAI support request. Do not claim production readiness, selection, approval, or guaranteed funding that has not been granted.

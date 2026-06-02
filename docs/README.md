@@ -15,11 +15,11 @@ This directory contains the public OSS documentation for ClawDesk.
 - [Public OSS evidence snapshot](public-oss-evidence.md)
 - [Maintenance cadence](maintenance.md)
 - [Roadmap issues](roadmap-issues.md)
-- [Codex OSS application draft](codex-for-oss-application.md)
-- [ChatGPT Pro trial request pack](OPENAI_TRIAL_REQUEST.md)
+- [Codex for Open Source application pack](codex-for-oss-application.md)
 
 ## Legacy docs
 
+- [Archived OpenAI request notes](OPENAI_TRIAL_REQUEST.md)
 - The `download/`, `legal/`, `payments/`, `support/`, and `archive/` folders contain older planning material.
 - Those files are preserved for provenance only and must not override the current README, LICENSE, SECURITY, CONTRIBUTING, ROADMAP, and CHANGELOG policy.
 - If a legacy doc conflicts with the current OSS launch docs, the current docs win.

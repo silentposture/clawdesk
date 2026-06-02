@@ -1,59 +1,71 @@
-# Codex for OSS Application Draft
+# Codex for Open Source Application Pack
+
+This is the canonical application packet for OpenAI's Codex for Open Source program.
+It is based only on official OpenAI sources:
+
+- [Announcement / program page](https://developers.openai.com/community/codex-for-oss)
+- [Application form](https://openai.com/form/codex-for-oss/)
+- [Program terms](https://developers.openai.com/codex/codex-for-oss-terms)
 
 ## Summary
 
-ClawDesk is an experimental, AI-agent-first desktop orchestration layer focused on local-first control, explicit approval, redacted diagnostics, and transparent release tooling.
+ClawDesk is an experimental AI-agent-first desktop orchestration layer focused on local-first control, explicit approval, redacted diagnostics, and transparent release tooling. It is public, Apache-2.0, and actively maintained, but it is not a production-ready remote desktop product.
 
-## Maintainer role
+## What the program includes
 
-- Keep the project honest about what is implemented versus planned.
-- Keep the public launch documentation current.
-- Enforce redaction and release hygiene.
-- Review high-impact changes before they merge.
+Selected maintainers may receive:
 
-## Ecosystem importance
+- Six months of ChatGPT Pro, which includes Codex
+- Conditional access to Codex Security
+- API credits for coding, maintainer automation, release workflows, and core open source work
 
-- ClawDesk is a good fit for agent-assisted desktop workflows that need local policy control.
-- The project is relevant to guarded development, local LLM workflows, and explicit human approval.
-- The repo can help demonstrate practical agent orchestration patterns without claiming to be a full remote desktop clone.
+## Who should apply
 
-## Usage signals
+- Core maintainers or primary maintainers of active public OSS projects
+- Maintainership with real repo control or permissions
+- Projects with meaningful usage, ecosystem importance, or clear maintenance activity
+- Projects that may not fit the criteria perfectly, but can explain why they matter to the ecosystem
 
-- Maintainers need help with code review, docs, issue triage, release prep, and redaction.
-- The project benefits from workflow automation that remains human-approved.
-- The repo needs repeatable checks for secret exposure, private endpoints, and release integrity.
+## What OpenAI says it looks for
 
-## Planned workflows
+- Repository usage or clear ecosystem importance
+- Evidence of active maintenance
+- Role and permissions that match the submission
+- Accurate and complete information about the repo and maintainer
+- Rolling review with no guarantee of selection, funding, or access
 
-- Drafting and reviewing PRs.
-- Explaining architecture and security boundaries.
-- Triage of bug reports and roadmap issues.
-- Redaction checks for release bundles.
-- Release note and changelog drafting.
+## Application fields
 
-## API credits use
+- Email linked to a ChatGPT account
+- Public GitHub username
+- Public GitHub repository URL
+- Primary maintainer or core maintainer role
+- Why the repository qualifies, max 500 characters
+- Interest in Codex Security and/or API credits
+- OpenAI Organization ID, if requested by the form
+- How API credits will be used, max 500 characters
+- Anything else we should know, max 500 characters
 
-- Use credits for maintainer-assist tasks that reduce review time.
-- Prioritize code review, issue summarization, and doc generation.
-- Avoid using credits to bypass approval or safety gates.
+## Suggested drafts
 
-## Why Codex Security matters
+### Why this repository qualifies
 
-- Public OSS launch prep must not leak secrets, private hosts, or personal data.
-- Agent-assisted workflows should be reviewable and policy-gated.
-- Security review should catch prompt/tool injection, command abuse, and unsafe release artifacts.
+ClawDesk is a public Apache-2.0 OSS project focused on AI-agent-first desktop orchestration, local-first control, human-approved automation, redacted diagnostics, and transparent release hygiene. The repo has current public OSS entry points, a documented security model, public-release checks, issue and PR templates, and a clear maintenance cadence. It is relevant to maintainers and the wider ecosystem because it documents and prototypes guarded agentic desktop workflows.
 
-## 500-character draft
+### How API credits will be used
 
-ClawDesk is an experimental AI-agent-first desktop orchestration layer for guarded remote development workflows. It focuses on local-first control, explicit pairing, human-approved automation, and redacted debug bundles. Codex would help the maintainers keep the public OSS launch honest by accelerating code review, docs, issue triage, release checks, and security redaction while preserving human approval for impactful changes.
+Use API credits for maintainer review, issue triage, release prep, documentation updates, redaction checks, and lightweight automation around public OSS hygiene. Keep all impactful changes human-reviewed and avoid using credits to bypass approval or safety gates.
 
-## Readiness checklist
+### Anything else we should know
 
-- [x] README, LICENSE, SECURITY, CONTRIBUTING, CODE_OF_CONDUCT, ROADMAP, and CHANGELOG are current.
-- [x] The public-release audit is current.
-- [x] The blocker list is empty or explicitly accepted.
-- [x] The release CI is lightweight and auditable.
-- [x] No private data remains in public-facing files.
+ClawDesk is intentionally local-first, human-approved, and audit-friendly. It does not claim production readiness, unrestricted remote control, or unsupported adoption metrics. Public evidence is tracked in `docs/public-oss-evidence.md`, and release hygiene is maintained through `docs/maintenance.md`.
+
+## Submission checklist
+
+- Refresh `docs/public-oss-evidence.md` before submitting.
+- Verify the GitHub profile and repository are public.
+- Do not claim selection, production readiness, or unverified adoption.
+- Submit the form manually through the official OpenAI page.
 
 ## Evidence snapshot
 
