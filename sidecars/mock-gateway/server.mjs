@@ -33,6 +33,9 @@ const backendLicenseState = {
 };
 const backendIdentityVerificationCodes = new Map();
 const backendIdentityPasswordResetCodes = new Map();
+const targetCredentialVaultDurable = true;
+const targetCredentialVaultFilePath = path.join(homeDir, ".clawdesk", "ssh-credential-vault.json");
+const targetCredentialVaultKeyPath = path.join(homeDir, ".clawdesk", "ssh-credential-vault.key");
 const openClawUpstreamSnapshot = {
   repository: "https://github.com/openclaw/openclaw",
   commit: "278e3eabf29dd8ff31d633907525bda35ec6474a",
@@ -395,8 +398,10 @@ const BLOCKED_COMMAND_PATTERNS = [
 ];
 let targetRegistry = cloneTargetRegistryState(defaultTargetRegistry);
 let targetDispatches = [];
-// Ephemeral in-memory SSH credential vault; never persisted to snapshotState().
+// SSH credential vault uses an in-memory index plus a local encrypted file for durable storage.
 const targetCredentialVault = new Map();
+let targetCredentialVaultSaveTimer;
+let targetCredentialVaultKey;
 const openClawRuntimeSurfaces = [
   {
     id: "provider-auth",
@@ -2289,7 +2294,146 @@ function targetCredentialRefStorageKey(credentialRef) {
   return sanitizeTargetStorageKey(credentialRef);
 }
 
-function issueTargetCredentialRefState({ targetId, label, kind, privateKey }) {
+function normalizeTargetCredentialVaultEntry(raw) {
+  if (!raw || typeof raw !== "object") return undefined;
+  const credentialRef = typeof raw.credentialRef === "string" ? raw.credentialRef.trim() : "";
+  if (!credentialRef) return undefined;
+
+  return {
+    credentialRef,
+    targetId: typeof raw.targetId === "string" ? raw.targetId.trim() : "",
+    label: typeof raw.label === "string" && raw.label.trim() ? raw.label.trim() : undefined,
+    kind: typeof raw.kind === "string" && raw.kind.trim() ? raw.kind.trim() : "ssh-private-key",
+    cipherText: typeof raw.cipherText === "string" && raw.cipherText.trim() ? raw.cipherText.trim() : undefined,
+    privateKey: !targetCredentialVaultDurable && typeof raw.privateKey === "string" && raw.privateKey.trim() ? raw.privateKey : undefined,
+    createdAt: typeof raw.createdAt === "string" && raw.createdAt.trim() ? raw.createdAt.trim() : nowIso(),
+    status: typeof raw.status === "string" && raw.status.trim() ? raw.status.trim() : "active",
+  };
+}
+
+function snapshotTargetCredentialVaultState() {
+  return {
+    version: 1,
+    savedAt: nowIso(),
+    entries: [...targetCredentialVault.values()].map((entry) => ({
+      credentialRef: entry.credentialRef,
+      targetId: entry.targetId,
+      label: entry.label,
+      kind: entry.kind,
+      cipherText: entry.cipherText,
+      createdAt: entry.createdAt,
+      status: entry.status,
+    })),
+  };
+}
+
+function targetCredentialVaultPath() {
+  return targetCredentialVaultFilePath;
+}
+
+async function encryptTargetCredentialSecret(plaintext) {
+  const normalizedPlaintext = typeof plaintext === "string" ? plaintext : "";
+  if (!normalizedPlaintext) {
+    throw new Error("SSH credential material is required.");
+  }
+
+  const key = await ensureTargetCredentialVaultKeyState();
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const ciphertext = Buffer.concat([cipher.update(normalizedPlaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, ciphertext]).toString("base64");
+}
+
+async function decryptTargetCredentialSecret(cipherText) {
+  const normalizedCipherText = typeof cipherText === "string" ? cipherText.trim() : "";
+  if (!normalizedCipherText) {
+    throw new Error("SSH credential ref does not contain encrypted key material.");
+  }
+
+  const key = await ensureTargetCredentialVaultKeyState();
+  const payload = Buffer.from(normalizedCipherText, "base64");
+  if (payload.length < 28) {
+    throw new Error("SSH credential ref payload is too short.");
+  }
+  const iv = payload.subarray(0, 12);
+  const tag = payload.subarray(12, 28);
+  const encrypted = payload.subarray(28);
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
+  const privateKey = Buffer.concat([decipher.update(encrypted), decipher.final()]).toString("utf8");
+  if (!privateKey.trim()) {
+    throw new Error("SSH credential decryption produced no output.");
+  }
+  return privateKey;
+}
+
+async function ensureTargetCredentialVaultKeyState() {
+  if (targetCredentialVaultKey instanceof Buffer && targetCredentialVaultKey.length === 32) {
+    return targetCredentialVaultKey;
+  }
+
+  try {
+    const raw = await fs.readFile(targetCredentialVaultKeyPath);
+    if (Buffer.isBuffer(raw) && raw.length === 32) {
+      targetCredentialVaultKey = Buffer.from(raw);
+      return targetCredentialVaultKey;
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      throw error;
+    }
+  }
+
+  targetCredentialVaultKey = crypto.randomBytes(32);
+  await fs.mkdir(path.dirname(targetCredentialVaultKeyPath), { recursive: true });
+  await fs.writeFile(targetCredentialVaultKeyPath, targetCredentialVaultKey);
+  try {
+    await fs.chmod(targetCredentialVaultKeyPath, 0o600);
+  } catch {
+    // Best effort on Windows.
+  }
+  return targetCredentialVaultKey;
+}
+
+async function persistTargetCredentialVaultState() {
+  if (!targetCredentialVaultDurable) return;
+  await fs.mkdir(path.dirname(targetCredentialVaultPath()), { recursive: true });
+  await fs.writeFile(targetCredentialVaultPath(), `${JSON.stringify(snapshotTargetCredentialVaultState(), null, 2)}\n`, "utf8");
+}
+
+function scheduleTargetCredentialVaultSave() {
+  if (!targetCredentialVaultDurable) return;
+  clearTimeout(targetCredentialVaultSaveTimer);
+  targetCredentialVaultSaveTimer = setTimeout(() => {
+    void persistTargetCredentialVaultState().catch((error) => {
+      console.error(`ClawDesk mock SSH credential vault save failed: ${error.message}`);
+    });
+  }, 25);
+}
+
+async function loadTargetCredentialVaultState() {
+  if (!targetCredentialVaultDurable) return;
+  await ensureTargetCredentialVaultKeyState();
+  try {
+    const raw = await fs.readFile(targetCredentialVaultPath(), "utf8");
+    const state = JSON.parse(raw);
+    if (!state || !Array.isArray(state.entries)) return;
+    targetCredentialVault.clear();
+    for (const entry of state.entries) {
+      const normalized = normalizeTargetCredentialVaultEntry(entry);
+      if (normalized) {
+        targetCredentialVault.set(targetCredentialRefStorageKey(normalized.credentialRef), normalized);
+      }
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") {
+      console.error(`ClawDesk mock SSH credential vault load failed: ${error.message}`);
+    }
+  }
+}
+
+async function issueTargetCredentialRefState({ targetId, label, kind, privateKey }) {
   const normalizedPrivateKey = typeof privateKey === "string" ? privateKey.trim() : "";
   if (!targetId || !normalizedPrivateKey) {
     throw new Error("targetId and privateKey are required to issue a credential ref.");
@@ -2301,23 +2445,31 @@ function issueTargetCredentialRefState({ targetId, label, kind, privateKey }) {
     .digest("hex")
     .slice(0, 24)}`;
 
-  targetCredentialVault.set(targetCredentialRefStorageKey(credentialRef), {
+  const entry = {
     credentialRef,
     targetId,
     label: typeof label === "string" && label.trim() ? label.trim() : undefined,
     kind: kind ?? "ssh-private-key",
-    privateKey: normalizedPrivateKey,
     createdAt: nowIso(),
     status: "active",
-  });
+  };
+
+  if (targetCredentialVaultDurable) {
+    entry.cipherText = await encryptTargetCredentialSecret(normalizedPrivateKey);
+  } else {
+    entry.privateKey = normalizedPrivateKey;
+  }
+
+  targetCredentialVault.set(targetCredentialRefStorageKey(credentialRef), entry);
+  await persistTargetCredentialVaultState();
 
   return {
     credentialRef,
     targetId,
-    label: typeof label === "string" && label.trim() ? label.trim() : undefined,
-    kind: kind ?? "ssh-private-key",
-    createdAt: nowIso(),
-    status: "active",
+    label: entry.label,
+    kind: entry.kind,
+    createdAt: entry.createdAt,
+    status: entry.status,
     maskedSecret: maskSecret(normalizedPrivateKey),
   };
 }
@@ -2376,9 +2528,14 @@ async function materializeTargetCredentialFile(target) {
     throw new Error("SSH credential ref is not registered in the gateway vault.");
   }
 
+  const privateKey = entry.privateKey ?? (entry.cipherText ? await decryptTargetCredentialSecret(entry.cipherText) : "");
+  if (!privateKey.trim()) {
+    throw new Error("SSH credential ref does not contain decryptable key material.");
+  }
+
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "clawdesk-ssh-key-"));
   const privateKeyPath = path.join(tempDir, "id_ed25519");
-  await fs.writeFile(privateKeyPath, `${entry.privateKey.trim().replace(/\r\n/g, "\n").replace(/\r/g, "\n")}\n`, "utf8");
+  await fs.writeFile(privateKeyPath, `${privateKey.trim().replace(/\r\n/g, "\n").replace(/\r/g, "\n")}\n`, "utf8");
   try {
     await fs.chmod(privateKeyPath, 0o600);
   } catch {
@@ -2441,6 +2598,11 @@ function spawnAndCollect(command, args, options = {}) {
         exitCode: typeof exitCode === "number" ? exitCode : null,
       });
     });
+
+    if (typeof options.input === "string" && options.input.length > 0) {
+      child.stdin?.write(options.input);
+    }
+    child.stdin?.end();
   });
 }
 
@@ -7246,7 +7408,7 @@ const server = http.createServer(async (req, res) => {
         json(res, 400, { error: "Unsupported credential kind" });
         return;
       }
-      const payload = issueTargetCredentialRefState({ targetId, label, kind, privateKey });
+      const payload = await issueTargetCredentialRefState({ targetId, label, kind, privateKey });
       audit("targets.credential-ref.issue", {
         targetId,
         targetName: target.displayName,
@@ -7682,7 +7844,7 @@ server.on("upgrade", (req, socket) => {
   socket.on("error", () => clients.delete(socket));
 });
 
-await loadPersistedState();
+await Promise.all([loadPersistedState(), loadTargetCredentialVaultState()]);
 
 server.listen(port, host, () => {
   console.log(`ClawDesk mock gateway 已啟動：http://${host}:${port}`);
@@ -7692,7 +7854,7 @@ function shutdown() {
   for (const socket of clients) {
     socket.destroy();
   }
-  void savePersistedState().finally(() => {
+  void Promise.all([savePersistedState(), persistTargetCredentialVaultState()]).finally(() => {
     server.close(() => process.exit(0));
   });
 }
