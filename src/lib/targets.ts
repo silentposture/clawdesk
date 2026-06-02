@@ -2,6 +2,8 @@ export type TargetKind = "local-shell" | "ssh-terminal" | "remote-desktop" | "mo
 export type TargetConnectionState = "offline" | "connecting" | "ready" | "degraded";
 export type TargetDispatchCategory = "observe" | "inspect" | "debug" | "execute_safe" | "request_approval";
 export type TargetConnectionAction = "pair" | "verify_host_key" | "connect" | "disconnect" | "refresh";
+export type TargetCredentialMode = "none" | "secret-ref" | "ssh-agent" | "platform-managed";
+export type TargetSessionMode = "observe" | "control";
 export type ShellCommandSafety = "allowlisted" | "needs-review" | "blocked";
 
 export interface TargetAdapter {
@@ -15,6 +17,16 @@ export interface TargetAdapter {
   supportsFileTransfer: boolean;
 }
 
+export interface TargetConnectionProfile {
+  username?: string;
+  port?: number;
+  credentialMode: TargetCredentialMode;
+  credentialRef?: string;
+  knownHostFingerprint?: string;
+  sessionMode: TargetSessionMode;
+  note?: string;
+}
+
 export interface TargetProfile {
   id: string;
   displayName: string;
@@ -23,6 +35,7 @@ export interface TargetProfile {
   paired: boolean;
   trustedWorkspaces: string[];
   adapters: TargetAdapter[];
+  connection: TargetConnectionProfile;
   lastSeenAt?: string;
 }
 
@@ -79,6 +92,7 @@ export interface TargetProfileInput {
   state?: TargetConnectionState;
   paired?: boolean;
   trustedWorkspaces?: string[];
+  connectionOverrides?: Partial<TargetConnectionProfile>;
   lastSeenAt?: string;
   adapterOverrides?: Partial<TargetAdapter>;
 }
@@ -113,6 +127,29 @@ const BLOCKED_COMMAND_PATTERNS = [
   /\bcurl\b.*\|\s*sh/i,
   /\bwget\b.*\|\s*sh/i,
 ] as const;
+
+export function defaultTargetConnection(kind: TargetKind): TargetConnectionProfile {
+  if (kind === "local-shell" || kind === "mock") {
+    return {
+      credentialMode: "platform-managed",
+      sessionMode: "control",
+    };
+  }
+
+  if (kind === "ssh-terminal") {
+    return {
+      credentialMode: "none",
+      sessionMode: "control",
+      port: 22,
+    };
+  }
+
+  return {
+    credentialMode: "none",
+    sessionMode: "observe",
+    port: 3389,
+  };
+}
 
 export function defaultTargetAdapter(kind: TargetKind, endpoint: string): TargetAdapter {
   if (kind === "local-shell") {
@@ -173,6 +210,10 @@ export function createTargetProfile(input: TargetProfileInput): TargetProfile {
     kind: input.kind,
     endpoint: input.endpoint,
   };
+  const connection = {
+    ...defaultTargetConnection(input.kind),
+    ...input.connectionOverrides,
+  };
 
   return {
     id: input.id,
@@ -182,6 +223,7 @@ export function createTargetProfile(input: TargetProfileInput): TargetProfile {
     paired: input.paired ?? input.kind === "local-shell",
     trustedWorkspaces: input.trustedWorkspaces ?? [],
     adapters: [adapter],
+    connection,
     lastSeenAt: input.lastSeenAt,
   };
 }
@@ -243,6 +285,7 @@ export function cloneTargetRegistry(registry: TargetRegistry): TargetRegistry {
       ...target,
       trustedWorkspaces: [...target.trustedWorkspaces],
       adapters: target.adapters.map((adapter) => ({ ...adapter })),
+      connection: { ...target.connection },
     })),
   };
 }
@@ -280,11 +323,50 @@ export function summarizeTargetProfile(target: TargetProfile): string {
   return `${target.displayName} · ${target.kind} · ${target.state}${target.paired ? " · paired" : ""}`;
 }
 
+export function summarizeTargetConnectionProfile(target: TargetProfile): string {
+  const parts: string[] = [target.connection.credentialMode, target.connection.sessionMode];
+  if (target.connection.username) parts.push(target.connection.username);
+  if (target.connection.port) parts.push(`port ${target.connection.port}`);
+  return parts.filter(Boolean).join(" · ") || "未設定連線資訊";
+}
+
+export function targetConnectionReadinessIssues(target: TargetProfile): string[] {
+  const issues: string[] = [];
+  const connection = target.connection;
+
+  if (target.kind === "local-shell" || target.kind === "mock") {
+    return issues;
+  }
+
+  if (!target.paired) {
+    issues.push("Target must be paired before it can connect.");
+  }
+
+  if (!connection.username) {
+    issues.push("Connection username is required.");
+  }
+
+  if (connection.credentialMode === "none") {
+    issues.push("Select a credential mode before connecting.");
+  }
+
+  if (connection.credentialMode === "secret-ref" && !connection.credentialRef) {
+    issues.push("Secret-ref mode requires a credential reference.");
+  }
+
+  if (target.kind === "ssh-terminal" && !connection.knownHostFingerprint) {
+    issues.push("SSH host fingerprint is required for host-key verification.");
+  }
+
+  return issues;
+}
+
 function cloneTargetProfile(target: TargetProfile): TargetProfile {
   return {
     ...target,
     trustedWorkspaces: [...target.trustedWorkspaces],
     adapters: target.adapters.map((adapter) => ({ ...adapter })),
+    connection: { ...target.connection },
   };
 }
 
@@ -396,6 +478,15 @@ export function applyTargetConnectionAction(target: TargetProfile, action: Targe
       };
     }
 
+    if (!baseTarget.connection.knownHostFingerprint) {
+      return {
+        allowed: false,
+        reason: "Record the SSH host fingerprint before verification.",
+        action,
+        target: baseTarget,
+      };
+    }
+
     return {
       allowed: true,
       reason: "SSH host key verified.",
@@ -420,6 +511,16 @@ export function applyTargetConnectionAction(target: TargetProfile, action: Targe
       return {
         allowed: false,
         reason: "Remote targets must be paired before connecting.",
+        action,
+        target: baseTarget,
+      };
+    }
+
+    const readinessIssues = targetConnectionReadinessIssues(baseTarget);
+    if (readinessIssues.length > 0) {
+      return {
+        allowed: false,
+        reason: readinessIssues[0],
         action,
         target: baseTarget,
       };

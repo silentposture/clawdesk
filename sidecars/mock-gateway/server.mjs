@@ -276,6 +276,9 @@ const defaultTargetRegistry = {
       state: "ready",
       paired: true,
       trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
+      connection: {
+        ...defaultTargetConnectionState("local-shell"),
+      },
       adapters: [
         {
           kind: "local-shell",
@@ -296,6 +299,9 @@ const defaultTargetRegistry = {
       state: "offline",
       paired: false,
       trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
+      connection: {
+        ...defaultTargetConnectionState("ssh-terminal"),
+      },
       adapters: [
         {
           kind: "ssh-terminal",
@@ -316,6 +322,9 @@ const defaultTargetRegistry = {
       state: "offline",
       paired: false,
       trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
+      connection: {
+        ...defaultTargetConnectionState("remote-desktop"),
+      },
       adapters: [
         {
           kind: "remote-desktop",
@@ -336,6 +345,9 @@ const defaultTargetRegistry = {
       state: "degraded",
       paired: true,
       trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
+      connection: {
+        ...defaultTargetConnectionState("mock"),
+      },
       adapters: [
         {
           kind: "mock",
@@ -2104,17 +2116,70 @@ function cloneTargetRegistryState(registry = defaultTargetRegistry) {
   return JSON.parse(JSON.stringify(registry));
 }
 
+function defaultTargetConnectionState(kind) {
+  if (kind === "local-shell" || kind === "mock") {
+    return {
+      credentialMode: "platform-managed",
+      sessionMode: "control",
+    };
+  }
+
+  if (kind === "ssh-terminal") {
+    return {
+      credentialMode: "none",
+      sessionMode: "control",
+      port: 22,
+    };
+  }
+
+  return {
+    credentialMode: "none",
+    sessionMode: "observe",
+    port: 3389,
+  };
+}
+
+function normalizeTargetConnectionState(kind, connection = {}) {
+  const source = connection && typeof connection === "object" ? connection : {};
+  const defaults = defaultTargetConnectionState(kind);
+  const portValue = typeof source.port === "number" ? source.port : Number.parseInt(source.port, 10);
+  return {
+    ...defaults,
+    ...source,
+    port: Number.isFinite(portValue) ? portValue : defaults.port,
+    credentialMode:
+      typeof source.credentialMode === "string" && source.credentialMode ? source.credentialMode : defaults.credentialMode,
+    sessionMode:
+      typeof source.sessionMode === "string" && source.sessionMode ? source.sessionMode : defaults.sessionMode,
+    username: typeof source.username === "string" && source.username.trim() ? source.username.trim() : undefined,
+    credentialRef: typeof source.credentialRef === "string" && source.credentialRef.trim() ? source.credentialRef.trim() : undefined,
+    knownHostFingerprint:
+      typeof source.knownHostFingerprint === "string" && source.knownHostFingerprint.trim()
+        ? source.knownHostFingerprint.trim()
+        : undefined,
+    note: typeof source.note === "string" && source.note.trim() ? source.note.trim() : undefined,
+  };
+}
+
+function normalizeTargetProfileState(target) {
+  const cloned = cloneTargetProfileState(target);
+  const kind = typeof cloned.kind === "string" ? cloned.kind : "local-shell";
+  return {
+    ...cloned,
+    kind,
+    trustedWorkspaces: Array.isArray(cloned.trustedWorkspaces) ? [...cloned.trustedWorkspaces] : [],
+    adapters: Array.isArray(cloned.adapters) ? cloned.adapters.map((adapter) => ({ ...adapter })) : [],
+    connection: normalizeTargetConnectionState(kind, cloned.connection),
+  };
+}
+
 function normalizeTargetRegistryState(registry) {
   if (!registry || !Array.isArray(registry.targets) || registry.targets.length === 0) {
     return cloneTargetRegistryState(defaultTargetRegistry);
   }
 
   const cloned = cloneTargetRegistryState(registry);
-  cloned.targets = cloned.targets.map((target) => ({
-    ...target,
-    trustedWorkspaces: Array.isArray(target.trustedWorkspaces) ? [...target.trustedWorkspaces] : [],
-    adapters: Array.isArray(target.adapters) ? target.adapters.map((adapter) => ({ ...adapter })) : [],
-  }));
+  cloned.targets = cloned.targets.map((target) => normalizeTargetProfileState(target));
   if (!cloned.defaultTargetId) {
     cloned.defaultTargetId = cloned.targets[0]?.id;
   }
@@ -2123,6 +2188,37 @@ function normalizeTargetRegistryState(registry) {
 
 function cloneTargetProfileState(target) {
   return JSON.parse(JSON.stringify(target));
+}
+
+function targetConnectionReadinessIssuesState(target) {
+  const issues = [];
+  const connection = target.connection ?? defaultTargetConnectionState(target.kind);
+
+  if (target.kind === "local-shell" || target.kind === "mock") {
+    return issues;
+  }
+
+  if (!target.paired) {
+    issues.push("Target must be paired before it can connect.");
+  }
+
+  if (!connection.username) {
+    issues.push("Connection username is required.");
+  }
+
+  if (connection.credentialMode === "none") {
+    issues.push("Select a credential mode before connecting.");
+  }
+
+  if (connection.credentialMode === "secret-ref" && !connection.credentialRef) {
+    issues.push("Secret-ref mode requires a credential reference.");
+  }
+
+  if (target.kind === "ssh-terminal" && !connection.knownHostFingerprint) {
+    issues.push("SSH host fingerprint is required for host-key verification.");
+  }
+
+  return issues;
 }
 
 function updatePrimaryTargetAdapterState(target, updater) {
@@ -2138,7 +2234,7 @@ function updatePrimaryTargetAdapterState(target, updater) {
 
 function applyTargetConnectionActionState(target, action) {
   const now = nowIso();
-  const baseTarget = cloneTargetProfileState(target);
+  const baseTarget = normalizeTargetProfileState(target);
   const adapter = Array.isArray(baseTarget.adapters) ? baseTarget.adapters[0] : undefined;
 
   if (!adapter) {
@@ -2223,6 +2319,14 @@ function applyTargetConnectionActionState(target, action) {
       };
     }
 
+    if (!baseTarget.connection.knownHostFingerprint) {
+      return {
+        allowed: false,
+        reason: "Record the SSH host fingerprint before verification.",
+        target: baseTarget,
+      };
+    }
+
     return {
       allowed: true,
       reason: "SSH host key verified.",
@@ -2246,6 +2350,15 @@ function applyTargetConnectionActionState(target, action) {
       return {
         allowed: false,
         reason: "Remote targets must be paired before connecting.",
+        target: baseTarget,
+      };
+    }
+
+    const readinessIssues = targetConnectionReadinessIssuesState(baseTarget);
+    if (readinessIssues.length > 0) {
+      return {
+        allowed: false,
+        reason: readinessIssues[0],
         target: baseTarget,
       };
     }

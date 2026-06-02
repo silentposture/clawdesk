@@ -8,8 +8,10 @@ import {
   defaultTargetRegistry,
   decideTargetDispatch,
   selectTargetForDispatch,
+  summarizeTargetConnectionProfile,
   summarizeTargetRegistry,
   summarizeTargetProfile,
+  targetConnectionReadinessIssues,
 } from "./targets";
 
 describe("target orchestration contract", () => {
@@ -38,6 +40,7 @@ describe("target orchestration contract", () => {
     expect(remoteDesktop.adapters[0].supportsScreen).toBe(true);
     expect(remoteDesktop.adapters[0].supportsTerminal).toBe(false);
     expect(summarizeTargetProfile(remoteDesktop)).toContain("paired");
+    expect(summarizeTargetConnectionProfile(sshTarget)).toContain("control");
   });
 
   it("keeps remote default targets offline until paired", () => {
@@ -49,9 +52,12 @@ describe("target orchestration contract", () => {
     expect(sshTarget?.paired).toBe(false);
     expect(sshTarget?.adapters[0]?.authenticated).toBe(false);
     expect(sshTarget?.adapters[0]?.hostKeyVerified).toBe(false);
+    expect(sshTarget?.connection.credentialMode).toBe("none");
+    expect(sshTarget?.connection.port).toBe(22);
     expect(remoteDesktop?.state).toBe("offline");
     expect(remoteDesktop?.paired).toBe(false);
     expect(remoteDesktop?.adapters[0]?.authenticated).toBe(false);
+    expect(remoteDesktop?.connection.sessionMode).toBe("observe");
   });
 
   it("classifies shell commands into safe, review, and blocked buckets", () => {
@@ -184,6 +190,12 @@ describe("target orchestration contract", () => {
       endpoint: "ssh://builder.example",
       paired: false,
       state: "offline",
+      connectionOverrides: {
+        username: "builder",
+        credentialMode: "secret-ref",
+        credentialRef: "ssh-builder-secret",
+        knownHostFingerprint: "ssh-ed25519 AAAA...builder",
+      },
     });
 
     const pairResult = applyTargetConnectionAction(target, "pair");
@@ -196,6 +208,7 @@ describe("target orchestration contract", () => {
     const hostKeyResult = applyTargetConnectionAction(pairResult.target, "verify_host_key");
     expect(hostKeyResult.allowed).toBe(true);
     expect(hostKeyResult.target.adapters[0].hostKeyVerified).toBe(true);
+    expect(hostKeyResult.target.connection.knownHostFingerprint).toContain("ssh-ed25519");
 
     const connectResult = applyTargetConnectionAction(hostKeyResult.target, "connect");
     expect(connectResult.allowed).toBe(true);
@@ -210,11 +223,39 @@ describe("target orchestration contract", () => {
       endpoint: "ssh://builder.example",
       paired: false,
       state: "offline",
+      connectionOverrides: {
+        username: "builder",
+        credentialMode: "secret-ref",
+        credentialRef: "ssh-builder-secret",
+      },
     });
 
     const result = applyTargetConnectionAction(target, "verify_host_key");
     expect(result.allowed).toBe(false);
     expect(result.reason).toContain("Pair the SSH target");
+  });
+
+  it("blocks SSH connect until credential metadata is present", () => {
+    const target = createTargetProfile({
+      id: "builder-ssh",
+      displayName: "Builder SSH",
+      kind: "ssh-terminal",
+      endpoint: "ssh://builder.example",
+      paired: true,
+      state: "connecting",
+      adapterOverrides: { authenticated: true, hostKeyVerified: true },
+      connectionOverrides: {
+        credentialMode: "none",
+        username: "",
+      },
+    });
+
+    const issues = targetConnectionReadinessIssues(target);
+    expect(issues.length).toBeGreaterThan(0);
+    expect(issues[0]).toContain("username");
+
+    const connectResult = applyTargetConnectionAction(target, "connect");
+    expect(connectResult.allowed).toBe(false);
   });
 
   it("blocks execute_safe on remote desktop targets without a terminal adapter", () => {

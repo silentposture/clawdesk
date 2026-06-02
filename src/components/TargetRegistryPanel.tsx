@@ -6,17 +6,22 @@ import {
   createTargetDispatchRecord,
   createTargetProfile,
   defaultTargetRegistry,
+  defaultTargetConnection,
   decideTargetDispatch,
   summarizeTargetProfile,
+  summarizeTargetConnectionProfile,
   summarizeTargetRegistry,
+  targetConnectionReadinessIssues,
   upsertTarget,
   type TargetConnectionState,
   type TargetConnectionAction,
+  type TargetCredentialMode,
   type TargetDispatchCategory,
   type TargetDispatchDecision,
   type TargetDispatchRecord,
   type TargetDispatchRequest,
   type TargetKind,
+  type TargetSessionMode,
   type TargetProfile,
   type TargetRegistry,
 } from "../lib/targets";
@@ -36,6 +41,13 @@ interface TargetDraftState {
   paired: boolean;
   authenticated: boolean;
   hostKeyVerified: boolean;
+  username: string;
+  port: string;
+  credentialMode: TargetCredentialMode;
+  credentialRef: string;
+  knownHostFingerprint: string;
+  sessionMode: TargetSessionMode;
+  note: string;
   trustedWorkspaces: string;
 }
 
@@ -113,6 +125,7 @@ function defaultTrustedWorkspaceList(): string {
 
 function createDraft(kind: TargetKind = "ssh-terminal"): TargetDraftState {
   const localLike = kind === "local-shell" || kind === "mock";
+  const connection = defaultTargetConnection(kind);
   return {
     id: createDraftId(kind),
     displayName: defaultDisplayNameForKind(kind),
@@ -122,12 +135,20 @@ function createDraft(kind: TargetKind = "ssh-terminal"): TargetDraftState {
     paired: localLike,
     authenticated: localLike,
     hostKeyVerified: localLike,
+    username: "",
+    port: connection.port?.toString() ?? "",
+    credentialMode: connection.credentialMode,
+    credentialRef: "",
+    knownHostFingerprint: "",
+    sessionMode: connection.sessionMode,
+    note: "",
     trustedWorkspaces: defaultTrustedWorkspaceList(),
   };
 }
 
 function draftFromTarget(target: TargetProfile): TargetDraftState {
   const adapter = target.adapters[0];
+  const connection = target.connection ?? defaultTargetConnection(target.kind);
   return {
     id: target.id,
     displayName: target.displayName,
@@ -137,6 +158,13 @@ function draftFromTarget(target: TargetProfile): TargetDraftState {
     paired: target.paired,
     authenticated: adapter?.authenticated ?? false,
     hostKeyVerified: adapter?.hostKeyVerified ?? false,
+    username: connection.username ?? "",
+    port: connection.port?.toString() ?? "",
+    credentialMode: connection.credentialMode,
+    credentialRef: connection.credentialRef ?? "",
+    knownHostFingerprint: connection.knownHostFingerprint ?? "",
+    sessionMode: connection.sessionMode,
+    note: connection.note ?? "",
     trustedWorkspaces: target.trustedWorkspaces.join("\n"),
   };
 }
@@ -149,6 +177,8 @@ function parseTrustedWorkspaces(value: string): string[] {
 }
 
 function buildTargetFromDraft(draft: TargetDraftState): TargetProfile {
+  const portValue = draft.port.trim() ? Number.parseInt(draft.port, 10) : undefined;
+  const parsedPort = Number.isFinite(portValue) ? portValue : undefined;
   return createTargetProfile({
     id: draft.id.trim() || createDraftId(draft.kind),
     displayName: draft.displayName.trim() || defaultDisplayNameForKind(draft.kind),
@@ -157,6 +187,15 @@ function buildTargetFromDraft(draft: TargetDraftState): TargetProfile {
     state: draft.state,
     paired: draft.paired,
     trustedWorkspaces: parseTrustedWorkspaces(draft.trustedWorkspaces),
+    connectionOverrides: {
+      username: draft.username.trim() || undefined,
+      port: parsedPort,
+      credentialMode: draft.credentialMode,
+      credentialRef: draft.credentialRef.trim() || undefined,
+      knownHostFingerprint: draft.knownHostFingerprint.trim() || undefined,
+      sessionMode: draft.sessionMode,
+      note: draft.note.trim() || undefined,
+    },
     adapterOverrides: {
       authenticated: draft.authenticated,
       hostKeyVerified: draft.hostKeyVerified,
@@ -208,6 +247,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const selectedTarget = useMemo(() => registry.targets.find((target) => target.id === selectedTargetId), [registry, selectedTargetId]);
   const draftTarget = useMemo(() => buildTargetFromDraft(draft), [draft]);
   const draftIsSaved = Boolean(selectedTarget && selectedTarget.id === draftTarget.id);
+  const connectionIssues = targetConnectionReadinessIssues(draftTarget);
   const trustedWorkspaceCount = draft.trustedWorkspaces
     .split(/[\n,]/g)
     .map((item) => item.trim())
@@ -516,6 +556,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   <button key={target.id} type="button" className={active ? "active" : ""} onClick={() => selectExistingTarget(target)}>
                     <strong>{target.displayName}</strong>
                     <small>{summarizeTargetProfile(target)}</small>
+                    <small>{summarizeTargetConnectionProfile(target)}</small>
                     <small>{target.adapters[0]?.endpoint ?? "未設定 endpoint"}</small>
                     <small>
                       {target.id}
@@ -546,6 +587,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 value={draft.kind}
                 onChange={(event) => {
                   const nextKind = event.target.value as TargetKind;
+                  const nextConnection = defaultTargetConnection(nextKind);
                   setDraft((current) => {
                     const localLike = nextKind === "local-shell" || nextKind === "mock";
                     return {
@@ -556,6 +598,13 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                       paired: localLike ? true : current.paired,
                       authenticated: localLike ? true : current.authenticated,
                       hostKeyVerified: localLike ? true : nextKind === "ssh-terminal" ? current.hostKeyVerified : false,
+                      username: "",
+                      port: nextConnection.port?.toString() ?? current.port,
+                      credentialMode: nextConnection.credentialMode,
+                      credentialRef: "",
+                      knownHostFingerprint: "",
+                      sessionMode: nextConnection.sessionMode,
+                      note: "",
                     };
                   });
                 }}
@@ -602,6 +651,59 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               />
               <small>目前解析出 {trustedWorkspaceCount} 個 trusted workspace。</small>
             </label>
+            <label>
+              <span>Connection username</span>
+              <input value={draft.username} onChange={(event) => setDraft((current) => ({ ...current, username: event.target.value }))} placeholder="SSH / RDP 登入帳號" />
+            </label>
+            <label>
+              <span>Connection port</span>
+              <input
+                inputMode="numeric"
+                value={draft.port}
+                onChange={(event) => setDraft((current) => ({ ...current, port: event.target.value }))}
+                placeholder={draft.kind === "ssh-terminal" ? "22" : draft.kind === "remote-desktop" ? "3389" : "可留空"}
+              />
+            </label>
+            <label>
+              <span>Credential mode</span>
+              <select value={draft.credentialMode} onChange={(event) => setDraft((current) => ({ ...current, credentialMode: event.target.value as TargetCredentialMode }))}>
+                <option value="none">none</option>
+                <option value="secret-ref">secret-ref</option>
+                <option value="ssh-agent">ssh-agent</option>
+                <option value="platform-managed">platform-managed</option>
+              </select>
+            </label>
+            <label>
+              <span>Credential ref</span>
+              <input
+                value={draft.credentialRef}
+                onChange={(event) => setDraft((current) => ({ ...current, credentialRef: event.target.value }))}
+                placeholder="例如 ssh-builder-secret"
+              />
+            </label>
+            <label>
+              <span>SSH known host fingerprint</span>
+              <input
+                value={draft.knownHostFingerprint}
+                onChange={(event) => setDraft((current) => ({ ...current, knownHostFingerprint: event.target.value }))}
+                placeholder="ssh-ed25519 AAAA..."
+              />
+            </label>
+            <label>
+              <span>Session mode</span>
+              <select value={draft.sessionMode} onChange={(event) => setDraft((current) => ({ ...current, sessionMode: event.target.value as TargetSessionMode }))}>
+                <option value="observe">observe</option>
+                <option value="control">control</option>
+              </select>
+            </label>
+            <label>
+              <span>Connection note</span>
+              <textarea
+                value={draft.note}
+                onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))}
+                placeholder="例如：僅允許登入後執行 git status / collect-debug-bundle"
+              />
+            </label>
             <section className="target-connection-summary">
               <div>
                 <strong>配對狀態</strong>
@@ -619,7 +721,18 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 <strong>Last seen</strong>
                 <span>{formatLastSeenAt(selectedTarget?.lastSeenAt)}</span>
               </div>
+              <div>
+                <strong>Connection profile</strong>
+                <span>{summarizeTargetConnectionProfile(draftTarget)}</span>
+              </div>
             </section>
+            {connectionIssues.length > 0 ? (
+              <section className="target-connection-issues">
+                {connectionIssues.map((issue) => (
+                  <div key={issue}>{issue}</div>
+                ))}
+              </section>
+            ) : null}
             <div className="panel-actions">
               <button className="secondary-button" type="button" onClick={() => void runConnectionAction("pair")} disabled={busy}>
                 Pair
@@ -632,7 +745,12 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               >
                 Verify host key
               </button>
-              <button className="primary-button" type="button" onClick={() => void runConnectionAction("connect")} disabled={busy}>
+              <button
+                className="primary-button"
+                type="button"
+                onClick={() => void runConnectionAction("connect")}
+                disabled={busy || (draft.kind !== "local-shell" && connectionIssues.length > 0)}
+              >
                 Connect
               </button>
               <button className="secondary-button" type="button" onClick={() => void runConnectionAction("disconnect")} disabled={busy}>
