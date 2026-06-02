@@ -32,7 +32,10 @@ Official references:
 
 ## Submission-ready request
 
-Use this text if OpenAI support or an in-product feedback flow is available:
+Use this text if OpenAI support or an in-product feedback flow is available.
+
+Official support entry point:
+- Open the chat bubble at the bottom-right of [help.openai.com](https://help.openai.com/).
 
 > Hello OpenAI team,
 >
