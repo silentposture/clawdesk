@@ -224,6 +224,10 @@ const gatewayAdapterMethods = [
   { name: "memory", method: "POST", path: "/memory/items", status: "mock", purpose: "建立與查詢本機記憶；後續接 durable store/vector store。" },
   { name: "workflow", method: "GET", path: "/workflows", status: "mock", purpose: "讀取 workflow templates 與 schedule 狀態。" },
   { name: "diagnostics", method: "POST", path: "/diagnostics/create-report", status: "ready", purpose: "產生 redacted support bundle 與 release/build/signature 狀態。" },
+  { name: "targetsRegistry", method: "GET", path: "/targets", status: "mock", purpose: "讀取多電腦 target registry 與 dispatch log。" },
+  { name: "targetsSave", method: "POST", path: "/targets", status: "mock", purpose: "儲存 target registry 與 default target 選擇。" },
+  { name: "targetsDispatchPreview", method: "POST", path: "/targets/dispatch-preview", status: "mock", purpose: "建立 target dispatch 預覽與 audit record。" },
+  { name: "targetsDispatch", method: "POST", path: "/targets/dispatch", status: "mock", purpose: "儲存 target dispatch record 與 audit trail。" },
 ];
 const defaultContextBudget = {
   messageCount: 42,
@@ -262,6 +266,93 @@ let safetyQueue = [
   { id: "queue-shell-preview", action: "shell.command.plan", riskLevel: "high", status: "waiting-for-user", note: "變更前需要人工審批" },
   { id: "queue-external-draft", action: "gmail.draft.create", riskLevel: "high", status: "draft-only", note: "外部訊息預設只可草稿" },
 ];
+const defaultTargetRegistry = {
+  defaultTargetId: "local-builder",
+  targets: [
+    {
+      id: "local-builder",
+      displayName: "Local Builder",
+      kind: "local-shell",
+      state: "ready",
+      paired: true,
+      trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
+      adapters: [
+        {
+          kind: "local-shell",
+          endpoint: "local://workspace",
+          authenticated: true,
+          hostKeyVerified: true,
+          supportsTerminal: true,
+          supportsScreen: false,
+          supportsClipboard: true,
+          supportsFileTransfer: true,
+        },
+      ],
+    },
+    {
+      id: "builder-ssh",
+      displayName: "Builder SSH",
+      kind: "ssh-terminal",
+      state: "ready",
+      paired: true,
+      trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
+      adapters: [
+        {
+          kind: "ssh-terminal",
+          endpoint: "ssh://builder.example.internal",
+          authenticated: true,
+          hostKeyVerified: true,
+          supportsTerminal: true,
+          supportsScreen: false,
+          supportsClipboard: false,
+          supportsFileTransfer: true,
+        },
+      ],
+    },
+    {
+      id: "ops-rdp",
+      displayName: "Ops Remote Desktop",
+      kind: "remote-desktop",
+      state: "ready",
+      paired: true,
+      trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
+      adapters: [
+        {
+          kind: "remote-desktop",
+          endpoint: "rdp://ops.example.internal",
+          authenticated: true,
+          hostKeyVerified: false,
+          supportsTerminal: false,
+          supportsScreen: true,
+          supportsClipboard: false,
+          supportsFileTransfer: false,
+        },
+      ],
+    },
+    {
+      id: "lab-mock",
+      displayName: "Lab Mock Target",
+      kind: "mock",
+      state: "degraded",
+      paired: true,
+      trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
+      adapters: [
+        {
+          kind: "mock",
+          endpoint: "mock://lab",
+          authenticated: true,
+          hostKeyVerified: true,
+          supportsTerminal: true,
+          supportsScreen: true,
+          supportsClipboard: true,
+          supportsFileTransfer: true,
+        },
+      ],
+    },
+  ],
+};
+let targetRegistry = cloneTargetRegistryState(defaultTargetRegistry);
+let targetDispatches = [];
 const openClawRuntimeSurfaces = [
   {
     id: "provider-auth",
@@ -2009,6 +2100,27 @@ let auditEvents = [];
 let stateSaveTimer;
 const DEFAULT_CHATGPT_MODEL = "gpt-5.4";
 
+function cloneTargetRegistryState(registry = defaultTargetRegistry) {
+  return JSON.parse(JSON.stringify(registry));
+}
+
+function normalizeTargetRegistryState(registry) {
+  if (!registry || !Array.isArray(registry.targets) || registry.targets.length === 0) {
+    return cloneTargetRegistryState(defaultTargetRegistry);
+  }
+
+  const cloned = cloneTargetRegistryState(registry);
+  cloned.targets = cloned.targets.map((target) => ({
+    ...target,
+    trustedWorkspaces: Array.isArray(target.trustedWorkspaces) ? [...target.trustedWorkspaces] : [],
+    adapters: Array.isArray(target.adapters) ? target.adapters.map((adapter) => ({ ...adapter })) : [],
+  }));
+  if (!cloned.defaultTargetId) {
+    cloned.defaultTargetId = cloned.targets[0]?.id;
+  }
+  return cloned;
+}
+
 function audit(action, details = {}) {
   const event = {
     id: crypto.randomUUID(),
@@ -2034,7 +2146,7 @@ function redactAuditDetails(details) {
 
 function snapshotState() {
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     savedAt: nowIso(),
     providerSession,
     visionProbeResults,
@@ -2057,6 +2169,8 @@ function snapshotState() {
     diagnosticReports,
     auditEvents,
     safetyQueue,
+    targetRegistry,
+    targetDispatches,
   };
 }
 
@@ -2066,7 +2180,7 @@ function mergeArray(target, source) {
 }
 
 function applyPersistedState(state) {
-  if (!state || state.schemaVersion !== 1) return;
+  if (!state || (state.schemaVersion !== 1 && state.schemaVersion !== 2)) return;
   if (state.providerSession) providerSession = state.providerSession;
   if (state.visionProbeResults && typeof state.visionProbeResults === "object") visionProbeResults = state.visionProbeResults;
   mergeArray(connectedAccounts, state.connectedAccounts);
@@ -2088,6 +2202,8 @@ function applyPersistedState(state) {
   mergeArray(diagnosticReports, state.diagnosticReports);
   if (Array.isArray(state.auditEvents)) auditEvents = state.auditEvents.slice(0, 500);
   if (Array.isArray(state.safetyQueue)) safetyQueue = state.safetyQueue;
+  if (state.targetRegistry) targetRegistry = normalizeTargetRegistryState(state.targetRegistry);
+  if (Array.isArray(state.targetDispatches)) targetDispatches = state.targetDispatches.slice(0, 200);
   ensureSeedIdentityUsers();
 }
 
@@ -6267,6 +6383,89 @@ const server = http.createServer(async (req, res) => {
       audit("safety.queue.decision", { id, action: item.action, decision, riskLevel: item.riskLevel });
       scheduleStateSave();
       json(res, 200, { item, queue: safetyQueue });
+    } catch {
+      json(res, 400, { error: "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/targets") {
+    json(res, 200, {
+      registry: cloneTargetRegistryState(targetRegistry),
+      dispatches: targetDispatches.slice(0, 200),
+      summary: {
+        totalTargets: targetRegistry.targets.length,
+        readyTargets: targetRegistry.targets.filter((target) => target.state === "ready").length,
+        pairedTargets: targetRegistry.targets.filter((target) => target.paired).length,
+        defaultTargetId: targetRegistry.defaultTargetId,
+      },
+    });
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/targets") {
+    try {
+      const body = await readJson(req);
+      const nextRegistry = normalizeTargetRegistryState(body.registry);
+      targetRegistry = nextRegistry;
+      audit("targets.registry.save", {
+        totalTargets: nextRegistry.targets.length,
+        defaultTargetId: nextRegistry.defaultTargetId,
+      });
+      scheduleStateSave();
+      json(res, 200, {
+        registry: cloneTargetRegistryState(targetRegistry),
+        dispatches: targetDispatches.slice(0, 200),
+      });
+    } catch {
+      json(res, 400, { error: "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/targets/dispatch-preview") {
+    try {
+      const body = await readJson(req);
+      const preview = body.preview ?? body;
+      if (!preview || typeof preview !== "object") {
+        json(res, 400, { error: "preview is required" });
+        return;
+      }
+      audit("targets.dispatch.preview", {
+        targetId: preview.target?.id,
+        category: preview.request?.category,
+        allowed: preview.decision?.allowed,
+        requiresApproval: preview.decision?.requiresApproval,
+      });
+      json(res, 200, { preview });
+    } catch {
+      json(res, 400, { error: "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/targets/dispatch") {
+    try {
+      const body = await readJson(req);
+      const record = body.record ?? body;
+      if (!record || typeof record !== "object" || typeof record.id !== "string" || typeof record.targetId !== "string") {
+        json(res, 400, { error: "record is required" });
+        return;
+      }
+      targetDispatches.unshift(record);
+      targetDispatches = targetDispatches.slice(0, 200);
+      audit("targets.dispatch.record", {
+        recordId: record.id,
+        targetId: record.targetId,
+        category: record.category,
+        allowed: record.decision?.allowed,
+      });
+      scheduleStateSave();
+      json(res, 200, {
+        record,
+        dispatches: targetDispatches.slice(0, 200),
+        registry: cloneTargetRegistryState(targetRegistry),
+      });
     } catch {
       json(res, 400, { error: "Invalid JSON" });
     }

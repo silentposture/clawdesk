@@ -18,7 +18,7 @@ ClawDesk is an AI desktop workbench, control plane, and contract layer. This pag
 | Safety and approval | Requires legal consent, shows permission prompts, and keeps high-risk actions behind human review. | Implemented | [`src/components/LegalConsentModal.tsx`](../src/components/LegalConsentModal.tsx), [`src/components/PermissionModal.tsx`](../src/components/PermissionModal.tsx), [`src/components/SecurityPanel.tsx`](../src/components/SecurityPanel.tsx), [`src/components/SafetyQueuePanel.tsx`](../src/components/SafetyQueuePanel.tsx) |
 | Diagnostics and debug bundles | Produces redacted diagnostics, release-review artifacts, and support bundle surfaces. | Implemented / Experimental | [`src/components/DiagnosticsPanel.tsx`](../src/components/DiagnosticsPanel.tsx), [`docs/release-process.md`](release-process.md), [`scripts/check-public-release.sh`](../scripts/check-public-release.sh), [`scripts/preflight.mjs`](../scripts/preflight.mjs) |
 | Workflows, channels, MCP, memory | Exposes workflow, channel, MCP, and memory surfaces for agent-assisted desktop work. | Experimental / Mock | [`src/components/WorkflowPanel.tsx`](../src/components/WorkflowPanel.tsx), [`src/components/ChannelsPanel.tsx`](../src/components/ChannelsPanel.tsx), [`src/components/McpPanel.tsx`](../src/components/McpPanel.tsx), [`src/components/MemoryPanel.tsx`](../src/components/MemoryPanel.tsx), [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs) |
-| Multi-target orchestration | Defines the contract for safe dispatch to SSH terminals and remote desktop sessions under one control plane. | Planned / Experimental | [`src/lib/targets.ts`](../src/lib/targets.ts), [`docs/target-orchestration.md`](target-orchestration.md) |
+| Multi-target orchestration | Provides a target registry UI, safe dispatch preview, and mock gateway storage for SSH terminals, remote desktop sessions, and local targets under one control plane. | Implemented / Experimental | [`src/lib/targets.ts`](../src/lib/targets.ts), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx), [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`docs/target-orchestration.md`](target-orchestration.md) |
 | Compatibility and roadmap tracking | Describes parity gaps, planned milestones, and release gating. | Implemented / Planned | [`src/lib/compatFeatureParity.ts`](../src/lib/compatFeatureParity.ts), [`ROADMAP.md`](../ROADMAP.md), [`docs/roadmap-issues.md`](roadmap-issues.md) |
 
 ## Typical user flow
@@ -35,7 +35,7 @@ ClawDesk is an AI desktop workbench, control plane, and contract layer. This pag
 
 - The local gateway is still the default contract surface.
 - Agent runtime, workflows, memory, channels, and some provider integrations are still mock-backed or contract-first.
-- SSH terminal and remote desktop target adapters are contract-only for now.
+- SSH terminal and remote desktop target adapters remain contract-only for execution; the registry UI and preview flow are now present.
 - Transport hardening, pairing/auth hardening, and production gateway replacement remain planned.
 - The app must not be described as a full remote desktop clone or a production-ready remote control product.
 

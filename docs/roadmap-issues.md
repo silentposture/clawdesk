@@ -35,7 +35,7 @@ These are issue drafts for the public OSS roadmap.
 ## Multi-target Orchestration
 
 - Label: `feature`, `roadmap`
-- Goal: unify safe dispatch across SSH terminals, remote desktop sessions, and local targets under a single control plane.
+- Goal: unify safe dispatch across SSH terminals, remote desktop sessions, and local targets under a single control plane, with registry UI and auditable dispatch records.
 
 ## Security Hardening
 

@@ -19,6 +19,7 @@ import {
   ShieldCheck,
   MessagesSquare,
   PlugZap,
+  Server,
   Send,
   Settings2,
   Sidebar,
@@ -55,6 +56,7 @@ import { ProviderPanel } from "./components/ProviderPanel";
 import { QuickSetupModal } from "./components/QuickSetupModal";
 import { SafetyQueuePanel } from "./components/SafetyQueuePanel";
 import { SecurityPanel } from "./components/SecurityPanel";
+import { TargetRegistryPanel } from "./components/TargetRegistryPanel";
 import { Tooltip } from "./components/Tooltip";
 import { WorkflowPanel } from "./components/WorkflowPanel";
 import { WorkspacePanel } from "./components/WorkspacePanel";
@@ -150,6 +152,7 @@ export default function App(): JSX.Element {
   const [codingWorkspacePanelOpen, setCodingWorkspacePanelOpen] = useState(false);
   const [contextBudgetPanelOpen, setContextBudgetPanelOpen] = useState(false);
   const [safetyQueuePanelOpen, setSafetyQueuePanelOpen] = useState(false);
+  const [targetRegistryPanelOpen, setTargetRegistryPanelOpen] = useState(false);
   const [identityPanelOpen, setIdentityPanelOpen] = useState(false);
   const [legalConsent, setLegalConsent] = useState<LegalConsentRecord | undefined>(() => readLegalConsentRecord());
   const [quickSetupOpen, setQuickSetupOpen] = useState(() => shouldShowQuickSetup());
@@ -632,6 +635,18 @@ export default function App(): JSX.Element {
             <PlugZap size={16} />
             <span>{t("app.button.mcp")}</span>
           </button>
+          <Tooltip text={t("app.section.targets.desc")}>
+            <button
+              className="session-button"
+              type="button"
+              data-testid="session-button-targets"
+              onClick={() => setTargetRegistryPanelOpen(true)}
+              disabled={!identitySession.authenticated}
+            >
+              <Server size={16} />
+              <span>{t("app.button.targets")}</span>
+            </button>
+          </Tooltip>
           <Tooltip text={t("app.section.license.desc")}>
             <button
               className="session-button"
@@ -940,6 +955,9 @@ export default function App(): JSX.Element {
       <PermissionModal request={pendingPermission} onDecision={decidePermission} />
       {accountsPanelOpen ? <AccountsPanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setAccountsPanelOpen(false)} /> : null}
       {mcpPanelOpen ? <McpPanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setMcpPanelOpen(false)} /> : null}
+      {targetRegistryPanelOpen ? (
+        <TargetRegistryPanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setTargetRegistryPanelOpen(false)} />
+      ) : null}
       {channelsPanelOpen ? <ChannelsPanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setChannelsPanelOpen(false)} /> : null}
       {workflowPanelOpen ? <WorkflowPanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setWorkflowPanelOpen(false)} /> : null}
       {mediaPanelOpen ? <MediaPanel gatewayBaseUrl={gateway?.baseUrl} onClose={() => setMediaPanelOpen(false)} /> : null}

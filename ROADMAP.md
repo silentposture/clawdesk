@@ -24,7 +24,7 @@ This roadmap tracks the AI desktop workbench, control plane, and contract layer 
 | Transport | Experimental | Local-first transport with no public exposure by default. |
 | Agent Bridge | Experimental | Observe, inspect, debug, execute_safe, request_approval. |
 | Debug Bundle | Experimental | Redacted bundles for issues and release review. |
-| Multi-target Orchestration | Planned | Unified dispatch across SSH and remote-desktop targets with per-target policy and audit. |
+| Multi-target Orchestration | Implemented / Experimental | Target registry UI + safe dispatch preview exist; SSH and remote-desktop execution remains contract-only. |
 | Security Hardening | Planned | Secrets, redaction, dependency review, and approval gates. |
 | CI/Release | Implemented / Planned | Lightweight public-release CI plus stronger release gates. |
 | v0.1.0-alpha | Planned | Tag after blockers are resolved and evidence is complete. |

@@ -30,6 +30,14 @@ export interface TargetRegistry {
   defaultTargetId?: string;
 }
 
+export interface TargetRegistrySummary {
+  totalTargets: number;
+  readyTargets: number;
+  pairedTargets: number;
+  defaultTargetId?: string;
+  defaultTargetName?: string;
+}
+
 export interface TargetDispatchRequest {
   category: TargetDispatchCategory;
   summary: string;
@@ -42,6 +50,17 @@ export interface TargetDispatchDecision {
   reason: string;
   adapterKind?: TargetKind;
   commandSafety?: ShellCommandSafety;
+}
+
+export interface TargetDispatchRecord {
+  id: string;
+  targetId: string;
+  targetName: string;
+  category: TargetDispatchCategory;
+  summary: string;
+  command?: string;
+  decision: TargetDispatchDecision;
+  createdAt: string;
 }
 
 export interface TargetProfileInput {
@@ -166,6 +185,71 @@ export function createTargetRegistry(targets: TargetProfile[] = [], defaultTarge
   };
 }
 
+export function defaultTargetRegistry(): TargetRegistry {
+  return createTargetRegistry([
+    createTargetProfile({
+      id: "local-builder",
+      displayName: "Local Builder",
+      kind: "local-shell",
+      endpoint: "local://workspace",
+      state: "ready",
+      paired: true,
+      trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
+    }),
+    createTargetProfile({
+      id: "builder-ssh",
+      displayName: "Builder SSH",
+      kind: "ssh-terminal",
+      endpoint: "ssh://builder.example.internal",
+      state: "ready",
+      paired: true,
+      adapterOverrides: { authenticated: true, hostKeyVerified: true },
+      trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
+    }),
+    createTargetProfile({
+      id: "ops-rdp",
+      displayName: "Ops Remote Desktop",
+      kind: "remote-desktop",
+      endpoint: "rdp://ops.example.internal",
+      state: "ready",
+      paired: true,
+      adapterOverrides: { authenticated: true },
+      trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
+    }),
+    createTargetProfile({
+      id: "lab-mock",
+      displayName: "Lab Mock Target",
+      kind: "mock",
+      endpoint: "mock://lab",
+      state: "degraded",
+      paired: true,
+      trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
+    }),
+  ]);
+}
+
+export function cloneTargetRegistry(registry: TargetRegistry): TargetRegistry {
+  return {
+    defaultTargetId: registry.defaultTargetId,
+    targets: registry.targets.map((target) => ({
+      ...target,
+      trustedWorkspaces: [...target.trustedWorkspaces],
+      adapters: target.adapters.map((adapter) => ({ ...adapter })),
+    })),
+  };
+}
+
+export function summarizeTargetRegistry(registry: TargetRegistry): TargetRegistrySummary {
+  const defaultTarget = registry.defaultTargetId ? findTarget(registry, registry.defaultTargetId) : undefined;
+  return {
+    totalTargets: registry.targets.length,
+    readyTargets: listReadyTargets(registry).length,
+    pairedTargets: registry.targets.filter((target) => target.paired).length,
+    defaultTargetId: registry.defaultTargetId,
+    defaultTargetName: defaultTarget?.displayName,
+  };
+}
+
 export function upsertTarget(registry: TargetRegistry, target: TargetProfile): TargetRegistry {
   const targets = registry.targets.filter((item) => item.id !== target.id);
   targets.unshift(target);
@@ -186,6 +270,25 @@ export function listReadyTargets(registry: TargetRegistry): TargetProfile[] {
 
 export function summarizeTargetProfile(target: TargetProfile): string {
   return `${target.displayName} · ${target.kind} · ${target.state}${target.paired ? " · paired" : ""}`;
+}
+
+export function createTargetDispatchRecord(
+  target: TargetProfile,
+  request: TargetDispatchRequest,
+  decision: TargetDispatchDecision,
+  id: string,
+  createdAt = new Date().toISOString(),
+): TargetDispatchRecord {
+  return {
+    id,
+    targetId: target.id,
+    targetName: target.displayName,
+    category: request.category,
+    summary: request.summary,
+    command: request.command,
+    decision,
+    createdAt,
+  };
 }
 
 export function classifyShellCommand(command: string): ShellCommandSafety {

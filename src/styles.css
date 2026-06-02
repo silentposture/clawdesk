@@ -864,6 +864,11 @@ th {
   contain: content;
 }
 
+.target-registry-panel {
+  width: min(1160px, 100%);
+  max-height: min(860px, calc(100vh - 40px));
+}
+
 .provider-header {
   display: flex;
   align-items: flex-start;
@@ -1299,6 +1304,64 @@ th {
   border-radius: 8px;
   padding: 13px;
   background: #eaf5ef;
+}
+
+.target-registry-layout {
+  display: grid;
+  grid-template-columns: minmax(240px, 0.82fr) minmax(320px, 1fr) minmax(320px, 1fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.target-list {
+  display: grid;
+  gap: 8px;
+}
+
+.target-list button {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #d8e1db;
+  border-radius: 8px;
+  padding: 10px;
+  background: #f7faf7;
+  color: #23332d;
+  text-align: left;
+  cursor: pointer;
+}
+
+.target-list button.active,
+.target-list button:hover {
+  border-color: #0f6f5c;
+  background: #ffffff;
+}
+
+.target-list strong,
+.target-list small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.target-list small {
+  color: #65736c;
+  font-size: 11px;
+  line-height: 1.4;
+}
+
+.target-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-height: 38px;
+  border: 1px solid #d4ded8;
+  border-radius: 8px;
+  padding: 0 12px;
+  background: #ffffff;
+}
+
+.target-toggle input {
+  margin-left: auto;
 }
 
 .quick-setup,
@@ -2953,7 +3016,8 @@ th {
   .workspace-capability-grid,
   .comparison-grid,
   .coding-workspace-layout,
-  .subagent-grid {
+  .subagent-grid,
+  .target-registry-layout {
     grid-template-columns: 1fr;
   }
 

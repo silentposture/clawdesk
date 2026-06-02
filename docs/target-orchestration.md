@@ -36,6 +36,8 @@ The control plane chooses a target and then chooses the safest adapter for the r
 
 - Contract and dispatch helpers: [`src/lib/targets.ts`](../src/lib/targets.ts)
 - Unit coverage: [`src/lib/targets.test.ts`](../src/lib/targets.test.ts)
+- Target registry UI: [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
+- Mock gateway storage for registry and dispatch logs: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
 - Existing approval and policy primitives: [`src/lib/security.ts`](../src/lib/security.ts), [`src/lib/permissions.ts`](../src/lib/permissions.ts), [`src/components/PermissionModal.tsx`](../src/components/PermissionModal.tsx)
 - Current gateway and desktop shell integration: [`src/lib/tauri.ts`](../src/lib/tauri.ts), [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/App.tsx`](../src/App.tsx)
 
@@ -69,16 +71,15 @@ flowchart TD
 
 ## What is not implemented yet
 
-- A real SSH connector.
-- A real remote desktop connector.
-- A real multi-target registry UI.
+- A production SSH connector.
+- A production remote desktop connector.
 - A production audit trail for remote sessions.
 - Any claim that this is a full remote desktop clone.
 
 ## Next implementation steps
 
-1. Add a target registry panel in the desktop shell.
-2. Connect SSH host-key verification and credential storage to the gateway.
-3. Add a remote-desktop adapter contract for screen/control sessions.
-4. Route dispatch decisions through the existing permission queue.
-5. Add audit-friendly session summaries for each target.
+1. Connect SSH host-key verification and credential storage to the gateway.
+2. Add a remote-desktop adapter contract for screen/control sessions.
+3. Route dispatch decisions through the existing permission queue.
+4. Add audit-friendly session summaries for each target.
+5. Introduce real transport/session execution once the safe contract is stable.

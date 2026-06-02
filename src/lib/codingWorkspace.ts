@@ -34,9 +34,13 @@ export interface GatewayAdapterMethod {
     | "providerStatus"
     | "workflow"
     | "diagnostics"
-    | "providerSecretRef"
-    | "providerOpenAiRuntime"
-    | "memory";
+  | "providerSecretRef"
+  | "providerOpenAiRuntime"
+  | "memory"
+  | "targetsRegistry"
+  | "targetsSave"
+  | "targetsDispatchPreview"
+  | "targetsDispatch";
   method: "GET" | "POST";
   path: string;
   status: CodingWorkspaceStatus;
@@ -96,6 +100,10 @@ export const gatewayAdapterMethods: GatewayAdapterMethod[] = [
   { name: "providerSecretRef", method: "POST", path: "/provider/secret-ref/issue", status: "partial", purpose: "把 provider secret 轉成不可逆 SecretRef，refresh 只回傳 token reference。" },
   { name: "providerOpenAiRuntime", method: "POST", path: "/provider/openai/chat-test", status: "partial", purpose: "用 OpenAI Responses API 合約做最小 provider runtime probe，預設 dry-run。" },
   { name: "memory", method: "POST", path: "/memory/items", status: "mock", purpose: "建立與查詢本機記憶；後續接 durable store/vector store。" },
+  { name: "targetsRegistry", method: "GET", path: "/targets", status: "mock", purpose: "讀取多電腦 target registry 與 dispatch log。" },
+  { name: "targetsSave", method: "POST", path: "/targets", status: "mock", purpose: "儲存 target registry 與 default target 選擇。" },
+  { name: "targetsDispatchPreview", method: "POST", path: "/targets/dispatch-preview", status: "mock", purpose: "建立 target dispatch 預覽與 audit record。" },
+  { name: "targetsDispatch", method: "POST", path: "/targets/dispatch", status: "mock", purpose: "儲存 target dispatch record 與 audit trail。" },
 ];
 
 export const defaultContextBudget: ContextBudget = {

@@ -3,8 +3,10 @@ import {
   classifyShellCommand,
   createTargetProfile,
   createTargetRegistry,
+  createTargetDispatchRecord,
   decideTargetDispatch,
   selectTargetForDispatch,
+  summarizeTargetRegistry,
   summarizeTargetProfile,
 } from "./targets";
 
@@ -68,6 +70,36 @@ describe("target orchestration contract", () => {
     expect(selectTargetForDispatch(registry, "execute_safe")?.id).toBe("builder-ssh");
   });
 
+  it("summarizes registry readiness and default target metadata", () => {
+    const registry = createTargetRegistry([
+      createTargetProfile({
+        id: "local-builder",
+        displayName: "Local Builder",
+        kind: "local-shell",
+        endpoint: "local://workspace",
+        state: "ready",
+        paired: true,
+      }),
+      createTargetProfile({
+        id: "offline-builder",
+        displayName: "Offline Builder",
+        kind: "ssh-terminal",
+        endpoint: "ssh://offline.example",
+        paired: true,
+        state: "offline",
+        adapterOverrides: { authenticated: true, hostKeyVerified: true },
+      }),
+    ], "local-builder");
+
+    const summary = summarizeTargetRegistry(registry);
+
+    expect(summary.totalTargets).toBe(2);
+    expect(summary.readyTargets).toBe(1);
+    expect(summary.pairedTargets).toBe(2);
+    expect(summary.defaultTargetId).toBe("local-builder");
+    expect(summary.defaultTargetName).toBe("Local Builder");
+  });
+
   it("requires approval for safe remote shell dispatch and blocks unsafe commands", () => {
     const target = createTargetProfile({
       id: "builder-ssh",
@@ -96,6 +128,36 @@ describe("target orchestration contract", () => {
     expect(unsafeDecision.allowed).toBe(false);
     expect(unsafeDecision.requiresApproval).toBe(true);
     expect(unsafeDecision.commandSafety).toBe("blocked");
+  });
+
+  it("creates dispatch records from a target decision", () => {
+    const target = createTargetProfile({
+      id: "builder-ssh",
+      displayName: "Builder SSH",
+      kind: "ssh-terminal",
+      endpoint: "ssh://builder.example",
+      paired: true,
+      state: "ready",
+      adapterOverrides: { authenticated: true, hostKeyVerified: true },
+    });
+
+    const decision = decideTargetDispatch(target, {
+      category: "request_approval",
+      summary: "Request a human to approve the next step.",
+    });
+    const record = createTargetDispatchRecord(
+      target,
+      { category: "request_approval", summary: "Request a human to approve the next step." },
+      decision,
+      "dispatch-001",
+      "2026-06-03T12:00:00.000Z",
+    );
+
+    expect(record.id).toBe("dispatch-001");
+    expect(record.targetId).toBe(target.id);
+    expect(record.targetName).toBe(target.displayName);
+    expect(record.decision.allowed).toBe(true);
+    expect(record.createdAt).toBe("2026-06-03T12:00:00.000Z");
   });
 
   it("blocks execute_safe on remote desktop targets without a terminal adapter", () => {
