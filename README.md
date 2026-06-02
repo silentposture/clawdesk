@@ -1,8 +1,16 @@
 # ClawDesk
 
+ClawDesk's first objective is to be an AI desktop workbench, control plane, and contract layer: a Windows-first shell for supervising agent workflows, routing local or cloud models, enforcing human approval, and keeping screen/session control, diagnostics, and redacted debug bundles auditable.
+
 ClawDesk is an experimental AI-agent-first desktop orchestration layer for remote development, local LLM workflows, Codex/OpenClaw integration, secure screen/session control, debug bundles, and human-approved automation.
 
 This repository is in alpha. It is not a full remote desktop clone, and it does not allow unauthenticated remote control or unrestricted shell execution.
+
+## Positioning
+
+- AI desktop workbench: a desktop shell for chat, workspaces, provider routing, memory, workflows, and diagnostics.
+- Control plane: local gateway-backed state for identity, permissions, legal consent, provider credentials, and release hygiene.
+- Contract layer: explicit agent bridge, transport, and policy boundaries for observe, inspect, debug, execute_safe, and approval-gated flows.
 
 ## Status
 
@@ -76,4 +84,3 @@ The current roadmap and issue drafts are tracked in:
 ## License
 
 Licensed under the Apache License, Version 2.0.
-

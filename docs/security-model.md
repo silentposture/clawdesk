@@ -1,6 +1,6 @@
 # Security Model
 
-ClawDesk treats security as a product boundary, not a postscript.
+ClawDesk's AI desktop workbench, control plane, and contract layer treat security as a product boundary, not a postscript.
 
 ## Threats we account for
 
@@ -39,4 +39,3 @@ ClawDesk treats security as a product boundary, not a postscript.
 - Observe and inspect can be low-risk, but they still remain policy-controlled.
 - Debug, execute_safe, and any state-changing action require human approval.
 - Critical actions must never bypass the approval queue.
-

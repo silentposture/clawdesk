@@ -1,6 +1,6 @@
 # Documentation Index
 
-This directory contains the public OSS documentation for ClawDesk.
+This directory contains the public OSS documentation for ClawDesk's AI desktop workbench, control plane, and contract layer.
 
 ## Core docs
 

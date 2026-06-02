@@ -1,6 +1,6 @@
 # Architecture
 
-ClawDesk is organized around a small set of auditable boundaries.
+ClawDesk is organized around a small set of auditable boundaries for its AI desktop workbench, control plane, and contract layer.
 
 ## Components
 
@@ -39,4 +39,3 @@ flowchart TD
 - Human approval for critical actions.
 - Redaction before sharing debug bundles or logs.
 - No public-internet exposure unless the user explicitly configures a later transport.
-

@@ -2,6 +2,7 @@
 
 ## v0.1.0-alpha scope
 
+- ClawDesk's v0.1.0-alpha scope is the AI desktop workbench, control plane, and contract layer.
 - Desktop host shell.
 - Client UI for workspace, approval, diagnostics, and release surfaces.
 - Local-only agent bridge contract.
@@ -11,9 +12,9 @@
 
 ## Implemented
 
-- Tauri app shell.
-- Policy and approval surfaces.
-- Local mock gateway path.
+- Tauri app shell for the AI desktop workbench.
+- Policy and approval surfaces for the control plane.
+- Local mock gateway path for contract-layer development.
 - Diagnostics and legal export helpers.
 - Build and release tooling.
 
@@ -37,4 +38,3 @@
 - Public internet exposure by default.
 - Unrestricted shell execution.
 - Production security claims without matching evidence.
-

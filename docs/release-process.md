@@ -1,6 +1,6 @@
 # Release Process
 
-ClawDesk release work should stay auditable, honest, and redaction-safe.
+ClawDesk release work for the AI desktop workbench, control plane, and contract layer should stay auditable, honest, and redaction-safe.
 
 ## Release phases
 
@@ -31,4 +31,3 @@ npm run build
 - Screenshots must be redacted before being attached to issues or PRs.
 - Logs must be trimmed to the smallest reproducible slice.
 - Debug bundles must exclude credentials and private endpoints.
-

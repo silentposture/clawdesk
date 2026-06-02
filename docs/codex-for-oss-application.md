@@ -9,7 +9,7 @@ It is based only on official OpenAI sources:
 
 ## Summary
 
-ClawDesk is an experimental AI-agent-first desktop orchestration layer focused on local-first control, explicit approval, redacted diagnostics, and transparent release tooling. It is public, Apache-2.0, and actively maintained, but it is not a production-ready remote desktop product.
+ClawDesk is an experimental AI desktop workbench, control plane, and contract layer focused on local-first control, explicit approval, redacted diagnostics, and transparent release tooling. It is public, Apache-2.0, and actively maintained, but it is not a production-ready remote desktop product.
 
 ## What the program includes
 

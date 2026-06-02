@@ -6,10 +6,12 @@ Status legend:
 - Experimental: present in a guarded or mock form.
 - Planned: not yet shipped.
 
+This roadmap tracks the AI desktop workbench, control plane, and contract layer that make up ClawDesk's first objective.
+
 ## v0.1.0-alpha
 
-- Implemented: desktop shell, local policy surfaces, diagnostics, legal export, release tooling, and CI scaffolding.
-- Experimental: local agent bridge contract, approval flow, and debug bundle collection.
+- Implemented: desktop shell, local policy surfaces, diagnostics, legal export, release tooling, and CI scaffolding for the AI desktop workbench.
+- Experimental: local agent bridge contract, approval flow, and debug bundle collection in the contract layer.
 - Planned: host/client/bridge hardening, pairing/auth, transport hardening, and OSS launch packaging.
 
 ## Near-term goals
@@ -32,4 +34,3 @@ Status legend:
 - Public internet exposure by default.
 - Unrestricted shell or unauthenticated remote control.
 - Production security claims without the matching evidence.
-
