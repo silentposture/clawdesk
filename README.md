@@ -8,12 +8,12 @@ The first release uses a mock Gateway sidecar, so we can ship the desktop shell,
 
 ## Current Focus
 
-- 優先支援 Windows 11 x64 桌面 app 體驗。
-- 產品名稱、Tauri `productName` 與視窗標題為 `ClawDesk`；npm package、Cargo crate 與 bundle identifier 保留原值以避免破壞 build path。
-- Tauri 視窗使用 Windows 原生標題列與 WebView2。
-- 打包目標先鎖定 Windows NSIS installer。
-- macOS 版本在 [ClawDesk-MAC](https://github.com/silentposture/clawdesk-mac)；Linux 原生整合保留架構接口，不作為目前主要開發目標。
-- 核心功能預設全部開放，不設付費解鎖或功能鎖；授權與帳號面板僅保留作相容性、測試與協作驗證。
+- Prioritize the Windows 11 x64 desktop app experience.
+- Keep the product name, Tauri `productName`, and window title as `ClawDesk`; keep the npm package, Cargo crate, and bundle identifier unchanged to avoid breaking the build path.
+- Use the Windows native title bar and WebView2 in the Tauri window.
+- Target the Windows NSIS installer first for packaging.
+- The macOS version lives in [ClawDesk-MAC](https://github.com/silentposture/clawdesk-mac); Linux native integration remains as an architectural interface and is not a primary development target right now.
+- Keep all core features open by default, with no paid unlocks or feature locks; the license and account panels are retained only for compatibility, testing, and collaboration verification.
 
 ## Browser Dev Mode
 
