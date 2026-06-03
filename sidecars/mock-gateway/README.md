@@ -46,6 +46,8 @@
 - `POST /targets`
 - `POST /targets/credential-ref/issue`
 - `POST /targets/connection`
+- `GET /targets/remote-desktop/session`
+- `POST /targets/remote-desktop/session`
 - `POST /targets/dispatch-preview`
 - `POST /targets/dispatch`
 - `POST /targets/execute`

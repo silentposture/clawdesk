@@ -232,6 +232,8 @@ const gatewayAdapterMethods = [
   { name: "targetsSave", method: "POST", path: "/targets", status: "mock", purpose: "儲存 target registry 與 default target 選擇。" },
   { name: "targetsDispatchPreview", method: "POST", path: "/targets/dispatch-preview", status: "mock", purpose: "建立 target dispatch 預覽與 audit record。" },
   { name: "targetsDispatch", method: "POST", path: "/targets/dispatch", status: "mock", purpose: "儲存 target dispatch record 與 audit trail。" },
+  { name: "targetsRemoteDesktopSessionRead", method: "GET", path: "/targets/remote-desktop/session", status: "partial", purpose: "讀取遠端桌面 session 與最近觀察摘要。" },
+  { name: "targetsRemoteDesktopSession", method: "POST", path: "/targets/remote-desktop/session", status: "partial", purpose: "建立遠端桌面 observe / control session contract，控制請求會進入 permission queue。" },
 ];
 const defaultContextBudget = {
   messageCount: 42,
@@ -398,6 +400,7 @@ const BLOCKED_COMMAND_PATTERNS = [
 ];
 let targetRegistry = cloneTargetRegistryState(defaultTargetRegistry);
 let targetDispatches = [];
+const remoteDesktopSessions = new Map();
 // SSH credential vault uses an in-memory index plus a local encrypted file for durable storage.
 const targetCredentialVault = new Map();
 let targetCredentialVaultSaveTimer;
@@ -2975,6 +2978,252 @@ async function applyTargetConnectionActionState(target, action) {
   };
 }
 
+function remoteDesktopSessionStorageKey(targetId) {
+  return sanitizeTargetStorageKey(targetId);
+}
+
+function cloneRemoteDesktopSessionState(session) {
+  return {
+    ...session,
+    visibleWindows: Array.isArray(session.visibleWindows) ? [...session.visibleWindows] : [],
+    notes: Array.isArray(session.notes) ? [...session.notes] : [],
+  };
+}
+
+function defaultRemoteDesktopVisibleWindows(target) {
+  const host = extractTargetHost(target) || target.endpoint || target.displayName;
+  return [
+    `${target.displayName} 主視窗`,
+    `${target.displayName} 工具列`,
+    `${host} · 安全會話`,
+  ];
+}
+
+function createRemoteDesktopSessionState(target, now = nowIso()) {
+  const visibleWindows = defaultRemoteDesktopVisibleWindows(target);
+  const sessionId = `rds_${crypto
+    .createHash("sha256")
+    .update(`clawdesk-remote-desktop:${target.id}`)
+    .digest("hex")
+    .slice(0, 24)}`;
+  return {
+    sessionId,
+    targetId: target.id,
+    targetName: target.displayName,
+    endpoint: target.adapters[0]?.endpoint ?? target.endpoint,
+    transport: "gateway-remote-desktop-contract",
+    state: "idle",
+    mode: target.connection?.sessionMode ?? "observe",
+    activeWindow: visibleWindows[0],
+    visibleWindows,
+    screenSummary: `遠端桌面契約已準備好：${target.displayName}。`,
+    notes: ["等待 observe_screen 或 request_control。"],
+    lastUpdatedAt: now,
+  };
+}
+
+function getRemoteDesktopSessionState(target) {
+  const key = remoteDesktopSessionStorageKey(target.id);
+  const current = remoteDesktopSessions.get(key);
+  if (current) {
+    return cloneRemoteDesktopSessionState(current);
+  }
+  const created = createRemoteDesktopSessionState(target);
+  remoteDesktopSessions.set(key, created);
+  return cloneRemoteDesktopSessionState(created);
+}
+
+function refreshRemoteDesktopSessionState(target, session, now = nowIso()) {
+  const visibleWindows = defaultRemoteDesktopVisibleWindows(target);
+  const nextState =
+    session.state === "controlling"
+      ? "controlling"
+      : session.state === "control-pending"
+        ? "control-pending"
+        : "observing";
+  const nextMode = nextState === "controlling" || nextState === "control-pending" ? "control" : "observe";
+  return {
+    ...session,
+    endpoint: target.adapters[0]?.endpoint ?? target.endpoint,
+    targetName: target.displayName,
+    state: nextState,
+    mode: nextMode,
+    activeWindow: session.activeWindow && nextState === "controlling" ? session.activeWindow : visibleWindows[0],
+    visibleWindows,
+    screenSummary: `Gateway 遠端桌面契約觀察：${target.displayName} · ${extractTargetHost(target) || target.endpoint}.`,
+    lastObservedAt: now,
+    lastUpdatedAt: now,
+    notes: [...session.notes.slice(-4), `Observation refreshed at ${now}.`],
+  };
+}
+
+function markRemoteDesktopTargetActive(target, now = nowIso()) {
+  return updatePrimaryTargetAdapterState(
+    {
+      ...target,
+      paired: true,
+      state: "ready",
+      lastSeenAt: now,
+    },
+    (current) => ({
+      ...current,
+      authenticated: true,
+    }),
+  );
+}
+
+function observeRemoteDesktopSessionState(target) {
+  const baseTarget = normalizeTargetProfileState(target);
+  if (baseTarget.kind !== "remote-desktop") {
+    return { allowed: false, reason: "This target is not a remote desktop target.", target: baseTarget };
+  }
+
+  const readinessIssues = targetConnectionReadinessIssuesState(baseTarget);
+  if (readinessIssues.length > 0) {
+    return { allowed: false, reason: readinessIssues[0], target: baseTarget };
+  }
+
+  const now = nowIso();
+  const session = refreshRemoteDesktopSessionState(baseTarget, getRemoteDesktopSessionState(baseTarget), now);
+  remoteDesktopSessions.set(remoteDesktopSessionStorageKey(baseTarget.id), session);
+  return {
+    allowed: true,
+    reason: "Remote desktop session snapshot refreshed.",
+    target: markRemoteDesktopTargetActive(baseTarget, now),
+    session,
+  };
+}
+
+function requestRemoteDesktopControlState(target) {
+  const baseTarget = normalizeTargetProfileState(target);
+  if (baseTarget.kind !== "remote-desktop") {
+    return { allowed: false, reason: "This target is not a remote desktop target.", target: baseTarget };
+  }
+
+  const readinessIssues = targetConnectionReadinessIssuesState(baseTarget);
+  if (readinessIssues.length > 0) {
+    return { allowed: false, reason: readinessIssues[0], target: baseTarget };
+  }
+
+  const now = nowIso();
+  const currentSession = refreshRemoteDesktopSessionState(baseTarget, getRemoteDesktopSessionState(baseTarget), now);
+  const permissionRequest = {
+    type: "permission.request",
+    requestId: crypto.randomUUID(),
+    action: "remote-desktop.request-control",
+    target: baseTarget.displayName,
+    targetId: baseTarget.id,
+    sessionId: currentSession.sessionId,
+    risk: "high",
+    summary: `${baseTarget.displayName} 的遠端桌面控制權需要人工授權。`,
+  };
+  const nextSession = {
+    ...currentSession,
+    state: "control-pending",
+    mode: "control",
+    controlRequestId: permissionRequest.requestId,
+    controlRequestedAt: now,
+    lastUpdatedAt: now,
+    notes: [...currentSession.notes.slice(-4), "Control request submitted for human approval."],
+  };
+  remoteDesktopSessions.set(remoteDesktopSessionStorageKey(baseTarget.id), nextSession);
+  pendingPermissions.set(permissionRequest.requestId, permissionRequest);
+  broadcast(permissionRequest);
+  return {
+    allowed: true,
+    reason: "Remote desktop control request queued for approval.",
+    target: markRemoteDesktopTargetActive(baseTarget, now),
+    session: nextSession,
+    permissionRequest,
+  };
+}
+
+function releaseRemoteDesktopSessionState(target) {
+  const baseTarget = normalizeTargetProfileState(target);
+  if (baseTarget.kind !== "remote-desktop") {
+    return { allowed: false, reason: "This target is not a remote desktop target.", target: baseTarget };
+  }
+
+  const now = nowIso();
+  const currentSession = getRemoteDesktopSessionState(baseTarget);
+  const nextSession = {
+    ...currentSession,
+    state: "released",
+    mode: "observe",
+    controlRequestId: undefined,
+    releasedAt: now,
+    lastUpdatedAt: now,
+    notes: [...currentSession.notes.slice(-4), "Control released by operator."],
+  };
+  remoteDesktopSessions.set(remoteDesktopSessionStorageKey(baseTarget.id), nextSession);
+  return {
+    allowed: true,
+    reason: "Remote desktop control was released.",
+    target: markRemoteDesktopTargetActive(baseTarget, now),
+    session: nextSession,
+  };
+}
+
+function applyRemoteDesktopPermissionDecisionState(request, allowed, reason) {
+  if (!request || request.action !== "remote-desktop.request-control" || typeof request.targetId !== "string") {
+    return undefined;
+  }
+
+  const sessionKey = remoteDesktopSessionStorageKey(request.targetId);
+  const currentSession = remoteDesktopSessions.get(sessionKey);
+  if (!currentSession) return undefined;
+
+  const now = nowIso();
+  const nextSession = {
+    ...currentSession,
+    state: allowed ? "controlling" : "observing",
+    mode: allowed ? "control" : "observe",
+    controlRequestId: undefined,
+    controlGrantedAt: allowed ? now : currentSession.controlGrantedAt,
+    releasedAt: allowed ? currentSession.releasedAt : currentSession.releasedAt,
+    lastUpdatedAt: now,
+    notes: [
+      ...currentSession.notes.slice(-4),
+      allowed ? "Control request approved." : `Control request denied${reason ? `: ${reason}` : ""}.`,
+    ],
+  };
+  remoteDesktopSessions.set(sessionKey, nextSession);
+  return nextSession;
+}
+
+function applyPermissionResultState(result) {
+  const requestId = typeof result?.requestId === "string" ? result.requestId.trim() : "";
+  if (!requestId) {
+    return {
+      applied: false,
+      request: undefined,
+      remoteDesktopSession: undefined,
+    };
+  }
+
+  const request = pendingPermissions.get(requestId);
+  pendingPermissions.delete(requestId);
+
+  const allowed = result?.allowed === true;
+  const reason = typeof result?.reason === "string" ? result.reason.trim() : "";
+  const remoteDesktopSession = applyRemoteDesktopPermissionDecisionState(request, allowed, reason);
+  if (remoteDesktopSession) {
+    audit("targets.remote-desktop.permission-result", {
+      requestId,
+      targetId: request?.targetId,
+      allowed,
+      reason,
+    });
+    scheduleStateSave();
+  }
+
+  return {
+    applied: Boolean(request),
+    request,
+    remoteDesktopSession,
+  };
+}
+
 function audit(action, details = {}) {
   const event = {
     id: crypto.randomUUID(),
@@ -3000,7 +3249,7 @@ function redactAuditDetails(details) {
 
 function snapshotState() {
   return {
-    schemaVersion: 2,
+    schemaVersion: 3,
     savedAt: nowIso(),
     providerSession,
     visionProbeResults,
@@ -3025,6 +3274,7 @@ function snapshotState() {
     safetyQueue,
     targetRegistry,
     targetDispatches,
+    remoteDesktopSessions: [...remoteDesktopSessions.values()].map((session) => cloneRemoteDesktopSessionState(session)),
   };
 }
 
@@ -3034,7 +3284,7 @@ function mergeArray(target, source) {
 }
 
 function applyPersistedState(state) {
-  if (!state || (state.schemaVersion !== 1 && state.schemaVersion !== 2)) return;
+  if (!state || (state.schemaVersion !== 1 && state.schemaVersion !== 2 && state.schemaVersion !== 3)) return;
   if (state.providerSession) providerSession = state.providerSession;
   if (state.visionProbeResults && typeof state.visionProbeResults === "object") visionProbeResults = state.visionProbeResults;
   mergeArray(connectedAccounts, state.connectedAccounts);
@@ -3058,6 +3308,13 @@ function applyPersistedState(state) {
   if (Array.isArray(state.safetyQueue)) safetyQueue = state.safetyQueue;
   if (state.targetRegistry) targetRegistry = normalizeTargetRegistryState(state.targetRegistry);
   if (Array.isArray(state.targetDispatches)) targetDispatches = state.targetDispatches.slice(0, 200);
+  if (Array.isArray(state.remoteDesktopSessions)) {
+    remoteDesktopSessions.clear();
+    for (const session of state.remoteDesktopSessions) {
+      if (!session || typeof session.targetId !== "string") continue;
+      remoteDesktopSessions.set(remoteDesktopSessionStorageKey(session.targetId), cloneRemoteDesktopSessionState(session));
+    }
+  }
   ensureSeedIdentityUsers();
 }
 
@@ -7468,6 +7725,95 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && pathname === "/targets/remote-desktop/session") {
+    const targetId = typeof parsedUrl.searchParams.get("targetId") === "string" ? parsedUrl.searchParams.get("targetId").trim() : "";
+    if (!targetId) {
+      json(res, 400, { error: "targetId is required" });
+      return;
+    }
+    const target = targetRegistry.targets.find((entry) => entry.id === targetId);
+    if (!target) {
+      json(res, 404, { error: "target not found" });
+      return;
+    }
+    if (target.kind !== "remote-desktop") {
+      json(res, 400, { error: "target is not a remote desktop target" });
+      return;
+    }
+    json(res, 200, {
+      session: getRemoteDesktopSessionState(target),
+      target: cloneTargetRegistryState(targetRegistry).targets.find((entry) => entry.id === targetId),
+    });
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/targets/remote-desktop/session") {
+    try {
+      const body = await readJson(req);
+      const targetId = typeof body.targetId === "string" ? body.targetId.trim() : "";
+      const action = typeof body.action === "string" ? body.action.trim() : "";
+      if (!targetId || !action) {
+        json(res, 400, { error: "targetId and action are required" });
+        return;
+      }
+      const target = targetRegistry.targets.find((entry) => entry.id === targetId);
+      if (!target) {
+        json(res, 404, { error: "target not found" });
+        return;
+      }
+      if (target.kind !== "remote-desktop") {
+        json(res, 400, { error: "target is not a remote desktop target" });
+        return;
+      }
+
+      let result;
+      if (action === "observe_screen" || action === "observe" || action === "refresh") {
+        result = observeRemoteDesktopSessionState(target);
+      } else if (action === "request_control" || action === "request-approval") {
+        result = requestRemoteDesktopControlState(target);
+      } else if (action === "release_control" || action === "disconnect") {
+        result = releaseRemoteDesktopSessionState(target);
+      } else {
+        json(res, 400, { error: "Unsupported remote desktop action" });
+        return;
+      }
+
+      if (result.allowed && result.target) {
+        targetRegistry = {
+          ...targetRegistry,
+          targets: targetRegistry.targets.map((entry) => (entry.id === targetId ? result.target : entry)),
+        };
+        scheduleStateSave();
+        audit("targets.remote-desktop.session", {
+          targetId,
+          action,
+          state: result.session?.state,
+          mode: result.session?.mode,
+        });
+      } else {
+        audit("targets.remote-desktop.session.rejected", {
+          targetId,
+          action,
+          allowed: result.allowed,
+          reason: result.reason,
+        });
+      }
+
+      json(res, 200, {
+        allowed: result.allowed,
+        reason: result.reason,
+        target: result.target,
+        session: result.session,
+        permissionRequest: result.permissionRequest,
+        registry: cloneTargetRegistryState(targetRegistry),
+        dispatches: targetDispatches.slice(0, 200),
+      });
+    } catch (error) {
+      json(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON" });
+    }
+    return;
+  }
+
   if (req.method === "GET" && pathname === "/coding-workspace") {
     json(res, 200, {
       ...codingWorkspaceSnapshot,
@@ -7780,11 +8126,13 @@ const server = http.createServer(async (req, res) => {
   if (req.method === "POST" && req.url === "/permission-result") {
     try {
       const body = await readJson(req);
-      if (typeof body.requestId === "string") {
-        pendingPermissions.delete(body.requestId);
-      }
+      const result = applyPermissionResultState(body);
       broadcast(body);
-      json(res, 200, { accepted: true });
+      json(res, 200, {
+        accepted: true,
+        applied: result.applied,
+        remoteDesktopSession: result.remoteDesktopSession,
+      });
     } catch {
       json(res, 400, { error: "Invalid JSON" });
     }
@@ -7832,7 +8180,7 @@ server.on("upgrade", (req, socket) => {
     try {
       const message = JSON.parse(decodeFrame(buffer));
       if (message.type === "permission.result" && typeof message.requestId === "string") {
-        pendingPermissions.delete(message.requestId);
+        applyPermissionResultState(message);
         broadcast(message);
       }
     } catch {

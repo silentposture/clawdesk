@@ -1,5 +1,5 @@
 import { CircleAlert, CircleCheck, Plus, RefreshCw, Save, Send, Server, X } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   applyTargetConnectionAction,
   cloneTargetRegistry,
@@ -70,6 +70,29 @@ interface TargetExecutionState {
   targetId: string;
   targetName: string;
 }
+
+interface RemoteDesktopSessionState {
+  sessionId: string;
+  targetId: string;
+  targetName: string;
+  endpoint: string;
+  transport: string;
+  state: "idle" | "observing" | "control-pending" | "controlling" | "released";
+  mode: TargetSessionMode;
+  activeWindow: string;
+  visibleWindows: string[];
+  screenSummary: string;
+  notes: string[];
+  lastUpdatedAt: string;
+  lastObservedAt?: string;
+  controlRequestId?: string;
+  controlRequestedAt?: string;
+  controlGrantedAt?: string;
+  releasedAt?: string;
+  permissionRequestId?: string;
+}
+
+type RemoteDesktopSessionAction = "observe_screen" | "request_control" | "release_control" | "refresh";
 
 const initialRegistry = defaultTargetRegistry();
 const initialTarget = initialRegistry.targets[0];
@@ -233,6 +256,69 @@ function formatLastSeenAt(value?: string): string {
   return parsed.toLocaleString();
 }
 
+function defaultRemoteDesktopVisibleWindows(target: TargetProfile): string[] {
+  const host = target.adapters[0]?.endpoint ?? target.displayName;
+  return [
+    `${target.displayName} 主視窗`,
+    `${target.displayName} 工作列`,
+    `${host} · 遠端桌面 session`,
+  ];
+}
+
+function createRemoteDesktopSessionPreview(target: TargetProfile, overrides: Partial<RemoteDesktopSessionState> = {}): RemoteDesktopSessionState {
+  const visibleWindows = Array.isArray(overrides.visibleWindows) && overrides.visibleWindows.length > 0
+    ? overrides.visibleWindows
+    : defaultRemoteDesktopVisibleWindows(target);
+  const now = overrides.lastUpdatedAt ?? new Date().toISOString();
+  return {
+    sessionId: overrides.sessionId ?? `rds_preview_${target.id}`,
+    targetId: target.id,
+    targetName: target.displayName,
+    endpoint: overrides.endpoint ?? target.adapters[0]?.endpoint ?? target.displayName,
+    transport: overrides.transport ?? "local-remote-desktop-preview",
+    state: overrides.state ?? "idle",
+    mode: overrides.mode ?? target.connection.sessionMode,
+    activeWindow: overrides.activeWindow ?? visibleWindows[0],
+    visibleWindows,
+    screenSummary: overrides.screenSummary ?? `遠端桌面預覽已就緒：${target.displayName}。`,
+    notes: overrides.notes ?? ["等待 observe_screen 或 request_control。"],
+    lastUpdatedAt: now,
+    lastObservedAt: overrides.lastObservedAt,
+    controlRequestId: overrides.controlRequestId,
+    controlRequestedAt: overrides.controlRequestedAt,
+    controlGrantedAt: overrides.controlGrantedAt,
+    releasedAt: overrides.releasedAt,
+    permissionRequestId: overrides.permissionRequestId,
+  };
+}
+
+function normalizeRemoteDesktopSessionState(
+  target: TargetProfile,
+  session?: Partial<RemoteDesktopSessionState>,
+  permissionRequestId?: string,
+): RemoteDesktopSessionState {
+  const base = createRemoteDesktopSessionPreview(target, session ?? {});
+  return {
+    ...base,
+    sessionId: session?.sessionId ?? base.sessionId,
+    endpoint: session?.endpoint ?? base.endpoint,
+    transport: session?.transport ?? base.transport,
+    state: session?.state ?? base.state,
+    mode: session?.mode ?? base.mode,
+    activeWindow: session?.activeWindow ?? base.activeWindow,
+    visibleWindows: Array.isArray(session?.visibleWindows) && session.visibleWindows.length > 0 ? [...session.visibleWindows] : base.visibleWindows,
+    screenSummary: session?.screenSummary ?? base.screenSummary,
+    notes: Array.isArray(session?.notes) && session.notes.length > 0 ? [...session.notes] : base.notes,
+    lastUpdatedAt: session?.lastUpdatedAt ?? base.lastUpdatedAt,
+    lastObservedAt: session?.lastObservedAt ?? base.lastObservedAt,
+    controlRequestId: session?.controlRequestId ?? base.controlRequestId,
+    controlRequestedAt: session?.controlRequestedAt ?? base.controlRequestedAt,
+    controlGrantedAt: session?.controlGrantedAt ?? base.controlGrantedAt,
+    releasedAt: session?.releasedAt ?? base.releasedAt,
+    permissionRequestId: permissionRequestId ?? session?.permissionRequestId ?? session?.controlRequestId ?? base.permissionRequestId,
+  };
+}
+
 export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryPanelProps): JSX.Element {
   const { t } = useI18n();
   const [registry, setRegistry] = useState<TargetRegistry>(() => cloneTargetRegistry(initialRegistry));
@@ -253,6 +339,9 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const [dispatchCommand, setDispatchCommand] = useState("git status");
   const [preview, setPreview] = useState<DispatchPreviewState>();
   const [execution, setExecution] = useState<TargetExecutionState>();
+  const [remoteDesktopSession, setRemoteDesktopSession] = useState<RemoteDesktopSessionState>();
+  const [remoteDesktopBusy, setRemoteDesktopBusy] = useState(false);
+  const remoteDesktopSessionRequestTokenRef = useRef(0);
   const [sshPrivateKeyDraft, setSshPrivateKeyDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
@@ -263,6 +352,10 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const draftTarget = useMemo(() => buildTargetFromDraft(draft), [draft]);
   const draftIsSaved = Boolean(selectedTarget && selectedTarget.id === draftTarget.id);
   const connectionIssues = targetConnectionReadinessIssues(draftTarget);
+  const remoteDesktopActionBlocked = draft.kind === "remote-desktop" && Boolean(gatewayBaseUrl) && !draftIsSaved;
+  const remoteDesktopView = remoteDesktopSession ?? (draft.kind === "remote-desktop" ? createRemoteDesktopSessionPreview(draftTarget) : undefined);
+  const remoteDesktopNotes = remoteDesktopView?.notes ?? [];
+  const latestRemoteDesktopNote = remoteDesktopNotes[remoteDesktopNotes.length - 1];
   const trustedWorkspaceCount = draft.trustedWorkspaces
     .split(/[\n,]/g)
     .map((item) => item.trim())
@@ -288,6 +381,15 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setPreview(undefined);
       setExecution(undefined);
       clearSensitiveDraftState();
+      if (nextTarget?.kind === "remote-desktop") {
+        remoteDesktopSessionRequestTokenRef.current += 1;
+        setRemoteDesktopBusy(false);
+        setRemoteDesktopSession(createRemoteDesktopSessionPreview(nextTarget));
+      } else {
+        remoteDesktopSessionRequestTokenRef.current += 1;
+        setRemoteDesktopBusy(false);
+        setRemoteDesktopSession(undefined);
+      }
       setMessage("已使用本機預設 target 登錄。");
       setError(undefined);
       return;
@@ -314,6 +416,13 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setPreview(undefined);
       setExecution(undefined);
       clearSensitiveDraftState();
+      if (nextTarget?.kind === "remote-desktop") {
+        void loadRemoteDesktopSession(nextTarget);
+      } else {
+        remoteDesktopSessionRequestTokenRef.current += 1;
+        setRemoteDesktopBusy(false);
+        setRemoteDesktopSession(undefined);
+      }
       setMessage("已讀取 gateway target registry。");
     } catch {
       setRegistry(cloneTargetRegistry(initialRegistry));
@@ -326,6 +435,15 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setPreview(undefined);
       setExecution(undefined);
       clearSensitiveDraftState();
+      if (nextTarget?.kind === "remote-desktop") {
+        remoteDesktopSessionRequestTokenRef.current += 1;
+        setRemoteDesktopBusy(false);
+        setRemoteDesktopSession(createRemoteDesktopSessionPreview(nextTarget));
+      } else {
+        remoteDesktopSessionRequestTokenRef.current += 1;
+        setRemoteDesktopBusy(false);
+        setRemoteDesktopSession(undefined);
+      }
       setError("無法讀取 gateway 的 target registry，已切回本機預設清單。");
     } finally {
       setBusy(false);
@@ -338,6 +456,13 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setPreview(undefined);
     setExecution(undefined);
     clearSensitiveDraftState();
+    if (target.kind === "remote-desktop") {
+      void loadRemoteDesktopSession(target);
+    } else {
+      remoteDesktopSessionRequestTokenRef.current += 1;
+      setRemoteDesktopBusy(false);
+      setRemoteDesktopSession(undefined);
+    }
     setMessage(undefined);
     setError(undefined);
   }
@@ -349,11 +474,20 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setPreview(undefined);
     setExecution(undefined);
     clearSensitiveDraftState();
+    if (kind === "remote-desktop") {
+      remoteDesktopSessionRequestTokenRef.current += 1;
+      setRemoteDesktopBusy(false);
+      setRemoteDesktopSession(createRemoteDesktopSessionPreview(buildTargetFromDraft(nextDraft)));
+    } else {
+      remoteDesktopSessionRequestTokenRef.current += 1;
+      setRemoteDesktopBusy(false);
+      setRemoteDesktopSession(undefined);
+    }
     setMessage(`已建立 ${defaultDisplayNameForKind(kind)} 的草稿。`);
     setError(undefined);
   }
 
-  async function persistRegistry(nextRegistry: TargetRegistry, statusMessage: string) {
+  async function persistRegistry(nextRegistry: TargetRegistry, statusMessage: string, sessionTarget?: TargetProfile) {
     setBusy(true);
     setError(undefined);
     try {
@@ -379,12 +513,28 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setPreview(undefined);
       setExecution(undefined);
       clearSensitiveDraftState();
+      if (sessionTarget?.kind === "remote-desktop") {
+        void loadRemoteDesktopSession(sessionTarget);
+      } else {
+        remoteDesktopSessionRequestTokenRef.current += 1;
+        setRemoteDesktopBusy(false);
+        setRemoteDesktopSession(undefined);
+      }
       setMessage(statusMessage);
     } catch {
       setRegistry(cloneTargetRegistry(nextRegistry));
       setPreview(undefined);
       setExecution(undefined);
       clearSensitiveDraftState();
+      if (sessionTarget?.kind === "remote-desktop") {
+        remoteDesktopSessionRequestTokenRef.current += 1;
+        setRemoteDesktopBusy(false);
+        setRemoteDesktopSession(createRemoteDesktopSessionPreview(sessionTarget));
+      } else {
+        remoteDesktopSessionRequestTokenRef.current += 1;
+        setRemoteDesktopBusy(false);
+        setRemoteDesktopSession(undefined);
+      }
       setMessage(`${statusMessage}（僅保留本機狀態，gateway 儲存失敗）`);
       setError(undefined);
     } finally {
@@ -400,7 +550,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     }
     setSelectedTargetId(target.id);
     setDraft(draftFromTarget(target));
-    await persistRegistry(nextRegistry, makeDefault ? `已儲存 ${target.displayName} 並設為預設 target。` : `已儲存 ${target.displayName}。`);
+    await persistRegistry(nextRegistry, makeDefault ? `已儲存 ${target.displayName} 並設為預設 target。` : `已儲存 ${target.displayName}。`, target);
   }
 
   function buildRequest(): TargetDispatchRequest {
@@ -454,6 +604,13 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         setPreview(undefined);
         setExecution(undefined);
         clearSensitiveDraftState();
+        if (nextTarget.kind === "remote-desktop") {
+          void loadRemoteDesktopSession(nextTarget);
+        } else {
+          remoteDesktopSessionRequestTokenRef.current += 1;
+          setRemoteDesktopBusy(false);
+          setRemoteDesktopSession(undefined);
+        }
         setMessage(payload.reason || result.reason);
       } catch {
         const nextRegistry = upsertTarget(registry, result.target);
@@ -463,6 +620,15 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         setPreview(undefined);
         setExecution(undefined);
         clearSensitiveDraftState();
+        if (result.target.kind === "remote-desktop") {
+          remoteDesktopSessionRequestTokenRef.current += 1;
+          setRemoteDesktopBusy(false);
+          setRemoteDesktopSession(createRemoteDesktopSessionPreview(result.target));
+        } else {
+          remoteDesktopSessionRequestTokenRef.current += 1;
+          setRemoteDesktopBusy(false);
+          setRemoteDesktopSession(undefined);
+        }
         setMessage(`${result.reason}（僅保留本機狀態，gateway 連線更新失敗）`);
       } finally {
         setBusy(false);
@@ -477,6 +643,15 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setPreview(undefined);
     setExecution(undefined);
     clearSensitiveDraftState();
+    if (result.target.kind === "remote-desktop") {
+      remoteDesktopSessionRequestTokenRef.current += 1;
+      setRemoteDesktopBusy(false);
+      setRemoteDesktopSession(createRemoteDesktopSessionPreview(result.target));
+    } else {
+      remoteDesktopSessionRequestTokenRef.current += 1;
+      setRemoteDesktopBusy(false);
+      setRemoteDesktopSession(undefined);
+    }
     setMessage(result.reason);
   }
 
@@ -659,6 +834,167 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setError(caught instanceof Error ? caught.message : "SSH credential ref issuance failed");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function loadRemoteDesktopSession(target: TargetProfile) {
+    if (target.kind !== "remote-desktop") {
+      remoteDesktopSessionRequestTokenRef.current += 1;
+      setRemoteDesktopBusy(false);
+      setRemoteDesktopSession(undefined);
+      return;
+    }
+
+    if (!gatewayBaseUrl) {
+      remoteDesktopSessionRequestTokenRef.current += 1;
+      setRemoteDesktopBusy(false);
+      setRemoteDesktopSession(createRemoteDesktopSessionPreview(target));
+      setError(undefined);
+      return;
+    }
+
+    const requestToken = ++remoteDesktopSessionRequestTokenRef.current;
+    setRemoteDesktopBusy(true);
+    try {
+      const response = await fetch(`${gatewayBaseUrl}/targets/remote-desktop/session?targetId=${encodeURIComponent(target.id)}`);
+      const payload = (await response.json()) as {
+        session?: Partial<RemoteDesktopSessionState>;
+        target?: TargetProfile;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        if (requestToken !== remoteDesktopSessionRequestTokenRef.current) {
+          return;
+        }
+        setRemoteDesktopSession(createRemoteDesktopSessionPreview(target));
+        if (response.status === 404 || response.status === 400) {
+          setError(undefined);
+          return;
+        }
+        throw new Error(payload.error || "bad response");
+      }
+
+      if (requestToken !== remoteDesktopSessionRequestTokenRef.current) {
+        return;
+      }
+      const nextTarget = payload.target ?? target;
+      setRemoteDesktopSession(normalizeRemoteDesktopSessionState(nextTarget, payload.session));
+      setError(undefined);
+    } catch (caught) {
+      if (requestToken !== remoteDesktopSessionRequestTokenRef.current) {
+        return;
+      }
+      setRemoteDesktopSession(createRemoteDesktopSessionPreview(target));
+      setError(caught instanceof Error ? caught.message : "無法讀取遠端桌面 session。");
+    } finally {
+      if (requestToken === remoteDesktopSessionRequestTokenRef.current) {
+        setRemoteDesktopBusy(false);
+      }
+    }
+  }
+
+  async function mutateRemoteDesktopSession(action: RemoteDesktopSessionAction) {
+    const currentTarget = draftTarget;
+    if (currentTarget.kind !== "remote-desktop") {
+      setError("只有遠端桌面 target 才能操作 session。");
+      return;
+    }
+
+    if (gatewayBaseUrl && !draftIsSaved) {
+      setError("請先儲存遠端桌面 target，再與 gateway 互動。");
+      return;
+    }
+
+    if (!gatewayBaseUrl) {
+      const now = new Date().toISOString();
+      if (action === "request_control") {
+        setError("需要 gateway 才能請求遠端桌面控制。");
+        return;
+      }
+
+      const currentSession = remoteDesktopSession ?? createRemoteDesktopSessionPreview(currentTarget);
+      const nextSession =
+        action === "release_control"
+          ? createRemoteDesktopSessionPreview(currentTarget, {
+              ...currentSession,
+              state: "released",
+              mode: "observe",
+              controlRequestId: undefined,
+              releasedAt: now,
+              lastUpdatedAt: now,
+              notes: [...currentSession.notes.slice(-4), "Control released in local preview."],
+            })
+          : createRemoteDesktopSessionPreview(currentTarget, {
+              ...currentSession,
+              state: "observing",
+              mode: "observe",
+              lastObservedAt: now,
+              lastUpdatedAt: now,
+              screenSummary: `本機預覽：${currentTarget.displayName} · ${currentTarget.adapters[0]?.endpoint ?? currentTarget.displayName}.`,
+              notes: [...currentSession.notes.slice(-4), "Observation refreshed in local preview."],
+            });
+
+      setRemoteDesktopSession(nextSession);
+      setMessage(`已更新 ${currentTarget.displayName} 的本機遠端桌面預覽。`);
+      setError(undefined);
+      return;
+    }
+
+    const requestToken = ++remoteDesktopSessionRequestTokenRef.current;
+    setRemoteDesktopBusy(true);
+    setError(undefined);
+    try {
+      const response = await fetch(`${gatewayBaseUrl}/targets/remote-desktop/session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ targetId: currentTarget.id, action }),
+      });
+      const payload = (await response.json()) as {
+        allowed?: boolean;
+        reason?: string;
+        session?: Partial<RemoteDesktopSessionState>;
+        permissionRequest?: { requestId?: string };
+        target?: TargetProfile;
+        registry?: TargetRegistry;
+        dispatches?: TargetDispatchRecord[];
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || payload.reason || "bad response");
+      }
+      if (payload.allowed === false) {
+        if (requestToken !== remoteDesktopSessionRequestTokenRef.current) {
+          return;
+        }
+        setError(payload.reason || "遠端桌面 session 更新失敗。");
+        return;
+      }
+
+      if (requestToken !== remoteDesktopSessionRequestTokenRef.current) {
+        return;
+      }
+      const nextTarget = payload.target ?? currentTarget;
+      if (payload.registry?.targets?.length) {
+        setRegistry(cloneTargetRegistry(payload.registry));
+        if (Array.isArray(payload.dispatches)) {
+          setDispatches(payload.dispatches);
+        }
+      }
+      setSelectedTargetId(nextTarget.id);
+      setDraft(draftFromTarget(nextTarget));
+      setRemoteDesktopSession(normalizeRemoteDesktopSessionState(nextTarget, payload.session, payload.permissionRequest?.requestId));
+      setMessage(payload.reason || "遠端桌面 session 已更新。");
+      setError(undefined);
+    } catch (caught) {
+      if (requestToken !== remoteDesktopSessionRequestTokenRef.current) {
+        return;
+      }
+      setError(caught instanceof Error ? caught.message : "遠端桌面 session 更新失敗。");
+    } finally {
+      if (requestToken === remoteDesktopSessionRequestTokenRef.current) {
+        setRemoteDesktopBusy(false);
+      }
     }
   }
 
@@ -916,7 +1252,65 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 ))}
               </section>
             ) : null}
+            {draft.kind === "remote-desktop" ? (
+              <section className="mcp-preview target-remote-desktop-session">
+                <span>遠端桌面 Session</span>
+                <strong>{remoteDesktopView?.targetName ?? draft.displayName}</strong>
+                <p>{remoteDesktopView?.screenSummary ?? "尚未讀取遠端桌面 session，請先按觀察或重新整理。"}</p>
+                <small>
+                  state：{remoteDesktopView?.state ?? "idle"} · mode：{remoteDesktopView?.mode ?? draft.sessionMode}
+                </small>
+                <small>permission request：{remoteDesktopView?.permissionRequestId ?? "未送出"}</small>
+                <small>transport：{remoteDesktopView?.transport ?? "未設定"}</small>
+                <small>active window：{remoteDesktopView?.activeWindow ?? "未取得"}</small>
+                <small>
+                  visible windows：{remoteDesktopView?.visibleWindows?.length ? remoteDesktopView.visibleWindows.length : 0}
+                </small>
+                <small>last observed：{formatLastSeenAt(remoteDesktopView?.lastObservedAt ?? remoteDesktopView?.lastUpdatedAt)}</small>
+                {latestRemoteDesktopNote ? <small>latest note：{latestRemoteDesktopNote}</small> : null}
+                {remoteDesktopActionBlocked ? <small>請先儲存這個 target，再與 gateway 互動。</small> : null}
+              </section>
+            ) : null}
             <div className="panel-actions">
+              {draft.kind === "remote-desktop" ? (
+                <>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void mutateRemoteDesktopSession("observe_screen")}
+                    disabled={busy || remoteDesktopBusy || remoteDesktopActionBlocked}
+                  >
+                    <RefreshCw size={16} />
+                    觀察螢幕
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void mutateRemoteDesktopSession("request_control")}
+                    disabled={busy || remoteDesktopBusy || remoteDesktopActionBlocked || !gatewayBaseUrl}
+                  >
+                    <Send size={16} />
+                    請求控制
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void mutateRemoteDesktopSession("release_control")}
+                    disabled={busy || remoteDesktopBusy || remoteDesktopActionBlocked}
+                  >
+                    釋放控制
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void mutateRemoteDesktopSession("refresh")}
+                    disabled={busy || remoteDesktopBusy || remoteDesktopActionBlocked}
+                  >
+                    <RefreshCw size={16} />
+                    重新整理 Session
+                  </button>
+                </>
+              ) : null}
               {draft.kind === "ssh-terminal" ? (
                 <button className="secondary-button" type="button" onClick={() => void issueSshCredentialRef()} disabled={busy || !sshPrivateKeyDraft.trim()}>
                   <Send size={16} />

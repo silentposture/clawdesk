@@ -36,13 +36,15 @@ export interface GatewayAdapterMethod {
     | "diagnostics"
     | "providerSecretRef"
     | "providerOpenAiRuntime"
-    | "memory"
-    | "targetsRegistry"
-    | "targetsSave"
-    | "targetsCredentialRefIssue"
-    | "targetsDispatchPreview"
-    | "targetsDispatch"
-    | "targetsExecute";
+  | "memory"
+  | "targetsRegistry"
+  | "targetsSave"
+  | "targetsCredentialRefIssue"
+  | "targetsDispatchPreview"
+  | "targetsDispatch"
+  | "targetsExecute"
+  | "targetsRemoteDesktopSessionRead"
+  | "targetsRemoteDesktopSession";
   method: "GET" | "POST";
   path: string;
   status: CodingWorkspaceStatus;
@@ -108,6 +110,8 @@ export const gatewayAdapterMethods: GatewayAdapterMethod[] = [
   { name: "targetsDispatchPreview", method: "POST", path: "/targets/dispatch-preview", status: "mock", purpose: "建立 target dispatch 預覽與 audit record。" },
   { name: "targetsDispatch", method: "POST", path: "/targets/dispatch", status: "mock", purpose: "儲存 target dispatch record 與 audit trail。" },
   { name: "targetsExecute", method: "POST", path: "/targets/execute", status: "partial", purpose: "執行 allowlisted local-shell 或 SSH safe command，必要時可經 gateway-managed SSH credential ref，並回傳 stdout/stderr 摘要。" },
+  { name: "targetsRemoteDesktopSessionRead", method: "GET", path: "/targets/remote-desktop/session", status: "partial", purpose: "讀取遠端桌面 session 快照與觀察摘要。" },
+  { name: "targetsRemoteDesktopSession", method: "POST", path: "/targets/remote-desktop/session", status: "partial", purpose: "建立遠端桌面 observe / control session contract，控制請求會進入 permission queue。" },
 ];
 
 export const defaultContextBudget: ContextBudget = {
