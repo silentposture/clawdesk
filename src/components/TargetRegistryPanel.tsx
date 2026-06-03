@@ -117,9 +117,23 @@ interface RemoteDesktopSessionState {
   controlGrantedAt?: string;
   releasedAt?: string;
   permissionRequestId?: string;
+  clientLaunchState?: "idle" | "dry-run" | "launched" | "failed";
+  clientLaunchCommand?: string;
+  clientLaunchAt?: string;
+  clientLaunchPid?: number | null;
+  clientLaunchError?: string;
+  launchHistory?: Array<{
+    launchedAt: string;
+    transport: string;
+    command: string;
+    mode: TargetSessionMode;
+    dryRun: boolean;
+    pid?: number | null;
+    error?: string;
+  }>;
 }
 
-type RemoteDesktopSessionAction = "observe_screen" | "request_control" | "release_control" | "refresh";
+type RemoteDesktopSessionAction = "observe_screen" | "request_control" | "release_control" | "refresh" | "launch_client";
 type SshTerminalSessionAction = "open_session" | "run_command" | "close_session" | "refresh";
 
 const initialRegistry = defaultTargetRegistry();
@@ -284,13 +298,36 @@ function formatLastSeenAt(value?: string): string {
   return parsed.toLocaleString();
 }
 
+function extractTargetHostFromEndpoint(target: TargetProfile): string {
+  const endpoint = target.adapters[0]?.endpoint ?? "";
+  if (!endpoint) return target.displayName;
+
+  try {
+    return new URL(endpoint).hostname.trim() || target.displayName;
+  } catch {
+    return endpoint
+      .replace(/^[a-z]+:\/\//i, "")
+      .split(/[/:]/)[0]
+      .trim() || target.displayName;
+  }
+}
+
 function defaultRemoteDesktopVisibleWindows(target: TargetProfile): string[] {
-  const host = target.adapters[0]?.endpoint ?? target.displayName;
+  const host = extractTargetHostFromEndpoint(target);
   return [
     `${target.displayName} 主視窗`,
     `${target.displayName} 工作列`,
     `${host} · 遠端桌面 session`,
   ];
+}
+
+function defaultRemoteDesktopLaunchCommand(target: TargetProfile): string {
+  const host = extractTargetHostFromEndpoint(target);
+  const port = target.connection.port && target.connection.port > 0 ? `:${target.connection.port}` : "";
+  if (typeof navigator !== "undefined" && navigator.platform.toLowerCase().includes("win")) {
+    return `mstsc.exe /v:${host}${port}`;
+  }
+  return `xfreerdp /v:${host}${port}`;
 }
 
 function createRemoteDesktopSessionPreview(target: TargetProfile, overrides: Partial<RemoteDesktopSessionState> = {}): RemoteDesktopSessionState {
@@ -317,6 +354,12 @@ function createRemoteDesktopSessionPreview(target: TargetProfile, overrides: Par
     controlGrantedAt: overrides.controlGrantedAt,
     releasedAt: overrides.releasedAt,
     permissionRequestId: overrides.permissionRequestId,
+    clientLaunchState: overrides.clientLaunchState,
+    clientLaunchCommand: overrides.clientLaunchCommand,
+    clientLaunchAt: overrides.clientLaunchAt,
+    clientLaunchPid: overrides.clientLaunchPid,
+    clientLaunchError: overrides.clientLaunchError,
+    launchHistory: Array.isArray(overrides.launchHistory) ? [...overrides.launchHistory] : [],
   };
 }
 
@@ -411,6 +454,12 @@ function normalizeRemoteDesktopSessionState(
     controlGrantedAt: session?.controlGrantedAt ?? base.controlGrantedAt,
     releasedAt: session?.releasedAt ?? base.releasedAt,
     permissionRequestId: permissionRequestId ?? session?.permissionRequestId ?? session?.controlRequestId ?? base.permissionRequestId,
+    clientLaunchState: session?.clientLaunchState ?? base.clientLaunchState,
+    clientLaunchCommand: session?.clientLaunchCommand ?? base.clientLaunchCommand,
+    clientLaunchAt: session?.clientLaunchAt ?? base.clientLaunchAt,
+    clientLaunchPid: session?.clientLaunchPid ?? base.clientLaunchPid,
+    clientLaunchError: session?.clientLaunchError ?? base.clientLaunchError,
+    launchHistory: Array.isArray(session?.launchHistory) ? [...session.launchHistory] : base.launchHistory,
   };
 }
 
@@ -1258,6 +1307,30 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               lastUpdatedAt: now,
               notes: [...currentSession.notes.slice(-4), "Control released in local preview."],
             })
+          : action === "launch_client"
+            ? createRemoteDesktopSessionPreview(currentTarget, {
+                ...currentSession,
+                state: currentTarget.connection.sessionMode === "control" ? "controlling" : "observing",
+                mode: currentTarget.connection.sessionMode,
+                transport: "local-native-rdp-preview",
+                clientLaunchState: "dry-run",
+                clientLaunchCommand: defaultRemoteDesktopLaunchCommand(currentTarget),
+                clientLaunchAt: now,
+                clientLaunchPid: null,
+                clientLaunchError: undefined,
+                launchHistory: [
+                  ...(currentSession.launchHistory?.slice(-4) ?? []),
+                  {
+                    launchedAt: now,
+                    transport: "local-native-rdp-preview",
+                    command: defaultRemoteDesktopLaunchCommand(currentTarget),
+                    mode: currentTarget.connection.sessionMode,
+                    dryRun: true,
+                  },
+                ],
+                lastUpdatedAt: now,
+                notes: [...currentSession.notes.slice(-4), "Native RDP client launch recorded in local preview."],
+              })
           : createRemoteDesktopSessionPreview(currentTarget, {
               ...currentSession,
               state: "observing",
@@ -1288,6 +1361,15 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         reason?: string;
         session?: Partial<RemoteDesktopSessionState>;
         permissionRequest?: { requestId?: string };
+        launch?: {
+          launchedAt?: string;
+          transport?: string;
+          command?: string;
+          mode?: TargetSessionMode;
+          dryRun?: boolean;
+          pid?: number | null;
+          error?: string;
+        };
         target?: TargetProfile;
         registry?: TargetRegistry;
         dispatches?: TargetDispatchRecord[];
@@ -1599,9 +1681,13 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 <small>
                   visible windows：{remoteDesktopView?.visibleWindows?.length ? remoteDesktopView.visibleWindows.length : 0}
                 </small>
+                <small>client launch：{remoteDesktopView?.clientLaunchState ?? "idle"}</small>
+                <small>launch command：{remoteDesktopView?.clientLaunchCommand ?? "未啟動"}</small>
+                <small>launch pid：{remoteDesktopView?.clientLaunchPid ?? "n/a"}</small>
                 <small>last observed：{formatLastSeenAt(remoteDesktopView?.lastObservedAt ?? remoteDesktopView?.lastUpdatedAt)}</small>
                 {latestRemoteDesktopNote ? <small>latest note：{latestRemoteDesktopNote}</small> : null}
                 {remoteDesktopActionBlocked ? <small>請先儲存這個 target，再與 gateway 互動。</small> : null}
+                {remoteDesktopView?.clientLaunchError ? <small>launch error：{remoteDesktopView.clientLaunchError}</small> : null}
               </section>
             ) : null}
             {draft.kind === "ssh-terminal" ? (
@@ -1687,6 +1773,15 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   >
                     <RefreshCw size={16} />
                     重新整理 Session
+                  </button>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => void mutateRemoteDesktopSession("launch_client")}
+                    disabled={busy || remoteDesktopBusy || remoteDesktopActionBlocked}
+                  >
+                    <Send size={16} />
+                    啟動 RDP Client
                   </button>
                 </>
               ) : null}

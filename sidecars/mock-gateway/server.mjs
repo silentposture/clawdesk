@@ -2990,6 +2990,7 @@ function cloneRemoteDesktopSessionState(session) {
     ...session,
     visibleWindows: Array.isArray(session.visibleWindows) ? [...session.visibleWindows] : [],
     notes: Array.isArray(session.notes) ? [...session.notes] : [],
+    launchHistory: Array.isArray(session.launchHistory) ? session.launchHistory.map((entry) => ({ ...entry })) : [],
   };
 }
 
@@ -3021,6 +3022,7 @@ function createRemoteDesktopSessionState(target, now = nowIso()) {
     visibleWindows,
     screenSummary: `遠端桌面契約已準備好：${target.displayName}。`,
     notes: ["等待 observe_screen 或 request_control。"],
+    launchHistory: [],
     lastUpdatedAt: now,
   };
 }
@@ -3054,10 +3056,70 @@ function refreshRemoteDesktopSessionState(target, session, now = nowIso()) {
     activeWindow: session.activeWindow && nextState === "controlling" ? session.activeWindow : visibleWindows[0],
     visibleWindows,
     screenSummary: `Gateway 遠端桌面契約觀察：${target.displayName} · ${extractTargetHost(target) || target.endpoint}.`,
+    launchHistory: Array.isArray(session.launchHistory) ? [...session.launchHistory] : [],
     lastObservedAt: now,
     lastUpdatedAt: now,
     notes: [...session.notes.slice(-4), `Observation refreshed at ${now}.`],
   };
+}
+
+function buildRemoteDesktopLaunchSpec(target) {
+  const host = extractTargetHost(target) || target.adapters[0]?.endpoint || target.displayName;
+  const port = Number(target.connection?.port ?? 3389);
+  const endpoint = port > 0 ? `${host}:${port}` : host;
+
+  if (process.platform === "win32") {
+    return {
+      executable: "mstsc.exe",
+      args: [`/v:${endpoint}`],
+      command: `mstsc.exe /v:${endpoint}`,
+      transport: "native-rdp-client",
+    };
+  }
+
+  return {
+    executable: "xfreerdp",
+    args: [`/v:${endpoint}`],
+    command: `xfreerdp /v:${endpoint}`,
+    transport: "native-rdp-client",
+  };
+}
+
+function spawnDetachedProcess(command, args, options = {}) {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      cwd: options.cwd,
+      env: { ...process.env, ...(options.env ?? {}) },
+      shell: false,
+      windowsHide: true,
+      detached: true,
+      stdio: "ignore",
+    });
+
+    let settled = false;
+    child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      resolve({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+        pid: null,
+      });
+    });
+    child.once("spawn", () => {
+      if (settled) return;
+      settled = true;
+      try {
+        child.unref();
+      } catch {
+        // unref is best effort for GUI transports.
+      }
+      resolve({
+        ok: true,
+        pid: typeof child.pid === "number" ? child.pid : null,
+      });
+    });
+  });
 }
 
 function markRemoteDesktopTargetActive(target, now = nowIso()) {
@@ -3164,6 +3226,112 @@ function releaseRemoteDesktopSessionState(target) {
     reason: "Remote desktop control was released.",
     target: markRemoteDesktopTargetActive(baseTarget, now),
     session: nextSession,
+  };
+}
+
+async function launchRemoteDesktopClientState(target) {
+  const baseTarget = normalizeTargetProfileState(target);
+  if (baseTarget.kind !== "remote-desktop") {
+    return { allowed: false, reason: "This target is not a remote desktop target.", target: baseTarget };
+  }
+
+  const readinessIssues = targetConnectionReadinessIssuesState(baseTarget);
+  if (readinessIssues.length > 0) {
+    return { allowed: false, reason: readinessIssues[0], target: baseTarget };
+  }
+
+  if (!baseTarget.paired) {
+    return { allowed: false, reason: "Pair the remote desktop target before launching the client.", target: baseTarget };
+  }
+
+  if (!baseTarget.adapters?.[0]?.authenticated) {
+    return { allowed: false, reason: "Remote desktop target must be authenticated before launching the client.", target: baseTarget };
+  }
+
+  const now = nowIso();
+  const currentSession = refreshRemoteDesktopSessionState(baseTarget, getRemoteDesktopSessionState(baseTarget), now);
+  const launchSpec = buildRemoteDesktopLaunchSpec(baseTarget);
+  const dryRun = process.env.CLAWDESK_DISABLE_NATIVE_RDP_LAUNCH === "1" || process.env.CLAWDESK_REMOTE_DESKTOP_DRY_RUN === "1";
+  const launchEntry = {
+    launchedAt: now,
+    transport: dryRun ? `${launchSpec.transport}-dry-run` : launchSpec.transport,
+    command: launchSpec.command,
+    mode: baseTarget.connection?.sessionMode ?? "observe",
+    dryRun,
+  };
+
+  if (dryRun) {
+    const nextSession = {
+      ...currentSession,
+      state: baseTarget.connection?.sessionMode === "control" ? "controlling" : "observing",
+      mode: baseTarget.connection?.sessionMode ?? "observe",
+      transport: launchEntry.transport,
+      clientLaunchState: "dry-run",
+      clientLaunchCommand: launchSpec.command,
+      clientLaunchAt: now,
+      clientLaunchPid: null,
+      clientLaunchError: undefined,
+      launchHistory: [...(Array.isArray(currentSession.launchHistory) ? currentSession.launchHistory : []).slice(-4), launchEntry],
+      lastUpdatedAt: now,
+      notes: [...currentSession.notes.slice(-4), `Remote desktop client launch dry-run recorded: ${launchSpec.command}`],
+    };
+    remoteDesktopSessions.set(remoteDesktopSessionStorageKey(baseTarget.id), nextSession);
+    return {
+      allowed: true,
+      reason: "Remote desktop client launch dry-run recorded.",
+      target: markRemoteDesktopTargetActive(baseTarget, now),
+      session: nextSession,
+      launch: launchEntry,
+    };
+  }
+
+  const execution = await spawnDetachedProcess(launchSpec.executable, launchSpec.args, { cwd: homeDir });
+  if (!execution.ok) {
+    const failedSession = {
+      ...currentSession,
+      clientLaunchState: "failed",
+      clientLaunchCommand: launchSpec.command,
+      clientLaunchAt: now,
+      clientLaunchPid: null,
+      clientLaunchError: execution.error,
+      launchHistory: [...(Array.isArray(currentSession.launchHistory) ? currentSession.launchHistory : []).slice(-4), { ...launchEntry, error: execution.error }],
+      lastUpdatedAt: now,
+      notes: [...currentSession.notes.slice(-4), `Remote desktop client launch failed: ${execution.error}`],
+    };
+    remoteDesktopSessions.set(remoteDesktopSessionStorageKey(baseTarget.id), failedSession);
+    return {
+      allowed: false,
+      reason: execution.error || "Failed to launch the native remote desktop client.",
+      target: baseTarget,
+      session: failedSession,
+      launch: launchEntry,
+    };
+  }
+
+  const nextSession = {
+    ...currentSession,
+    state: baseTarget.connection?.sessionMode === "control" ? "controlling" : "observing",
+    mode: baseTarget.connection?.sessionMode ?? "observe",
+    transport: launchEntry.transport,
+    clientLaunchState: "launched",
+    clientLaunchCommand: launchSpec.command,
+    clientLaunchAt: now,
+    clientLaunchPid: execution.pid ?? null,
+    clientLaunchError: undefined,
+    launchHistory: [...(Array.isArray(currentSession.launchHistory) ? currentSession.launchHistory : []).slice(-4), { ...launchEntry, pid: execution.pid ?? null }],
+    lastUpdatedAt: now,
+    notes: [...currentSession.notes.slice(-4), `Remote desktop client launched: ${launchSpec.command}`],
+  };
+  remoteDesktopSessions.set(remoteDesktopSessionStorageKey(baseTarget.id), nextSession);
+  return {
+    allowed: true,
+    reason: "Remote desktop client launched.",
+    target: markRemoteDesktopTargetActive(baseTarget, now),
+    session: nextSession,
+    launch: {
+      ...launchEntry,
+      pid: execution.pid ?? null,
+    },
   };
 }
 
@@ -8252,6 +8420,8 @@ const server = http.createServer(async (req, res) => {
         result = requestRemoteDesktopControlState(target);
       } else if (action === "release_control" || action === "disconnect") {
         result = releaseRemoteDesktopSessionState(target);
+      } else if (action === "launch_client" || action === "launch" || action === "open_client") {
+        result = await launchRemoteDesktopClientState(target);
       } else {
         json(res, 400, { error: "Unsupported remote desktop action" });
         return;
@@ -8268,6 +8438,9 @@ const server = http.createServer(async (req, res) => {
           action,
           state: result.session?.state,
           mode: result.session?.mode,
+          clientLaunchState: result.session?.clientLaunchState,
+          clientLaunchCommand: result.session?.clientLaunchCommand,
+          clientLaunchPid: result.session?.clientLaunchPid,
         });
       } else {
         audit("targets.remote-desktop.session.rejected", {
@@ -8284,6 +8457,7 @@ const server = http.createServer(async (req, res) => {
         target: result.target,
         session: result.session,
         permissionRequest: result.permissionRequest,
+        launch: result.launch,
         registry: cloneTargetRegistryState(targetRegistry),
         dispatches: targetDispatches.slice(0, 200),
       });

@@ -114,8 +114,8 @@ export const gatewayAdapterMethods: GatewayAdapterMethod[] = [
   { name: "targetsExecute", method: "POST", path: "/targets/execute", status: "partial", purpose: "執行 allowlisted local-shell 或 SSH safe command，必要時可經 gateway-managed SSH credential ref，並回傳 stdout/stderr 摘要。" },
   { name: "targetsSshTerminalSessionRead", method: "GET", path: "/targets/ssh-terminal/session", status: "partial", purpose: "讀取 SSH terminal session 與 redacted transcript snapshot。" },
   { name: "targetsSshTerminalSession", method: "POST", path: "/targets/ssh-terminal/session", status: "partial", purpose: "建立 SSH terminal open / command / close contract，並維持 allowlisted command、redacted transcript 與審批安全邊界。" },
-  { name: "targetsRemoteDesktopSessionRead", method: "GET", path: "/targets/remote-desktop/session", status: "partial", purpose: "讀取遠端桌面 session 快照與觀察摘要。" },
-  { name: "targetsRemoteDesktopSession", method: "POST", path: "/targets/remote-desktop/session", status: "partial", purpose: "建立遠端桌面 observe / control session contract，控制請求會進入 permission queue。" },
+  { name: "targetsRemoteDesktopSessionRead", method: "GET", path: "/targets/remote-desktop/session", status: "partial", purpose: "讀取遠端桌面 session 快照、觀察摘要與 native client launch 狀態。" },
+  { name: "targetsRemoteDesktopSession", method: "POST", path: "/targets/remote-desktop/session", status: "partial", purpose: "建立遠端桌面 observe / control / native launch session contract，控制請求會進入 permission queue。" },
 ];
 
 export const defaultContextBudget: ContextBudget = {
