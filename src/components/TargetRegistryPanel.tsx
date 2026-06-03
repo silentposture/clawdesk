@@ -71,6 +71,33 @@ interface TargetExecutionState {
   targetName: string;
 }
 
+interface SshTerminalTranscriptEntry {
+  id: string;
+  role: "system" | "command" | "output" | "error";
+  text: string;
+  createdAt: string;
+}
+
+interface SshTerminalSessionState {
+  sessionId: string;
+  targetId: string;
+  targetName: string;
+  endpoint: string;
+  transport: string;
+  state: "idle" | "connected" | "closed";
+  mode: TargetSessionMode;
+  prompt: string;
+  currentDirectory: string;
+  transcript: SshTerminalTranscriptEntry[];
+  commandHistory: string[];
+  notes: string[];
+  lastUpdatedAt: string;
+  lastObservedAt?: string;
+  lastCommand?: string;
+  lastCommandAt?: string;
+  lastExitCode?: number;
+}
+
 interface RemoteDesktopSessionState {
   sessionId: string;
   targetId: string;
@@ -93,6 +120,7 @@ interface RemoteDesktopSessionState {
 }
 
 type RemoteDesktopSessionAction = "observe_screen" | "request_control" | "release_control" | "refresh";
+type SshTerminalSessionAction = "open_session" | "run_command" | "close_session" | "refresh";
 
 const initialRegistry = defaultTargetRegistry();
 const initialTarget = initialRegistry.targets[0];
@@ -292,6 +320,73 @@ function createRemoteDesktopSessionPreview(target: TargetProfile, overrides: Par
   };
 }
 
+function defaultSshTerminalTranscript(target: TargetProfile): SshTerminalTranscriptEntry[] {
+  const host = target.adapters[0]?.endpoint ?? target.displayName;
+  return [
+    {
+      id: `ssh-entry-${Math.random().toString(36).slice(2, 10)}`,
+      role: "system",
+      text: `SSH terminal session ready for ${target.displayName} at ${host}.`,
+      createdAt: new Date().toISOString(),
+    },
+  ];
+}
+
+function createSshTerminalSessionPreview(
+  target: TargetProfile,
+  overrides: Partial<SshTerminalSessionState> = {},
+): SshTerminalSessionState {
+  const transcript = Array.isArray(overrides.transcript) && overrides.transcript.length > 0 ? [...overrides.transcript] : defaultSshTerminalTranscript(target);
+  const notes = Array.isArray(overrides.notes) && overrides.notes.length > 0 ? [...overrides.notes] : ["Awaiting open_session or run_command."];
+  const prompt = overrides.prompt ?? `${target.connection.username?.trim() || "ssh"}@${target.adapters[0]?.endpoint ?? target.displayName}:~$`;
+  const now = overrides.lastUpdatedAt ?? new Date().toISOString();
+  return {
+    sessionId: overrides.sessionId ?? `ssh_preview_${target.id}`,
+    targetId: target.id,
+    targetName: target.displayName,
+    endpoint: overrides.endpoint ?? target.adapters[0]?.endpoint ?? target.displayName,
+    transport: overrides.transport ?? "local-ssh-terminal-preview",
+    state: overrides.state ?? "idle",
+    mode: overrides.mode ?? target.connection.sessionMode,
+    prompt,
+    currentDirectory: overrides.currentDirectory ?? "~",
+    transcript,
+    commandHistory: Array.isArray(overrides.commandHistory) ? [...overrides.commandHistory] : [],
+    notes,
+    lastUpdatedAt: now,
+    lastObservedAt: overrides.lastObservedAt,
+    lastCommand: overrides.lastCommand,
+    lastCommandAt: overrides.lastCommandAt,
+    lastExitCode: overrides.lastExitCode,
+  };
+}
+
+function normalizeSshTerminalSessionState(
+  target: TargetProfile,
+  session?: Partial<SshTerminalSessionState>,
+): SshTerminalSessionState {
+  const base = createSshTerminalSessionPreview(target, session ?? {});
+  return {
+    ...base,
+    sessionId: session?.sessionId ?? base.sessionId,
+    endpoint: session?.endpoint ?? base.endpoint,
+    targetName: session?.targetName ?? base.targetName,
+    transport: session?.transport ?? base.transport,
+    state: session?.state ?? base.state,
+    mode: session?.mode ?? base.mode,
+    prompt: session?.prompt ?? base.prompt,
+    currentDirectory: session?.currentDirectory ?? base.currentDirectory,
+    transcript: Array.isArray(session?.transcript) && session.transcript.length > 0 ? [...session.transcript] : base.transcript,
+    commandHistory: Array.isArray(session?.commandHistory) ? [...session.commandHistory] : base.commandHistory,
+    notes: Array.isArray(session?.notes) && session.notes.length > 0 ? [...session.notes] : base.notes,
+    lastUpdatedAt: session?.lastUpdatedAt ?? base.lastUpdatedAt,
+    lastObservedAt: session?.lastObservedAt ?? base.lastObservedAt,
+    lastCommand: session?.lastCommand ?? base.lastCommand,
+    lastCommandAt: session?.lastCommandAt ?? base.lastCommandAt,
+    lastExitCode: session?.lastExitCode ?? base.lastExitCode,
+  };
+}
+
 function normalizeRemoteDesktopSessionState(
   target: TargetProfile,
   session?: Partial<RemoteDesktopSessionState>,
@@ -342,7 +437,11 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const [remoteDesktopSession, setRemoteDesktopSession] = useState<RemoteDesktopSessionState>();
   const [remoteDesktopBusy, setRemoteDesktopBusy] = useState(false);
   const remoteDesktopSessionRequestTokenRef = useRef(0);
+  const [sshTerminalSession, setSshTerminalSession] = useState<SshTerminalSessionState>();
+  const [sshTerminalBusy, setSshTerminalBusy] = useState(false);
+  const sshTerminalSessionRequestTokenRef = useRef(0);
   const [sshPrivateKeyDraft, setSshPrivateKeyDraft] = useState("");
+  const [sshTerminalCommandDraft, setSshTerminalCommandDraft] = useState("git status");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
@@ -356,6 +455,11 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const remoteDesktopView = remoteDesktopSession ?? (draft.kind === "remote-desktop" ? createRemoteDesktopSessionPreview(draftTarget) : undefined);
   const remoteDesktopNotes = remoteDesktopView?.notes ?? [];
   const latestRemoteDesktopNote = remoteDesktopNotes[remoteDesktopNotes.length - 1];
+  const sshTerminalActionBlocked = draft.kind === "ssh-terminal" && Boolean(gatewayBaseUrl) && !draftIsSaved;
+  const sshTerminalView = sshTerminalSession ?? (draft.kind === "ssh-terminal" ? createSshTerminalSessionPreview(draftTarget) : undefined);
+  const sshTerminalTranscript = sshTerminalView?.transcript ?? [];
+  const sshTerminalNotes = sshTerminalView?.notes ?? [];
+  const latestSshTerminalNote = sshTerminalNotes[sshTerminalNotes.length - 1];
   const trustedWorkspaceCount = draft.trustedWorkspaces
     .split(/[\n,]/g)
     .map((item) => item.trim())
@@ -363,6 +467,70 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
 
   function clearSensitiveDraftState() {
     setSshPrivateKeyDraft("");
+  }
+
+  function clearManagedSessionState() {
+    remoteDesktopSessionRequestTokenRef.current += 1;
+    setRemoteDesktopBusy(false);
+    setRemoteDesktopSession(undefined);
+    sshTerminalSessionRequestTokenRef.current += 1;
+    setSshTerminalBusy(false);
+    setSshTerminalSession(undefined);
+  }
+
+  function previewManagedSessionForTarget(target?: TargetProfile) {
+    if (!target) {
+      clearManagedSessionState();
+      return;
+    }
+
+    if (target.kind === "remote-desktop") {
+      remoteDesktopSessionRequestTokenRef.current += 1;
+      setRemoteDesktopBusy(false);
+      setRemoteDesktopSession(createRemoteDesktopSessionPreview(target));
+      sshTerminalSessionRequestTokenRef.current += 1;
+      setSshTerminalBusy(false);
+      setSshTerminalSession(undefined);
+      return;
+    }
+
+    if (target.kind === "ssh-terminal") {
+      sshTerminalSessionRequestTokenRef.current += 1;
+      setSshTerminalBusy(false);
+      setSshTerminalSession(createSshTerminalSessionPreview(target));
+      setSshTerminalCommandDraft((current) => (current.trim() ? current : "git status"));
+      remoteDesktopSessionRequestTokenRef.current += 1;
+      setRemoteDesktopBusy(false);
+      setRemoteDesktopSession(undefined);
+      return;
+    }
+
+    clearManagedSessionState();
+  }
+
+  function syncManagedSessionForTarget(target?: TargetProfile) {
+    if (!target) {
+      clearManagedSessionState();
+      return;
+    }
+
+    if (target.kind === "remote-desktop") {
+      sshTerminalSessionRequestTokenRef.current += 1;
+      setSshTerminalBusy(false);
+      setSshTerminalSession(undefined);
+      void loadRemoteDesktopSession(target);
+      return;
+    }
+
+    if (target.kind === "ssh-terminal") {
+      remoteDesktopSessionRequestTokenRef.current += 1;
+      setRemoteDesktopBusy(false);
+      setRemoteDesktopSession(undefined);
+      void loadSshTerminalSession(target);
+      return;
+    }
+
+    clearManagedSessionState();
   }
 
   useEffect(() => {
@@ -381,15 +549,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setPreview(undefined);
       setExecution(undefined);
       clearSensitiveDraftState();
-      if (nextTarget?.kind === "remote-desktop") {
-        remoteDesktopSessionRequestTokenRef.current += 1;
-        setRemoteDesktopBusy(false);
-        setRemoteDesktopSession(createRemoteDesktopSessionPreview(nextTarget));
-      } else {
-        remoteDesktopSessionRequestTokenRef.current += 1;
-        setRemoteDesktopBusy(false);
-        setRemoteDesktopSession(undefined);
-      }
+      syncManagedSessionForTarget(nextTarget);
       setMessage("已使用本機預設 target 登錄。");
       setError(undefined);
       return;
@@ -416,13 +576,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setPreview(undefined);
       setExecution(undefined);
       clearSensitiveDraftState();
-      if (nextTarget?.kind === "remote-desktop") {
-        void loadRemoteDesktopSession(nextTarget);
-      } else {
-        remoteDesktopSessionRequestTokenRef.current += 1;
-        setRemoteDesktopBusy(false);
-        setRemoteDesktopSession(undefined);
-      }
+      syncManagedSessionForTarget(nextTarget);
       setMessage("已讀取 gateway target registry。");
     } catch {
       setRegistry(cloneTargetRegistry(initialRegistry));
@@ -435,15 +589,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setPreview(undefined);
       setExecution(undefined);
       clearSensitiveDraftState();
-      if (nextTarget?.kind === "remote-desktop") {
-        remoteDesktopSessionRequestTokenRef.current += 1;
-        setRemoteDesktopBusy(false);
-        setRemoteDesktopSession(createRemoteDesktopSessionPreview(nextTarget));
-      } else {
-        remoteDesktopSessionRequestTokenRef.current += 1;
-        setRemoteDesktopBusy(false);
-        setRemoteDesktopSession(undefined);
-      }
+      syncManagedSessionForTarget(nextTarget);
       setError("無法讀取 gateway 的 target registry，已切回本機預設清單。");
     } finally {
       setBusy(false);
@@ -456,13 +602,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setPreview(undefined);
     setExecution(undefined);
     clearSensitiveDraftState();
-    if (target.kind === "remote-desktop") {
-      void loadRemoteDesktopSession(target);
-    } else {
-      remoteDesktopSessionRequestTokenRef.current += 1;
-      setRemoteDesktopBusy(false);
-      setRemoteDesktopSession(undefined);
-    }
+    syncManagedSessionForTarget(target);
     setMessage(undefined);
     setError(undefined);
   }
@@ -474,15 +614,10 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setPreview(undefined);
     setExecution(undefined);
     clearSensitiveDraftState();
-    if (kind === "remote-desktop") {
-      remoteDesktopSessionRequestTokenRef.current += 1;
-      setRemoteDesktopBusy(false);
-      setRemoteDesktopSession(createRemoteDesktopSessionPreview(buildTargetFromDraft(nextDraft)));
-    } else {
-      remoteDesktopSessionRequestTokenRef.current += 1;
-      setRemoteDesktopBusy(false);
-      setRemoteDesktopSession(undefined);
+    if (kind === "ssh-terminal") {
+      setSshTerminalCommandDraft("git status");
     }
+    previewManagedSessionForTarget(buildTargetFromDraft(nextDraft));
     setMessage(`已建立 ${defaultDisplayNameForKind(kind)} 的草稿。`);
     setError(undefined);
   }
@@ -513,28 +648,14 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setPreview(undefined);
       setExecution(undefined);
       clearSensitiveDraftState();
-      if (sessionTarget?.kind === "remote-desktop") {
-        void loadRemoteDesktopSession(sessionTarget);
-      } else {
-        remoteDesktopSessionRequestTokenRef.current += 1;
-        setRemoteDesktopBusy(false);
-        setRemoteDesktopSession(undefined);
-      }
+      syncManagedSessionForTarget(sessionTarget);
       setMessage(statusMessage);
     } catch {
       setRegistry(cloneTargetRegistry(nextRegistry));
       setPreview(undefined);
       setExecution(undefined);
       clearSensitiveDraftState();
-      if (sessionTarget?.kind === "remote-desktop") {
-        remoteDesktopSessionRequestTokenRef.current += 1;
-        setRemoteDesktopBusy(false);
-        setRemoteDesktopSession(createRemoteDesktopSessionPreview(sessionTarget));
-      } else {
-        remoteDesktopSessionRequestTokenRef.current += 1;
-        setRemoteDesktopBusy(false);
-        setRemoteDesktopSession(undefined);
-      }
+      previewManagedSessionForTarget(sessionTarget);
       setMessage(`${statusMessage}（僅保留本機狀態，gateway 儲存失敗）`);
       setError(undefined);
     } finally {
@@ -604,13 +725,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         setPreview(undefined);
         setExecution(undefined);
         clearSensitiveDraftState();
-        if (nextTarget.kind === "remote-desktop") {
-          void loadRemoteDesktopSession(nextTarget);
-        } else {
-          remoteDesktopSessionRequestTokenRef.current += 1;
-          setRemoteDesktopBusy(false);
-          setRemoteDesktopSession(undefined);
-        }
+        syncManagedSessionForTarget(nextTarget);
         setMessage(payload.reason || result.reason);
       } catch {
         const nextRegistry = upsertTarget(registry, result.target);
@@ -620,15 +735,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         setPreview(undefined);
         setExecution(undefined);
         clearSensitiveDraftState();
-        if (result.target.kind === "remote-desktop") {
-          remoteDesktopSessionRequestTokenRef.current += 1;
-          setRemoteDesktopBusy(false);
-          setRemoteDesktopSession(createRemoteDesktopSessionPreview(result.target));
-        } else {
-          remoteDesktopSessionRequestTokenRef.current += 1;
-          setRemoteDesktopBusy(false);
-          setRemoteDesktopSession(undefined);
-        }
+        previewManagedSessionForTarget(result.target);
         setMessage(`${result.reason}（僅保留本機狀態，gateway 連線更新失敗）`);
       } finally {
         setBusy(false);
@@ -643,15 +750,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setPreview(undefined);
     setExecution(undefined);
     clearSensitiveDraftState();
-    if (result.target.kind === "remote-desktop") {
-      remoteDesktopSessionRequestTokenRef.current += 1;
-      setRemoteDesktopBusy(false);
-      setRemoteDesktopSession(createRemoteDesktopSessionPreview(result.target));
-    } else {
-      remoteDesktopSessionRequestTokenRef.current += 1;
-      setRemoteDesktopBusy(false);
-      setRemoteDesktopSession(undefined);
-    }
+    previewManagedSessionForTarget(result.target);
     setMessage(result.reason);
   }
 
@@ -890,6 +989,240 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     } finally {
       if (requestToken === remoteDesktopSessionRequestTokenRef.current) {
         setRemoteDesktopBusy(false);
+      }
+    }
+  }
+
+  async function loadSshTerminalSession(target: TargetProfile) {
+    if (target.kind !== "ssh-terminal") {
+      sshTerminalSessionRequestTokenRef.current += 1;
+      setSshTerminalBusy(false);
+      setSshTerminalSession(undefined);
+      return;
+    }
+
+    if (!gatewayBaseUrl) {
+      sshTerminalSessionRequestTokenRef.current += 1;
+      setSshTerminalBusy(false);
+      setSshTerminalSession(createSshTerminalSessionPreview(target));
+      setSshTerminalCommandDraft((current) => current.trim() ? current : "git status");
+      setError(undefined);
+      return;
+    }
+
+    const requestToken = ++sshTerminalSessionRequestTokenRef.current;
+    setSshTerminalBusy(true);
+    try {
+      const response = await fetch(`${gatewayBaseUrl}/targets/ssh-terminal/session?targetId=${encodeURIComponent(target.id)}`);
+      const payload = (await response.json()) as {
+        session?: Partial<SshTerminalSessionState>;
+        target?: TargetProfile;
+        error?: string;
+      };
+
+      if (!response.ok) {
+        if (requestToken !== sshTerminalSessionRequestTokenRef.current) {
+          return;
+        }
+        setSshTerminalSession(createSshTerminalSessionPreview(target));
+        if (response.status === 404 || response.status === 400) {
+          setError(undefined);
+          return;
+        }
+        throw new Error(payload.error || "bad response");
+      }
+
+      if (requestToken !== sshTerminalSessionRequestTokenRef.current) {
+        return;
+      }
+      const nextTarget = payload.target ?? target;
+      const nextSession = normalizeSshTerminalSessionState(nextTarget, payload.session);
+      setSshTerminalSession(nextSession);
+      setSshTerminalCommandDraft(nextSession.lastCommand ?? "git status");
+      setError(undefined);
+    } catch (caught) {
+      if (requestToken !== sshTerminalSessionRequestTokenRef.current) {
+        return;
+      }
+      setSshTerminalSession(createSshTerminalSessionPreview(target));
+      setError(caught instanceof Error ? caught.message : "無法讀取 SSH terminal session。");
+    } finally {
+      if (requestToken === sshTerminalSessionRequestTokenRef.current) {
+        setSshTerminalBusy(false);
+      }
+    }
+  }
+
+  async function mutateSshTerminalSession(action: SshTerminalSessionAction) {
+    const currentTarget = draftTarget;
+    if (currentTarget.kind !== "ssh-terminal") {
+      setError("只有 SSH target 才能操作 session。");
+      return;
+    }
+
+    if (gatewayBaseUrl && !draftIsSaved) {
+      setError("請先儲存這個 target，再與 gateway 互動。");
+      return;
+    }
+
+    if (!gatewayBaseUrl) {
+      const now = new Date().toISOString();
+      const currentSession = sshTerminalSession ?? createSshTerminalSessionPreview(currentTarget);
+
+      if (action === "run_command") {
+        const command = sshTerminalCommandDraft.trim();
+        if (!command) {
+          setError("請先輸入 SSH command。");
+          return;
+        }
+        if (currentSession.state !== "connected") {
+          setError("請先開啟 SSH terminal session。");
+          return;
+        }
+
+        const nextSession = normalizeSshTerminalSessionState(currentTarget, {
+          ...currentSession,
+          state: "connected",
+          lastCommand: command,
+          lastCommandAt: now,
+          lastExitCode: 0,
+          lastUpdatedAt: now,
+          notes: [...currentSession.notes.slice(-4), `Preview command queued: ${command}`],
+          commandHistory: [...currentSession.commandHistory.slice(-12), command],
+          transcript: [
+            ...currentSession.transcript.slice(-12),
+            { id: `ssh-entry-${Math.random().toString(36).slice(2, 10)}`, role: "command", text: command, createdAt: now },
+            {
+              id: `ssh-entry-${Math.random().toString(36).slice(2, 10)}`,
+              role: "output",
+              text: "本機預覽模式：未執行實際 SSH 命令。",
+              createdAt: now,
+            },
+          ],
+        });
+        setSshTerminalSession(nextSession);
+        setMessage(`已在本機預覽中送出 ${command}。`);
+        setError(undefined);
+        return;
+      }
+
+      if (action === "open_session") {
+        const nextSession = normalizeSshTerminalSessionState(currentTarget, {
+          ...currentSession,
+          state: "connected",
+          lastObservedAt: now,
+          lastUpdatedAt: now,
+          notes: [...currentSession.notes.slice(-4), "SSH terminal preview session opened."],
+          transcript: [
+            ...currentSession.transcript.slice(-12),
+            { id: `ssh-entry-${Math.random().toString(36).slice(2, 10)}`, role: "system", text: "Session opened.", createdAt: now },
+          ],
+        });
+        setSshTerminalSession(nextSession);
+        setMessage("已在本機預覽中開啟 SSH session。");
+        setError(undefined);
+        return;
+      }
+
+      if (action === "close_session") {
+        const nextSession = normalizeSshTerminalSessionState(currentTarget, {
+          ...currentSession,
+          state: "closed",
+          lastUpdatedAt: now,
+          notes: [...currentSession.notes.slice(-4), "SSH terminal preview session closed."],
+          transcript: [
+            ...currentSession.transcript.slice(-12),
+            { id: `ssh-entry-${Math.random().toString(36).slice(2, 10)}`, role: "system", text: "Session closed.", createdAt: now },
+          ],
+        });
+        setSshTerminalSession(nextSession);
+        setMessage("已在本機預覽中關閉 SSH session。");
+        setError(undefined);
+        return;
+      }
+
+      const refreshedSession = normalizeSshTerminalSessionState(currentTarget, {
+        ...currentSession,
+        lastObservedAt: now,
+        lastUpdatedAt: now,
+        notes: [...currentSession.notes.slice(-4), "SSH terminal preview snapshot refreshed."],
+      });
+      setSshTerminalSession(refreshedSession);
+      setMessage("已在本機預覽中重新整理 SSH session。");
+      setError(undefined);
+      return;
+    }
+
+    const requestToken = ++sshTerminalSessionRequestTokenRef.current;
+    setSshTerminalBusy(true);
+    setError(undefined);
+    try {
+      const requestBody: { targetId: string; action: SshTerminalSessionAction; command?: string } = {
+        targetId: currentTarget.id,
+        action,
+      };
+      if (action === "run_command") {
+        requestBody.command = sshTerminalCommandDraft;
+      }
+
+      const response = await fetch(`${gatewayBaseUrl}/targets/ssh-terminal/session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(requestBody),
+      });
+      const payload = (await response.json()) as {
+        allowed?: boolean;
+        reason?: string;
+        session?: Partial<SshTerminalSessionState>;
+        execution?: TargetExecutionState;
+        record?: TargetDispatchRecord;
+        target?: TargetProfile;
+        registry?: TargetRegistry;
+        dispatches?: TargetDispatchRecord[];
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || payload.reason || "bad response");
+      }
+      if (payload.allowed === false) {
+        if (requestToken !== sshTerminalSessionRequestTokenRef.current) {
+          return;
+        }
+        const nextTarget = payload.target ?? currentTarget;
+        setSshTerminalSession(normalizeSshTerminalSessionState(nextTarget, payload.session));
+        setError(payload.reason || "SSH terminal session 更新失敗。");
+        return;
+      }
+
+      if (requestToken !== sshTerminalSessionRequestTokenRef.current) {
+        return;
+      }
+      const nextTarget = payload.target ?? currentTarget;
+      if (payload.registry?.targets?.length) {
+        setRegistry(cloneTargetRegistry(payload.registry));
+        if (Array.isArray(payload.dispatches)) {
+          setDispatches(payload.dispatches);
+        }
+      }
+      const nextSession = normalizeSshTerminalSessionState(nextTarget, payload.session);
+      setSelectedTargetId(nextTarget.id);
+      setDraft(draftFromTarget(nextTarget));
+      setSshTerminalSession(nextSession);
+      if (payload.execution?.command) {
+        setSshTerminalCommandDraft(payload.execution.command);
+      } else if (nextSession.lastCommand) {
+        setSshTerminalCommandDraft(nextSession.lastCommand);
+      }
+      setMessage(payload.reason || "SSH terminal session 已更新。");
+      setError(undefined);
+    } catch (caught) {
+      if (requestToken !== sshTerminalSessionRequestTokenRef.current) {
+        return;
+      }
+      setError(caught instanceof Error ? caught.message : "SSH terminal session 更新失敗。");
+    } finally {
+      if (requestToken === sshTerminalSessionRequestTokenRef.current) {
+        setSshTerminalBusy(false);
       }
     }
   }
@@ -1271,6 +1604,52 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 {remoteDesktopActionBlocked ? <small>請先儲存這個 target，再與 gateway 互動。</small> : null}
               </section>
             ) : null}
+            {draft.kind === "ssh-terminal" ? (
+              <section className="mcp-preview target-ssh-terminal-session">
+                <span>SSH Terminal Session</span>
+                <strong>{sshTerminalView?.targetName ?? draft.displayName}</strong>
+                <p>
+                  {sshTerminalView?.state === "connected"
+                    ? "SSH session 已開啟，可送出 allowlisted command。"
+                    : sshTerminalView?.state === "closed"
+                      ? "SSH session 已關閉，必要時可重新開啟。"
+                      : "尚未開啟 SSH session，請先按開啟 Session。"}
+                </p>
+                <small>state：{sshTerminalView?.state ?? "idle"} · mode：{sshTerminalView?.mode ?? draft.sessionMode}</small>
+                <small>prompt：{sshTerminalView?.prompt ?? "未建立"}</small>
+                <small>cwd：{sshTerminalView?.currentDirectory ?? "~"} · last exit：{sshTerminalView?.lastExitCode ?? "未執行"}</small>
+                <small>transport：{sshTerminalView?.transport ?? "未設定"}</small>
+                <small>last command：{sshTerminalView?.lastCommand ?? "未執行"}</small>
+                <small>last observed：{formatLastSeenAt(sshTerminalView?.lastObservedAt ?? sshTerminalView?.lastUpdatedAt)}</small>
+                {latestSshTerminalNote ? <small>latest note：{latestSshTerminalNote}</small> : null}
+                {sshTerminalActionBlocked ? <small>請先儲存這個 target，再與 gateway 互動。</small> : null}
+                <label className="ssh-terminal-command">
+                  <span>SSH command</span>
+                  <textarea
+                    value={sshTerminalCommandDraft}
+                    onChange={(event) => setSshTerminalCommandDraft(event.target.value)}
+                    placeholder="git status"
+                  />
+                  <small>只會透過 safe-dispatch 與 gateway-managed SSH session contract 執行 allowlisted 命令。</small>
+                </label>
+                <section className="ssh-terminal-transcript">
+                  <span>Transcript</span>
+                  <div className="ssh-terminal-transcript-list">
+                    {sshTerminalTranscript.length > 0 ? (
+                      sshTerminalTranscript.map((entry) => (
+                        <article key={entry.id} className={`ssh-terminal-transcript-entry role-${entry.role}`}>
+                          <strong>{entry.role}</strong>
+                          <p>{entry.text}</p>
+                          <small>{formatLastSeenAt(entry.createdAt)}</small>
+                        </article>
+                      ))
+                    ) : (
+                      <p>尚未建立 transcript。</p>
+                    )}
+                  </div>
+                </section>
+              </section>
+            ) : null}
             <div className="panel-actions">
               {draft.kind === "remote-desktop" ? (
                 <>
@@ -1308,6 +1687,45 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   >
                     <RefreshCw size={16} />
                     重新整理 Session
+                  </button>
+                </>
+              ) : null}
+              {draft.kind === "ssh-terminal" ? (
+                <>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void mutateSshTerminalSession("open_session")}
+                    disabled={busy || sshTerminalBusy || sshTerminalActionBlocked || connectionIssues.length > 0}
+                  >
+                    <RefreshCw size={16} />
+                    開啟 Session
+                  </button>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => void mutateSshTerminalSession("run_command")}
+                    disabled={busy || sshTerminalBusy || sshTerminalActionBlocked || connectionIssues.length > 0 || !sshTerminalCommandDraft.trim()}
+                  >
+                    <Send size={16} />
+                    送出命令
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void mutateSshTerminalSession("refresh")}
+                    disabled={busy || sshTerminalBusy || sshTerminalActionBlocked || connectionIssues.length > 0}
+                  >
+                    <RefreshCw size={16} />
+                    重新整理
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void mutateSshTerminalSession("close_session")}
+                    disabled={busy || sshTerminalBusy || sshTerminalActionBlocked || connectionIssues.length > 0}
+                  >
+                    關閉 Session
                   </button>
                 </>
               ) : null}

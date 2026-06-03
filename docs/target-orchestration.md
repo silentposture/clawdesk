@@ -40,7 +40,7 @@ The control plane chooses a target and then chooses the safest adapter for the r
 - Unit coverage: [`src/lib/targets.test.ts`](../src/lib/targets.test.ts)
 - Target registry UI: [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
 - Pairing, host-key verification, connect, disconnect, and refresh actions: [`src/lib/targets.ts`](../src/lib/targets.ts), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
-- Gateway-managed SSH credential ref issuance, allowlisted local-shell / SSH safe command execution, and remote-desktop observe/control session contracts with permission-gated control requests through the gateway: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
+- Gateway-managed SSH credential ref issuance, allowlisted local-shell / SSH safe command execution, gateway-managed SSH terminal session contracts with redacted transcripts, and remote-desktop observe/control session contracts with permission-gated control requests through the gateway: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
 - Mock gateway storage for registry, connection state, and dispatch logs: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
 - Existing approval and policy primitives: [`src/lib/security.ts`](../src/lib/security.ts), [`src/lib/permissions.ts`](../src/lib/permissions.ts), [`src/components/PermissionModal.tsx`](../src/components/PermissionModal.tsx)
 - Current gateway and desktop shell integration: [`src/lib/tauri.ts`](../src/lib/tauri.ts), [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/App.tsx`](../src/App.tsx)

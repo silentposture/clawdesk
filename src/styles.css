@@ -1413,6 +1413,84 @@ th {
   background: #341c1c;
 }
 
+.target-ssh-terminal-session {
+  border: 1px solid #c6ddd2;
+  background: #eef7f2;
+}
+
+.ssh-terminal-command {
+  display: grid;
+  gap: 6px;
+}
+
+.ssh-terminal-command textarea {
+  min-height: 86px;
+  border: 1px solid #c9d3cd;
+  border-radius: 8px;
+  padding: 10px 12px;
+  color: #1c2823;
+  background: #ffffff;
+  resize: vertical;
+}
+
+.ssh-terminal-transcript {
+  display: grid;
+  gap: 8px;
+  border: 1px solid #d5ded8;
+  border-radius: 8px;
+  padding: 10px;
+  background: #ffffff;
+}
+
+.ssh-terminal-transcript > span {
+  color: #65746d;
+  font-size: 12px;
+}
+
+.ssh-terminal-transcript-list {
+  display: grid;
+  gap: 8px;
+  max-height: 220px;
+  overflow: auto;
+}
+
+.ssh-terminal-transcript-entry {
+  display: grid;
+  gap: 4px;
+  border: 1px solid #d8e1db;
+  border-radius: 8px;
+  padding: 10px 12px;
+  background: #f7faf7;
+}
+
+.ssh-terminal-transcript-entry strong {
+  color: #42514b;
+  font-size: 12px;
+  text-transform: uppercase;
+}
+
+.ssh-terminal-transcript-entry p {
+  margin: 0;
+  color: #2d3a34;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.45;
+}
+
+.ssh-terminal-transcript-entry small {
+  color: #6a7971;
+  font-size: 11px;
+}
+
+.ssh-terminal-transcript-entry.role-output {
+  background: #ffffff;
+}
+
+.ssh-terminal-transcript-entry.role-error {
+  border-color: #e4b1b1;
+  background: #fff3f3;
+}
+
 .quick-setup,
 .legal-consent-panel,
 .security-panel,

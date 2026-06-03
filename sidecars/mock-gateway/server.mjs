@@ -232,6 +232,8 @@ const gatewayAdapterMethods = [
   { name: "targetsSave", method: "POST", path: "/targets", status: "mock", purpose: "儲存 target registry 與 default target 選擇。" },
   { name: "targetsDispatchPreview", method: "POST", path: "/targets/dispatch-preview", status: "mock", purpose: "建立 target dispatch 預覽與 audit record。" },
   { name: "targetsDispatch", method: "POST", path: "/targets/dispatch", status: "mock", purpose: "儲存 target dispatch record 與 audit trail。" },
+  { name: "targetsSshTerminalSessionRead", method: "GET", path: "/targets/ssh-terminal/session", status: "partial", purpose: "讀取 SSH terminal session 與 transcript snapshot。" },
+  { name: "targetsSshTerminalSession", method: "POST", path: "/targets/ssh-terminal/session", status: "partial", purpose: "建立 SSH terminal open / command / close contract，命令執行維持 allowlisted 與審批安全邊界。" },
   { name: "targetsRemoteDesktopSessionRead", method: "GET", path: "/targets/remote-desktop/session", status: "partial", purpose: "讀取遠端桌面 session 與最近觀察摘要。" },
   { name: "targetsRemoteDesktopSession", method: "POST", path: "/targets/remote-desktop/session", status: "partial", purpose: "建立遠端桌面 observe / control session contract，控制請求會進入 permission queue。" },
 ];
@@ -401,6 +403,7 @@ const BLOCKED_COMMAND_PATTERNS = [
 let targetRegistry = cloneTargetRegistryState(defaultTargetRegistry);
 let targetDispatches = [];
 const remoteDesktopSessions = new Map();
+const sshTerminalSessions = new Map();
 // SSH credential vault uses an in-memory index plus a local encrypted file for durable storage.
 const targetCredentialVault = new Map();
 let targetCredentialVaultSaveTimer;
@@ -3224,6 +3227,366 @@ function applyPermissionResultState(result) {
   };
 }
 
+function sshTerminalSessionStorageKey(targetId) {
+  return sanitizeTargetStorageKey(targetId);
+}
+
+function cloneSshTerminalTranscriptEntry(entry) {
+  return {
+    ...entry,
+  };
+}
+
+function cloneSshTerminalSessionState(session) {
+  return {
+    ...session,
+    transcript: Array.isArray(session.transcript) ? session.transcript.map(cloneSshTerminalTranscriptEntry) : [],
+    commandHistory: Array.isArray(session.commandHistory) ? [...session.commandHistory] : [],
+    notes: Array.isArray(session.notes) ? [...session.notes] : [],
+  };
+}
+
+function createSshTerminalPrompt(target) {
+  const host = extractTargetHost(target) || target.adapters[0]?.endpoint || target.displayName;
+  const user = target.connection?.username?.trim() || "ssh";
+  return `${user}@${host}:~$`;
+}
+
+function createSshTerminalSessionState(target, now = nowIso()) {
+  const host = extractTargetHost(target) || target.adapters[0]?.endpoint || target.displayName;
+  const prompt = createSshTerminalPrompt(target);
+  const sessionId = `ssh_${crypto
+    .createHash("sha256")
+    .update(`clawdesk-ssh-terminal:${target.id}`)
+    .digest("hex")
+    .slice(0, 24)}`;
+  return {
+    sessionId,
+    targetId: target.id,
+    targetName: target.displayName,
+    endpoint: target.adapters[0]?.endpoint ?? target.endpoint,
+    transport: "gateway-ssh-terminal-contract",
+    state: "idle",
+    mode: target.connection?.sessionMode ?? "control",
+    prompt,
+    currentDirectory: "~",
+    transcript: [
+      {
+        id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+        role: "system",
+        text: `SSH terminal session ready for ${target.displayName} at ${host}.`,
+        createdAt: now,
+      },
+    ],
+    commandHistory: [],
+    notes: ["Awaiting open_session or run_command."],
+    lastUpdatedAt: now,
+  };
+}
+
+function getSshTerminalSessionState(target) {
+  const key = sshTerminalSessionStorageKey(target.id);
+  const current = sshTerminalSessions.get(key);
+  if (current) {
+    return cloneSshTerminalSessionState(current);
+  }
+  const created = createSshTerminalSessionState(target);
+  sshTerminalSessions.set(key, created);
+  return cloneSshTerminalSessionState(created);
+}
+
+function refreshSshTerminalSessionState(target, session, now = nowIso()) {
+  const prompt = createSshTerminalPrompt(target);
+  return {
+    ...session,
+    endpoint: target.adapters[0]?.endpoint ?? target.endpoint,
+    targetName: target.displayName,
+    mode: target.connection?.sessionMode ?? session.mode ?? "control",
+    prompt,
+    currentDirectory: session.currentDirectory ?? "~",
+    lastUpdatedAt: now,
+    notes: [...session.notes.slice(-4), `Session snapshot refreshed at ${now}.`],
+  };
+}
+
+function openSshTerminalSessionState(target) {
+  const baseTarget = normalizeTargetProfileState(target);
+  if (baseTarget.kind !== "ssh-terminal") {
+    return { allowed: false, reason: "This target is not an SSH terminal target.", target: baseTarget };
+  }
+
+  const readinessIssues = targetConnectionReadinessIssuesState(baseTarget);
+  if (readinessIssues.length > 0) {
+    return { allowed: false, reason: readinessIssues[0], target: baseTarget };
+  }
+
+  const now = nowIso();
+  const currentSession = refreshSshTerminalSessionState(baseTarget, getSshTerminalSessionState(baseTarget), now);
+  const nextSession = {
+    ...currentSession,
+    state: "connected",
+    lastObservedAt: now,
+    lastUpdatedAt: now,
+    notes: [...currentSession.notes.slice(-4), "SSH terminal session opened."],
+    transcript: [
+      ...currentSession.transcript.slice(-12),
+      {
+        id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+        role: "system",
+        text: "Session opened.",
+        createdAt: now,
+      },
+    ],
+  };
+  sshTerminalSessions.set(sshTerminalSessionStorageKey(baseTarget.id), nextSession);
+  return {
+    allowed: true,
+    reason: "SSH terminal session opened.",
+    target: {
+      ...baseTarget,
+      lastSeenAt: now,
+    },
+    session: nextSession,
+  };
+}
+
+function closeSshTerminalSessionState(target) {
+  const baseTarget = normalizeTargetProfileState(target);
+  if (baseTarget.kind !== "ssh-terminal") {
+    return { allowed: false, reason: "This target is not an SSH terminal target.", target: baseTarget };
+  }
+
+  const now = nowIso();
+  const currentSession = getSshTerminalSessionState(baseTarget);
+  const nextSession = {
+    ...currentSession,
+    state: "closed",
+    lastUpdatedAt: now,
+    notes: [...currentSession.notes.slice(-4), "SSH terminal session closed."],
+    transcript: [
+      ...currentSession.transcript.slice(-12),
+      {
+        id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+        role: "system",
+        text: "Session closed.",
+        createdAt: now,
+      },
+    ],
+  };
+  sshTerminalSessions.set(sshTerminalSessionStorageKey(baseTarget.id), nextSession);
+  return {
+    allowed: true,
+    reason: "SSH terminal session closed.",
+    target: {
+      ...baseTarget,
+      lastSeenAt: now,
+    },
+    session: nextSession,
+  };
+}
+
+function refreshSshTerminalSessionView(target, session, now = nowIso()) {
+  const refreshed = refreshSshTerminalSessionState(target, session, now);
+  sshTerminalSessions.set(sshTerminalSessionStorageKey(target.id), refreshed);
+  return refreshed;
+}
+
+async function runSshTerminalSessionCommandState(target, command) {
+  const baseTarget = normalizeTargetProfileState(target);
+  if (baseTarget.kind !== "ssh-terminal") {
+    return { allowed: false, reason: "This target is not an SSH terminal target.", target: baseTarget };
+  }
+
+  const normalizedCommand = typeof command === "string" ? command.trim() : "";
+  if (!normalizedCommand) {
+    return { allowed: false, reason: "A command is required.", target: baseTarget };
+  }
+
+  const readinessIssues = targetConnectionReadinessIssuesState(baseTarget);
+  if (readinessIssues.length > 0) {
+    return { allowed: false, reason: readinessIssues[0], target: baseTarget };
+  }
+
+  const sessionKey = sshTerminalSessionStorageKey(baseTarget.id);
+  const now = nowIso();
+  const currentSession = refreshSshTerminalSessionView(baseTarget, getSshTerminalSessionState(baseTarget), now);
+  if (currentSession.state !== "connected") {
+    return {
+      allowed: false,
+      reason: "Open the SSH terminal session before sending commands.",
+      target: baseTarget,
+      session: currentSession,
+    };
+  }
+
+  const commandSafety = classifyShellCommandState(normalizedCommand);
+  if (commandSafety === "blocked") {
+    const blockedSession = {
+      ...currentSession,
+      lastUpdatedAt: now,
+      notes: [...currentSession.notes.slice(-4), `Blocked command rejected: ${redactDiagnosticText(normalizedCommand)}`],
+      transcript: [
+        ...currentSession.transcript.slice(-12),
+        {
+          id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+          role: "command",
+          text: redactDiagnosticText(normalizedCommand),
+          createdAt: now,
+        },
+        {
+          id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+          role: "error",
+          text: "The requested command is blocked by the safe-dispatch policy.",
+          createdAt: now,
+        },
+      ],
+    };
+    sshTerminalSessions.set(sessionKey, blockedSession);
+    return {
+      allowed: false,
+      reason: "The requested command is blocked by the safe-dispatch policy.",
+      target: baseTarget,
+      session: blockedSession,
+    };
+  }
+
+  if (commandSafety === "needs-review") {
+    const reviewSession = {
+      ...currentSession,
+      lastUpdatedAt: now,
+      notes: [...currentSession.notes.slice(-4), `Review-required command queued for manual approval: ${redactDiagnosticText(normalizedCommand)}`],
+      transcript: [
+        ...currentSession.transcript.slice(-12),
+        {
+          id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+          role: "command",
+          text: redactDiagnosticText(normalizedCommand),
+          createdAt: now,
+        },
+        {
+          id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+          role: "error",
+          text: "The requested command needs human review before execution.",
+          createdAt: now,
+        },
+      ],
+    };
+    sshTerminalSessions.set(sessionKey, reviewSession);
+    return {
+      allowed: false,
+      reason: "The requested command needs human review before execution.",
+      target: baseTarget,
+      session: reviewSession,
+    };
+  }
+
+  const execution = await executeTargetCommandState(baseTarget, normalizedCommand);
+  if (!execution.allowed || !execution.execution) {
+    const failedSession = {
+      ...currentSession,
+      lastUpdatedAt: now,
+      notes: [...currentSession.notes.slice(-4), `Command execution rejected: ${redactDiagnosticText(execution.reason ?? normalizedCommand)}`],
+      transcript: [
+        ...currentSession.transcript.slice(-12),
+        {
+          id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+          role: "command",
+          text: redactDiagnosticText(normalizedCommand),
+          createdAt: now,
+        },
+        {
+          id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+          role: "error",
+          text: redactDiagnosticText(execution.reason ?? "SSH command execution failed."),
+          createdAt: now,
+        },
+      ],
+    };
+    sshTerminalSessions.set(sessionKey, failedSession);
+    return {
+      allowed: false,
+      reason: execution.reason ?? "SSH command execution failed.",
+      target: execution.target ?? baseTarget,
+      session: failedSession,
+    };
+  }
+
+  const sessionTranscript = [
+    ...currentSession.transcript.slice(-12),
+    {
+      id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+      role: "command",
+      text: redactDiagnosticText(normalizedCommand),
+      createdAt: now,
+    },
+    {
+      id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+      role: "output",
+      text: redactDiagnosticText(execution.execution.stdout || "(no stdout)"),
+      createdAt: now,
+    },
+  ];
+  if (execution.execution.stderr) {
+    sessionTranscript.push({
+      id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+      role: "error",
+      text: redactDiagnosticText(execution.execution.stderr),
+      createdAt: now,
+    });
+  }
+  const nextSession = {
+    ...currentSession,
+    state: "connected",
+    lastCommand: redactDiagnosticText(normalizedCommand),
+    lastCommandAt: now,
+    lastExitCode: execution.execution.exitCode,
+    lastUpdatedAt: now,
+    notes: [
+      ...currentSession.notes.slice(-4),
+      execution.execution.exitCode === 0
+        ? `Command completed successfully: ${redactDiagnosticText(normalizedCommand)}`
+        : `Command completed with exit ${execution.execution.exitCode}: ${redactDiagnosticText(normalizedCommand)}`,
+    ],
+    transcript: sessionTranscript,
+  };
+  sshTerminalSessions.set(sessionKey, nextSession);
+  const dispatchRecord = {
+    id: `dispatch-${crypto.randomUUID().slice(0, 8)}`,
+    targetId: baseTarget.id,
+    targetName: baseTarget.displayName,
+    category: "execute_safe",
+    summary: `SSH terminal session command: ${redactDiagnosticText(normalizedCommand)}`,
+    command: redactDiagnosticText(normalizedCommand),
+    decision: {
+      allowed: true,
+      requiresApproval: true,
+      reason: "Allowlisted SSH terminal command executed through the gateway-managed session contract.",
+      adapterKind: "ssh-terminal",
+      commandSafety,
+    },
+    createdAt: now,
+  };
+  targetDispatches.unshift(dispatchRecord);
+  targetDispatches = targetDispatches.slice(0, 200);
+  audit("targets.ssh-terminal.session.command", {
+    targetId: baseTarget.id,
+    command: redactDiagnosticText(normalizedCommand),
+    exitCode: execution.execution.exitCode,
+  });
+  scheduleStateSave();
+  return {
+    allowed: true,
+    reason: execution.reason ?? "SSH command executed successfully.",
+    target: execution.target ?? {
+      ...baseTarget,
+      lastSeenAt: now,
+    },
+    session: nextSession,
+    execution: execution.execution,
+    record: dispatchRecord,
+  };
+}
+
 function audit(action, details = {}) {
   const event = {
     id: crypto.randomUUID(),
@@ -3249,7 +3612,7 @@ function redactAuditDetails(details) {
 
 function snapshotState() {
   return {
-    schemaVersion: 3,
+    schemaVersion: 4,
     savedAt: nowIso(),
     providerSession,
     visionProbeResults,
@@ -3275,6 +3638,7 @@ function snapshotState() {
     targetRegistry,
     targetDispatches,
     remoteDesktopSessions: [...remoteDesktopSessions.values()].map((session) => cloneRemoteDesktopSessionState(session)),
+    sshTerminalSessions: [...sshTerminalSessions.values()].map((session) => cloneSshTerminalSessionState(session)),
   };
 }
 
@@ -3284,7 +3648,7 @@ function mergeArray(target, source) {
 }
 
 function applyPersistedState(state) {
-  if (!state || (state.schemaVersion !== 1 && state.schemaVersion !== 2 && state.schemaVersion !== 3)) return;
+  if (!state || (state.schemaVersion !== 1 && state.schemaVersion !== 2 && state.schemaVersion !== 3 && state.schemaVersion !== 4)) return;
   if (state.providerSession) providerSession = state.providerSession;
   if (state.visionProbeResults && typeof state.visionProbeResults === "object") visionProbeResults = state.visionProbeResults;
   mergeArray(connectedAccounts, state.connectedAccounts);
@@ -3313,6 +3677,13 @@ function applyPersistedState(state) {
     for (const session of state.remoteDesktopSessions) {
       if (!session || typeof session.targetId !== "string") continue;
       remoteDesktopSessions.set(remoteDesktopSessionStorageKey(session.targetId), cloneRemoteDesktopSessionState(session));
+    }
+  }
+  if (Array.isArray(state.sshTerminalSessions)) {
+    sshTerminalSessions.clear();
+    for (const session of state.sshTerminalSessions) {
+      if (!session || typeof session.targetId !== "string") continue;
+      sshTerminalSessions.set(sshTerminalSessionStorageKey(session.targetId), cloneSshTerminalSessionState(session));
     }
   }
   ensureSeedIdentityUsers();
@@ -7721,6 +8092,114 @@ const server = http.createServer(async (req, res) => {
       });
     } catch {
       json(res, 400, { error: "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/targets/ssh-terminal/session") {
+    const targetId = typeof parsedUrl.searchParams.get("targetId") === "string" ? parsedUrl.searchParams.get("targetId").trim() : "";
+    if (!targetId) {
+      json(res, 400, { error: "targetId is required" });
+      return;
+    }
+    const target = targetRegistry.targets.find((entry) => entry.id === targetId);
+    if (!target) {
+      json(res, 404, { error: "target not found" });
+      return;
+    }
+    if (target.kind !== "ssh-terminal") {
+      json(res, 400, { error: "target is not an SSH terminal target" });
+      return;
+    }
+    json(res, 200, {
+      session: getSshTerminalSessionState(target),
+      target: cloneTargetRegistryState(targetRegistry).targets.find((entry) => entry.id === targetId),
+    });
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/targets/ssh-terminal/session") {
+    try {
+      const body = await readJson(req);
+      const targetId = typeof body.targetId === "string" ? body.targetId.trim() : "";
+      const action = typeof body.action === "string" ? body.action.trim() : "";
+      const command = typeof body.command === "string" ? body.command : "";
+      if (!targetId || !action) {
+        json(res, 400, { error: "targetId and action are required" });
+        return;
+      }
+      const target = targetRegistry.targets.find((entry) => entry.id === targetId);
+      if (!target) {
+        json(res, 404, { error: "target not found" });
+        return;
+      }
+      if (target.kind !== "ssh-terminal") {
+        json(res, 400, { error: "target is not an SSH terminal target" });
+        return;
+      }
+
+      let result;
+      if (action === "open_session" || action === "open" || action === "connect") {
+        result = openSshTerminalSessionState(target);
+      } else if (action === "run_command" || action === "send_command" || action === "execute") {
+        result = await runSshTerminalSessionCommandState(target, command);
+      } else if (action === "close_session" || action === "close" || action === "disconnect") {
+        result = closeSshTerminalSessionState(target);
+      } else if (action === "refresh" || action === "observe") {
+        const now = nowIso();
+        const session = refreshSshTerminalSessionView(target, getSshTerminalSessionState(target), now);
+        result = {
+          allowed: true,
+          reason: "SSH terminal session snapshot refreshed.",
+          target: {
+            ...normalizeTargetProfileState(target),
+            lastSeenAt: now,
+          },
+          session,
+        };
+      } else {
+        json(res, 400, { error: "Unsupported SSH terminal session action" });
+        return;
+      }
+
+      if (result.target && result.allowed !== false) {
+        targetRegistry = {
+          ...targetRegistry,
+          targets: targetRegistry.targets.map((entry) => (entry.id === targetId ? result.target : entry)),
+        };
+      }
+      if (result.session || result.record || result.target) {
+        scheduleStateSave();
+      }
+
+      if (result.allowed) {
+        audit("targets.ssh-terminal.session", {
+          targetId,
+          action,
+          state: result.session?.state,
+          exitCode: result.execution?.exitCode,
+        });
+      } else {
+        audit("targets.ssh-terminal.session.rejected", {
+          targetId,
+          action,
+          allowed: result.allowed,
+          reason: result.reason,
+        });
+      }
+
+      json(res, 200, {
+        allowed: result.allowed,
+        reason: result.reason,
+        target: result.target,
+        session: result.session,
+        execution: result.execution,
+        record: result.record,
+        registry: cloneTargetRegistryState(targetRegistry),
+        dispatches: targetDispatches.slice(0, 200),
+      });
+    } catch (error) {
+      json(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON" });
     }
     return;
   }

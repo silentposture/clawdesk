@@ -46,11 +46,16 @@
 - `POST /targets`
 - `POST /targets/credential-ref/issue`
 - `POST /targets/connection`
+- `GET /targets/ssh-terminal/session`
+- `POST /targets/ssh-terminal/session`
 - `GET /targets/remote-desktop/session`
 - `POST /targets/remote-desktop/session`
 - `POST /targets/dispatch-preview`
 - `POST /targets/dispatch`
 - `POST /targets/execute`
+
+SSH terminal sessions maintain a redacted transcript snapshot and only allow allowlisted commands after pairing, credential-ref / known-host validation, and gateway-managed session open. Remote desktop sessions expose observe / control / release state under the same contract layer.
+
 - `GET /compat/settings`
 - `POST /compat/settings`
 - Legacy aliases: `GET /openclaw/settings`, `POST /openclaw/settings`
