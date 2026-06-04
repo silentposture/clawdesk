@@ -76,7 +76,7 @@ flowchart TD
 
 1. The user selects a target from the registry.
 2. The control plane resolves the safest available adapter.
-3. The policy layer checks pairing, authentication, host-key verification, connectivity probe results, and command safety.
+3. The policy layer checks pairing, authentication, host-key verification, connectivity probe results, connection readiness, and command safety.
 4. SSH host-key verification stores the trusted key in a gateway-managed known_hosts file before command execution.
 5. Observe / inspect / debug requests can proceed when the target is ready.
 6. Execute-safe requests are queued for approval before command dispatch, then can run through the local-shell or SSH safe connector.
