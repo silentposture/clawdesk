@@ -2049,13 +2049,13 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       <section className="provider-panel target-registry-panel" role="dialog" aria-modal="true" aria-labelledby="target-registry-title">
         <header className="provider-header">
           <div>
-            <h2 id="target-registry-title">Target Registry</h2>
-            <p>把 local-shell、SSH 終端機與遠端桌面收斂成同一個安全派發面板。</p>
+            <h2 id="target-registry-title">{copy.targetRegistryTitle}</h2>
+            <p>{copy.targetRegistrySubtitle}</p>
           </div>
           <div className="panel-actions">
             <button className="secondary-button" type="button" onClick={loadTargets} disabled={busy}>
               <RefreshCw size={16} />
-              重新讀取
+              {copy.targetRegistryRefresh}
             </button>
             <button className="icon-button" type="button" aria-label={t("common.close")} onClick={onClose}>
               <X size={18} />
@@ -2066,18 +2066,18 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         <section className="comparison-summary">
           <article className="commercial-card">
             <Server size={23} />
-            <h3>總目標數 {summary.totalTargets}</h3>
-            <p>預設目標：{summary.defaultTargetName ?? "未設定"}</p>
+            <h3>{copy.targetRegistrySummaryTotalPrefix} {summary.totalTargets}</h3>
+            <p>{copy.targetRegistrySummaryDefaultPrefix}{summary.defaultTargetName ?? copy.fieldTargetEndpointMissing}</p>
           </article>
           <article className="commercial-card">
             <CircleCheck size={23} />
-            <h3>就緒 {summary.readyTargets} · 已配對 {summary.pairedTargets}</h3>
-            <p>群組 {summary.targetGroupCount ?? 0} · 只有就緒且已配對的 target 才會進入安全派發選擇。</p>
+            <h3>{copy.targetRegistrySummaryReadyPrefix} {summary.readyTargets} · {copy.targetRegistrySummaryPairedPrefix} {summary.pairedTargets}</h3>
+            <p>{copy.targetRegistrySummaryGroupPrefix} {summary.targetGroupCount ?? 0} · {copy.targetRegistrySummaryReadyDescription}</p>
           </article>
           <article className="commercial-card">
             <CircleAlert size={23} />
-            <h3>dispatch log {dispatches.length}</h3>
-            <p>先預覽，再送出紀錄；高風險或未配對狀態會被 contract 擋下。</p>
+            <h3>{copy.targetRegistrySummaryDispatchLogPrefix} {dispatches.length}</h3>
+            <p>{copy.targetRegistrySummaryDispatchDescription}</p>
           </article>
         </section>
 
@@ -2086,30 +2086,30 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
             <div className="panel-actions">
               <button className="secondary-button" type="button" onClick={() => startDraft("local-shell")} disabled={busy}>
                 <Plus size={16} />
-                新增本機
+                {copy.targetRegistryNewLocal}
               </button>
               <button className="secondary-button" type="button" onClick={() => startDraft("ssh-terminal")} disabled={busy}>
                 <Plus size={16} />
-                新增 SSH
+                {copy.targetRegistryNewSsh}
               </button>
               <button className="secondary-button" type="button" onClick={() => startDraft("remote-desktop")} disabled={busy}>
                 <Plus size={16} />
-                新增遠端桌面
+                {copy.targetRegistryNewRemoteDesktop}
               </button>
               <button className="secondary-button" type="button" onClick={() => startDraft("mock")} disabled={busy}>
                 <Plus size={16} />
-                新增 Mock
+                {copy.targetRegistryNewMock}
               </button>
             </div>
             <section className="target-group-manager">
               <div className="target-group-manager-header">
-                <strong>Target groups</strong>
-                <span>{targetGroups.length} groups</span>
+                <strong>{copy.targetGroupsTitle}</strong>
+                <span>{copy.targetGroupsCount.replace("{count}", String(targetGroups.length))}</span>
               </div>
               <label>
-                <span>套用群組</span>
+                <span>{copy.targetGroupsSelectLabel}</span>
                 <select value={selectedTargetGroup?.id ?? ""} onChange={(event) => applyTargetGroup(findTargetGroup(registry, event.target.value))}>
-                  <option value="">未選擇</option>
+                  <option value="">{copy.targetGroupsEmpty}</option>
                   {targetGroups.map((group) => (
                     <option key={group.id} value={group.id}>
                       {group.name} · {group.targetIds.length}
@@ -2118,32 +2118,32 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 </select>
               </label>
               <label>
-                <span>群組名稱</span>
-                <input value={targetGroupNameDraft} onChange={(event) => setTargetGroupNameDraft(event.target.value)} placeholder="例如：每天早上巡檢" />
+                <span>{copy.targetGroupsNameLabel}</span>
+                <input value={targetGroupNameDraft} onChange={(event) => setTargetGroupNameDraft(event.target.value)} placeholder={copy.targetGroupsNamePlaceholder} />
               </label>
               <label>
-                <span>群組描述</span>
-                <input value={targetGroupDescriptionDraft} onChange={(event) => setTargetGroupDescriptionDraft(event.target.value)} placeholder="選填，說明這組 target 的用途" />
+                <span>{copy.targetGroupsDescriptionLabel}</span>
+                <input value={targetGroupDescriptionDraft} onChange={(event) => setTargetGroupDescriptionDraft(event.target.value)} placeholder={copy.targetGroupsDescriptionPlaceholder} />
               </label>
               <div className="panel-actions">
                 <button className="secondary-button" type="button" onClick={() => void saveTargetGroup()} disabled={busy || selectedBroadcastTargetIds.length === 0}>
                   <Save size={16} />
-                  儲存為群組
+                  {copy.targetGroupsSave}
                 </button>
                 <button className="secondary-button" type="button" onClick={() => applyTargetGroup(selectedTargetGroup)} disabled={busy || !selectedTargetGroup}>
                   <Send size={16} />
-                  套用群組
+                  {copy.targetGroupsApply}
                 </button>
                 <button className="secondary-button" type="button" onClick={() => void removeTargetGroup(selectedTargetGroup?.id ?? "")} disabled={busy || !selectedTargetGroup}>
                   <X size={16} />
-                  刪除群組
+                  {copy.targetGroupsDelete}
                 </button>
               </div>
               <div className="target-group-list">
                 {targetGroups.map((group) => (
                   <button key={group.id} type="button" className={`target-group-chip${selectedTargetGroup?.id === group.id ? " active" : ""}`} onClick={() => applyTargetGroup(group)}>
                     <strong>{group.name}</strong>
-                    <small>{group.targetIds.length} targets</small>
+                    <small>{copy.targetGroupsChipTargets.replace("{count}", String(group.targetIds.length))}</small>
                   </button>
                 ))}
               </div>
@@ -2152,25 +2152,25 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               {registry.targets.map((target) => {
                 const active = selectedTargetId === target.id;
                 const readiness = buildTargetConnectionReadinessReport(target);
-                const readinessLabel = readiness.readyToConnect ? "ready" : readiness.nextAction;
+                const readinessLabel = readiness.readyToConnect ? copy.fieldConnectionBadgeReady : readiness.nextAction;
                 return (
                   <article key={target.id} className={`target-list-item${active ? " active" : ""}`}>
                     <button type="button" className="target-list-select" onClick={() => selectExistingTarget(target)}>
                       <strong>{target.displayName}</strong>
                       <small className={`target-readiness-badge ${readinessBadgeClass(readiness)}`}>
-                        {readiness.readyToConnect ? "ready" : readiness.nextAction}
+                        {readiness.readyToConnect ? copy.fieldConnectionBadgeReady : readiness.nextAction}
                       </small>
                       <small className="target-readiness-summary">{readinessIssueSummary(readiness)}</small>
                       <small>{summarizeTargetProfile(target)}</small>
                       <small>{summarizeTargetConnectionProfile(target)}</small>
                       <small>
-                        readiness：{readinessLabel}
-                        {readiness.lastProbeResult ? ` · probe ${readiness.lastProbeResult}` : ""}
+                        {copy.targetRegistryTargetListReadinessPrefix}{readinessLabel}
+                        {readiness.lastProbeResult ? ` · ${copy.targetRegistryTargetListReadinessProbe} ${readiness.lastProbeResult}` : ""}
                       </small>
-                      <small>{target.adapters[0]?.endpoint ?? "未設定 endpoint"}</small>
+                      <small>{target.adapters[0]?.endpoint ?? copy.fieldTargetEndpointMissing}</small>
                       <small>
                         {target.id}
-                        {registry.defaultTargetId === target.id ? " · 預設" : ""}
+                        {registry.defaultTargetId === target.id ? ` · ${copy.fieldTargetDefaultMark}` : ""}
                       </small>
                     </button>
                     <div className="target-list-actions">
@@ -2186,7 +2186,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                             });
                           }}
                         />
-                        <span>broadcast</span>
+                        <span>{copy.fieldTargetListBroadcast}</span>
                       </label>
                       <button
                         type="button"
@@ -2209,19 +2209,19 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
 
           <section className="commercial-card target-draft-form">
             <div>
-              <h3>{draftIsSaved ? "目標設定" : "新目標草稿"}</h3>
-              <p>這裡定義每台電腦的連線類型、配對狀態與可授權範圍。</p>
+              <h3>{draftIsSaved ? copy.targetRegistryDraftTitle : copy.targetRegistryDraftTitleNew}</h3>
+              <p>{copy.targetRegistryDraftDescription}</p>
             </div>
             <label>
-              <span>Target ID</span>
+              <span>{copy.fieldTargetId}</span>
               <input value={draft.id} onChange={(event) => setDraft((current) => ({ ...current, id: event.target.value }))} />
             </label>
             <label>
-              <span>顯示名稱</span>
+              <span>{copy.fieldDisplayName}</span>
               <input value={draft.displayName} onChange={(event) => setDraft((current) => ({ ...current, displayName: event.target.value }))} />
             </label>
             <label>
-              <span>類型</span>
+              <span>{copy.fieldTargetType}</span>
               <select
                 value={draft.kind}
                 onChange={(event) => {
@@ -2257,11 +2257,11 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               </select>
             </label>
             <label>
-              <span>Endpoint</span>
+              <span>{copy.fieldEndpoint}</span>
               <input value={draft.endpoint} onChange={(event) => setDraft((current) => ({ ...current, endpoint: event.target.value }))} />
             </label>
             <label>
-              <span>連線狀態</span>
+              <span>{copy.fieldState}</span>
               <select value={draft.state} onChange={(event) => setDraft((current) => ({ ...current, state: event.target.value as TargetConnectionState }))}>
                 {stateOptions.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -2271,144 +2271,144 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               </select>
             </label>
             <label className="target-toggle">
-              <span>已配對</span>
+              <span>{copy.fieldPaired}</span>
               <input type="checkbox" checked={draft.paired} onChange={(event) => setDraft((current) => ({ ...current, paired: event.target.checked }))} />
             </label>
             <label className="target-toggle">
-              <span>已驗證認證</span>
+              <span>{copy.fieldAuthenticated}</span>
               <input type="checkbox" checked={draft.authenticated} onChange={(event) => setDraft((current) => ({ ...current, authenticated: event.target.checked }))} />
             </label>
             <label className="target-toggle">
-              <span>SSH host key verified</span>
+              <span>{copy.fieldHostKey}</span>
               <input type="checkbox" checked={draft.hostKeyVerified} onChange={(event) => setDraft((current) => ({ ...current, hostKeyVerified: event.target.checked }))} />
             </label>
             <label>
-              <span>Trusted workspaces</span>
+              <span>{copy.fieldTrustedWorkspaces}</span>
               <textarea
                 value={draft.trustedWorkspaces}
                 onChange={(event) => setDraft((current) => ({ ...current, trustedWorkspaces: event.target.value }))}
-                placeholder="每行一個工作區，或用逗號分隔"
+                placeholder={copy.fieldTrustedWorkspacesPlaceholder}
               />
-              <small>目前解析出 {trustedWorkspaceCount} 個 trusted workspace。</small>
+              <small>{copy.targetRegistryTargetListTrustedWorkspaceCount.replace("{count}", String(trustedWorkspaceCount))}</small>
             </label>
             <label>
-              <span>Connection username</span>
-              <input value={draft.username} onChange={(event) => setDraft((current) => ({ ...current, username: event.target.value }))} placeholder="SSH / RDP 登入帳號" />
+              <span>{copy.fieldConnectionUsername}</span>
+              <input value={draft.username} onChange={(event) => setDraft((current) => ({ ...current, username: event.target.value }))} placeholder={copy.fieldConnectionUsernamePlaceholder} />
             </label>
             <label>
-              <span>Connection port</span>
+              <span>{copy.fieldConnectionPort}</span>
               <input
                 inputMode="numeric"
                 value={draft.port}
                 onChange={(event) => setDraft((current) => ({ ...current, port: event.target.value }))}
-                placeholder={draft.kind === "ssh-terminal" ? "22" : draft.kind === "remote-desktop" ? "3389" : "可留空"}
+                placeholder={draft.kind === "ssh-terminal" ? copy.fieldConnectionPortSshPlaceholder : draft.kind === "remote-desktop" ? copy.fieldConnectionPortRdpPlaceholder : copy.fieldConnectionPortOptionalPlaceholder}
               />
             </label>
             <label>
-              <span>Credential mode</span>
+              <span>{copy.fieldCredentialMode}</span>
               <select value={draft.credentialMode} onChange={(event) => setDraft((current) => ({ ...current, credentialMode: event.target.value as TargetCredentialMode }))}>
-                <option value="none">none</option>
-                <option value="secret-ref">secret-ref</option>
-                <option value="ssh-agent">ssh-agent</option>
-                <option value="platform-managed">platform-managed</option>
+                <option value="none">{copy.fieldCredentialModeNone}</option>
+                <option value="secret-ref">{copy.fieldCredentialModeSecretRef}</option>
+                <option value="ssh-agent">{copy.fieldCredentialModeSshAgent}</option>
+                <option value="platform-managed">{copy.fieldCredentialModePlatformManaged}</option>
               </select>
             </label>
             <label>
-              <span>Credential ref</span>
+              <span>{copy.fieldCredentialRef}</span>
               <input
                 value={draft.credentialRef}
                 onChange={(event) => setDraft((current) => ({ ...current, credentialRef: event.target.value }))}
-                placeholder="例如 ssh-builder-secret"
+                placeholder={copy.fieldCredentialRefPlaceholder}
               />
             </label>
             {draft.kind === "ssh-terminal" || draft.kind === "remote-desktop" ? (
               <label>
-                <span>{draft.kind === "ssh-terminal" ? "SSH private key" : "Remote desktop credential secret"}</span>
+                <span>{draft.kind === "ssh-terminal" ? copy.fieldSshPrivateKey : copy.fieldRemoteDesktopCredentialLabel}</span>
                 <textarea
                   value={sshPrivateKeyDraft}
                   onChange={(event) => setSshPrivateKeyDraft(event.target.value)}
-                  placeholder={draft.kind === "ssh-terminal" ? "-----BEGIN OPENSSH PRIVATE KEY-----" : "RDP password / secret token"}
+                  placeholder={draft.kind === "ssh-terminal" ? copy.fieldSshPrivateKeyPlaceholder : copy.fieldRemoteDesktopSecretPlaceholder}
                 />
-                <small>只會發行成 gateway-managed credential ref，不會寫入 repo 或 debug bundle。</small>
+                <small>{copy.fieldCredentialRefGatewayOnly}</small>
               </label>
             ) : null}
             <label>
-              <span>SSH known host key</span>
+              <span>{copy.fieldKnownHostKey}</span>
               <input
                 value={draft.knownHostFingerprint}
                 onChange={(event) => setDraft((current) => ({ ...current, knownHostFingerprint: event.target.value }))}
-                placeholder="ssh-ed25519 AAAA..."
+                placeholder={copy.fieldKnownHostKeyPlaceholder}
               />
-                {draft.kind === "ssh-terminal" ? <small>驗證時會寫入 gateway 管理的 known_hosts，不會顯示實際路徑。</small> : null}
+                {draft.kind === "ssh-terminal" ? <small>{copy.fieldKnownHostKeyHint}</small> : null}
               </label>
             <label>
-              <span>Session mode</span>
+              <span>{copy.fieldSessionMode}</span>
               <select value={draft.sessionMode} onChange={(event) => setDraft((current) => ({ ...current, sessionMode: event.target.value as TargetSessionMode }))}>
-                <option value="observe">observe</option>
-                <option value="control">control</option>
+                <option value="observe">{copy.fieldSessionModeObserve}</option>
+                <option value="control">{copy.fieldSessionModeControl}</option>
               </select>
             </label>
             <label>
-              <span>Connection note</span>
+              <span>{copy.fieldConnectionNote}</span>
               <textarea
                 value={draft.note}
                 onChange={(event) => setDraft((current) => ({ ...current, note: event.target.value }))}
-                placeholder="例如：僅允許登入後執行 git status / collect-debug-bundle"
+                placeholder={copy.fieldConnectionNotePlaceholder}
               />
             </label>
             <section className="target-connection-summary">
               <div>
-                <strong>配對狀態</strong>
-                <span>{draft.paired ? "paired" : "not paired"}</span>
+                <strong>{copy.fieldConnectionStatus}</strong>
+                <span>{draft.paired ? copy.targetRegistryFieldPaired : copy.targetRegistryFieldNotPaired}</span>
               </div>
               <div>
-                <strong>認證</strong>
-                <span>{draft.authenticated ? "authenticated" : "not authenticated"}</span>
+                <strong>{copy.fieldAuthenticationStatus}</strong>
+                <span>{draft.authenticated ? copy.targetRegistryFieldAuthenticated : copy.targetRegistryFieldNotAuthenticated}</span>
               </div>
               <div>
-                <strong>SSH host key</strong>
-                <span>{draft.hostKeyVerified ? "verified" : "not verified"}</span>
+                <strong>{copy.fieldHostKey}</strong>
+                <span>{draft.hostKeyVerified ? copy.targetRegistryHostKeyVerified : copy.targetRegistryHostKeyNotVerified}</span>
               </div>
               <div>
-                <strong>Last seen</strong>
+                <strong>{copy.fieldLastSeen}</strong>
                 <span>{formatLastSeenAt(selectedTarget?.lastSeenAt)}</span>
               </div>
               <div>
-                <strong>Connection profile</strong>
+                <strong>{copy.fieldConnectionProfile}</strong>
                 <span>{summarizeTargetConnectionProfile(draftTarget)}</span>
               </div>
               <div>
-                <strong>Probe</strong>
-                <span>{draft.lastProbeResult || "未探測"}</span>
+                <strong>{copy.fieldProbe}</strong>
+                <span>{draft.lastProbeResult || copy.fieldProbeNotYet}</span>
               </div>
               <div>
-                <strong>Probe endpoint</strong>
+                <strong>{copy.fieldProbeEndpoint}</strong>
                 <span>
-                  {draft.lastProbeHost ? `${draft.lastProbeHost}${draft.lastProbePort ? `:${draft.lastProbePort}` : ""}` : "未設定"}
+                  {draft.lastProbeHost ? `${draft.lastProbeHost}${draft.lastProbePort ? `:${draft.lastProbePort}` : ""}` : copy.fieldTargetEndpointMissing}
                 </span>
               </div>
               <div>
-                <strong>Probe at</strong>
-                <span>{draft.lastProbeAt ? formatLastSeenAt(draft.lastProbeAt) : "未探測"}</span>
+                <strong>{copy.fieldProbeAt}</strong>
+                <span>{draft.lastProbeAt ? formatLastSeenAt(draft.lastProbeAt) : copy.fieldProbeNotYet}</span>
               </div>
               <div>
-                <strong>Probe latency</strong>
-                <span>{draft.lastProbeLatencyMs ? `${draft.lastProbeLatencyMs}ms` : "n/a"}</span>
+                <strong>{copy.fieldProbeLatency}</strong>
+                <span>{draft.lastProbeLatencyMs ? `${draft.lastProbeLatencyMs}ms` : copy.fieldProbeLatencyNa}</span>
               </div>
               <div>
-                <strong>Probe error</strong>
-                <span>{draft.lastProbeError || "none"}</span>
+                <strong>{copy.fieldProbeError}</strong>
+                <span>{draft.lastProbeError || copy.fieldProbeErrorNone}</span>
               </div>
             </section>
             <section className="connection-readiness-card">
               <div className="panel-actions">
                 <button className="secondary-button" type="button" onClick={() => void loadTargetConnectionReadiness(selectedTarget ?? draftTarget)} disabled={busy}>
                   <RefreshCw size={16} />
-                  重新整理 readiness
+                  {copy.targetRegistryConnectionReadinessRefreshAction}
                 </button>
                 <button className="secondary-button" type="button" onClick={() => void copyConnectionReadinessReport(selectedTarget ?? draftTarget)} disabled={busy}>
                   <Save size={16} />
-                  複製 readiness report
+                  {copy.targetRegistryConnectionReadinessCopyAction}
                 </button>
                 <button
                   className="primary-button"
@@ -2417,26 +2417,26 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   disabled={busy || connectionReadiness.nextAction === "none"}
                 >
                   <Send size={16} />
-                  執行建議動作
+                  {copy.targetRegistryConnectionReadinessExecuteAction}
                 </button>
-                <small>source：{connectionReadinessReport?.source ?? "local"}</small>
+                <small>{copy.targetRegistryConnectionReadinessSourcePrefix}{connectionReadinessReport?.source ?? "local"}</small>
               </div>
-              <strong>Connection readiness</strong>
+              <strong>{copy.targetRegistryConnectionReadinessTitle}</strong>
               <p>
                 {connectionReadiness.readyToConnect
-                  ? "所有必要條件都已滿足，可以進入 connect。"
-                  : `下一步建議：${connectionReadiness.nextAction}`}
+                  ? copy.targetRegistryConnectionReadinessReady
+                  : `${copy.targetRegistryConnectionReadinessNextStepPrefix}${connectionReadiness.nextAction}`}
               </p>
-              <small>ready to connect：{connectionReadiness.readyToConnect ? "yes" : "no"}</small>
-              <small>next action：{connectionReadiness.nextAction}</small>
-              <small>last probe：{connectionReadiness.lastProbeResult ?? "未探測"}</small>
+              <small>{copy.targetRegistryConnectionReadinessReadyToConnectPrefix}{connectionReadiness.readyToConnect ? copy.targetRegistryFieldYes : copy.targetRegistryFieldNo}</small>
+              <small>{copy.targetRegistryConnectionReadinessNextActionPrefix}{connectionReadiness.nextAction}</small>
+              <small>{copy.targetRegistryConnectionReadinessLastProbePrefix}{connectionReadiness.lastProbeResult ?? copy.fieldProbeNotYet}</small>
               <div className="connection-readiness-checks">
                 {connectionReadiness.checks.map((check) => (
                   <article key={check.key} className={`connection-readiness-check readiness-${check.status}`}>
                     <strong>{check.label}</strong>
                     <p>{check.detail}</p>
                     <small>
-                      {check.status} · {check.required ? "required" : "optional"}
+                      {check.status} · {check.required ? copy.targetRegistryConnectionReadinessRequired : copy.targetRegistryConnectionReadinessOptional}
                     </small>
                   </article>
                 ))}
@@ -2450,12 +2450,12 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               </section>
             ) : null}
             <section className="mcp-preview target-credential-bundle">
-              <span>Credential Bundle</span>
-              <strong>加密匯出 / 匯入</strong>
-              <p>使用 passphrase 將目前 target registry 與已發行的 credential refs 匯出成加密 bundle，方便換機或跨機器部署。</p>
+              <span>{copy.targetRegistryFieldBundleTitle}</span>
+              <strong>{copy.fieldBundleSubtitle}</strong>
+              <p>{copy.fieldTargetListTimelineBundleHint}</p>
               <div className="target-credential-bundle-targets">
                 <div className="target-credential-bundle-targets-header">
-                  <strong>匯出目標</strong>
+                  <strong>{copy.fieldBundleExportTargets}</strong>
                   <span>{selectedCredentialBundleTargetIds.length} / {registry.targets.length}</span>
                 </div>
                 <div className="target-credential-bundle-targets-actions">
@@ -2464,14 +2464,14 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     type="button"
                     onClick={() => setCredentialBundleTargetIds(registry.targets.map((target) => target.id))}
                   >
-                    全選
+                    {copy.targetGroupsPresetSelectButton ?? "全選"}
                   </button>
                   <button
                     className="secondary-button"
                     type="button"
                     onClick={() => setCredentialBundleTargetIds([])}
                   >
-                    清除
+                    {copy.targetGroupsPresetRemove ?? "清除"}
                   </button>
                 </div>
                 <div className="target-credential-bundle-targets-list">
@@ -2495,108 +2495,108 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 </div>
               </div>
               <label>
-                <span>Bundle passphrase</span>
+                <span>{copy.fieldBundlePassphrase}</span>
                 <input
                   type="password"
                   value={credentialBundlePassphraseDraft}
                   onChange={(event) => setCredentialBundlePassphraseDraft(event.target.value)}
-                  placeholder="請輸入僅你知道的匯出密碼"
+                  placeholder={copy.fieldCredentialBundlePassphrasePlaceholder}
                   autoComplete="new-password"
                 />
               </label>
               <label>
-                <span>Import bundle JSON</span>
+                <span>{copy.fieldBundleImportJson}</span>
                 <textarea
                   value={credentialBundleImportDraft}
                   onChange={(event) => setCredentialBundleImportDraft(event.target.value)}
-                  placeholder='貼上 export 回傳的 JSON bundleText，例如 {"version":1,...}'
+                  placeholder={copy.fieldCredentialBundleImportPlaceholder}
                 />
               </label>
-              <small>bundle 內只保存加密後的 credential payload；匯入時會重新發行 gateway-managed credential refs。</small>
-              <small>匯出時只包含勾選的 target；未勾選者不會進 bundle。</small>
+              <small>{copy.fieldCredentialBundleHint}</small>
+              <small>{copy.fieldCredentialBundleExportHint}</small>
               {credentialBundlePreview ? (
                 <section className="target-credential-bundle-preview">
-                  <span>Bundle preview</span>
+                  <span>{copy.targetRegistryFieldBundlePreviewTitle}</span>
                   <strong>
                     {credentialBundlePreview.targetCount} targets · {credentialBundlePreview.groupCount ?? 0} groups · {credentialBundlePreview.secretCount} secrets
                   </strong>
-                  <small>createdAt：{credentialBundlePreview.createdAt ?? "n/a"} · version：{credentialBundlePreview.version}</small>
-                  <small>targetIds：{credentialBundlePreview.targetIds.join(", ") || "none"}</small>
-                  <small>targetNames：{credentialBundlePreview.targetNames.join(", ") || "none"}</small>
-                  <small>groupIds：{credentialBundlePreview.groupIds?.join(", ") || "none"}</small>
-                  <small>groupNames：{credentialBundlePreview.groupNames?.join(", ") || "none"}</small>
-                  <small>secretKinds：{credentialBundlePreview.secretKinds.join(", ") || "none"}</small>
-                  <small>secretLabels：{credentialBundlePreview.secretLabels.join(", ") || "none"}</small>
-                  <small>新增 target：{credentialBundlePreview.addedTargetNames.join(", ") || "none"}</small>
-                  <small>更新 target：{credentialBundlePreview.updatedTargetNames.join(", ") || "none"}</small>
-                  <small>不變 target：{credentialBundlePreview.unchangedTargetIds.join(", ") || "none"}</small>
-                  <small>新增 group：{credentialBundlePreview.addedGroupNames?.join(", ") || "none"}</small>
-                  <small>更新 group：{credentialBundlePreview.updatedGroupNames?.join(", ") || "none"}</small>
-                  <small>不變 group：{credentialBundlePreview.unchangedGroupIds?.join(", ") || "none"}</small>
-                  <small>secret targets：{credentialBundlePreview.secretTargetIds.join(", ") || "none"}</small>
-                  <small>overwrite count：{credentialBundlePreview.overwriteCount}</small>
-                  <small>group overwrite count：{credentialBundlePreview.groupOverwriteCount ?? 0}</small>
+                  <small>{copy.targetRegistryFieldCreatedAtPrefix}{credentialBundlePreview.createdAt ?? copy.targetRegistryFieldNa} · {copy.targetRegistryFieldVersionPrefix}{credentialBundlePreview.version}</small>
+                  <small>{copy.targetRegistryFieldTargetIdsPrefix}{credentialBundlePreview.targetIds.join(", ") || copy.targetRegistryFieldNone}</small>
+                  <small>{copy.targetRegistryFieldTargetNamesPrefix}{credentialBundlePreview.targetNames.join(", ") || copy.targetRegistryFieldNone}</small>
+                  <small>{copy.targetRegistryFieldGroupIdsPrefix}{credentialBundlePreview.groupIds?.join(", ") || copy.targetRegistryFieldNone}</small>
+                  <small>{copy.targetRegistryFieldGroupNamesPrefix}{credentialBundlePreview.groupNames?.join(", ") || copy.targetRegistryFieldNone}</small>
+                  <small>{copy.targetRegistryFieldSecretKindsPrefix}{credentialBundlePreview.secretKinds.join(", ") || copy.targetRegistryFieldNone}</small>
+                  <small>{copy.targetRegistryFieldSecretLabelsPrefix}{credentialBundlePreview.secretLabels.join(", ") || copy.targetRegistryFieldNone}</small>
+                  <small>新增 target：{credentialBundlePreview.addedTargetNames.join(", ") || copy.targetRegistryFieldNone}</small>
+                  <small>更新 target：{credentialBundlePreview.updatedTargetNames.join(", ") || copy.targetRegistryFieldNone}</small>
+                  <small>不變 target：{credentialBundlePreview.unchangedTargetIds.join(", ") || copy.targetRegistryFieldNone}</small>
+                  <small>新增 group：{credentialBundlePreview.addedGroupNames?.join(", ") || copy.targetRegistryFieldNone}</small>
+                  <small>更新 group：{credentialBundlePreview.updatedGroupNames?.join(", ") || copy.targetRegistryFieldNone}</small>
+                  <small>不變 group：{credentialBundlePreview.unchangedGroupIds?.join(", ") || copy.targetRegistryFieldNone}</small>
+                  <small>{copy.targetRegistryFieldSecretTargetsPrefix}{credentialBundlePreview.secretTargetIds.join(", ") || copy.targetRegistryFieldNone}</small>
+                  <small>{copy.targetRegistryFieldOverwriteCount}：{credentialBundlePreview.overwriteCount}</small>
+                  <small>{copy.targetRegistryFieldGroupOverwriteCount}：{credentialBundlePreview.groupOverwriteCount ?? 0}</small>
                 </section>
               ) : null}
             </section>
             {draft.kind === "remote-desktop" ? (
               <section className="mcp-preview target-remote-desktop-session">
-                <span>遠端桌面 Session</span>
+                <span>{copy.fieldRemoteDesktopTitle}</span>
                 <strong>{remoteDesktopView?.targetName ?? draft.displayName}</strong>
-                <p>{remoteDesktopView?.screenSummary ?? "尚未讀取遠端桌面 session，請先按觀察或重新整理。"}</p>
-                <small>summary：{remoteDesktopView?.sessionSummary ?? "未建立"}</small>
+                <p>{remoteDesktopView?.screenSummary ?? copy.fieldRemoteDesktopConnectionHint}</p>
+                <small>{copy.fieldRemoteDesktopSessionSummary}：{remoteDesktopView?.sessionSummary ?? copy.targetRegistryFieldNotEstablished}</small>
                 <small>
-                  state：{remoteDesktopView?.state ?? "idle"} · mode：{remoteDesktopView?.mode ?? draft.sessionMode}
+                  {copy.fieldRemoteDesktopSessionStateIdle}：{remoteDesktopView?.state ?? copy.targetRegistryFieldNone} · mode：{remoteDesktopView?.mode ?? draft.sessionMode}
                 </small>
-                <small>permission request：{remoteDesktopView?.permissionRequestId ?? "未送出"}</small>
-                <small>transport：{remoteDesktopView?.transport ?? "未設定"}</small>
-                <small>credential source：{remoteDesktopView?.credentialSource ?? "none"}</small>
-                <small>credential seed：{remoteDesktopView?.credentialSeedState ?? "idle"}</small>
+                <small>permission request：{remoteDesktopView?.permissionRequestId ?? copy.targetRegistryFieldNotSelected}</small>
+                <small>transport：{remoteDesktopView?.transport ?? copy.targetRegistryFieldNotConfigured}</small>
+                <small>{copy.fieldRemoteDesktopCredentialSource}：{remoteDesktopView?.credentialSource ?? copy.targetRegistryFieldNone}</small>
+                <small>{copy.fieldRemoteDesktopCredentialSeedState}：{remoteDesktopView?.credentialSeedState ?? copy.fieldRemoteDesktopLaunchStateIdle}</small>
                 {remoteDesktopView?.credentialSeedError ? <small>credential seed error：{remoteDesktopView.credentialSeedError}</small> : null}
-                <small>active window：{remoteDesktopView?.activeWindow ?? "未取得"}</small>
+                <small>active window：{remoteDesktopView?.activeWindow ?? copy.targetRegistryFieldNotConfigured}</small>
                 <small>
                   visible windows：{remoteDesktopView?.visibleWindows?.length ? remoteDesktopView.visibleWindows.length : 0}
                 </small>
-                <small>client launch：{remoteDesktopView?.clientLaunchState ?? "idle"}</small>
-                <small>launch command：{remoteDesktopView?.clientLaunchCommand ?? "未啟動"}</small>
-                <small>launch pid：{remoteDesktopView?.clientLaunchPid ?? "n/a"}</small>
+                <small>client launch：{remoteDesktopView?.clientLaunchState ?? copy.fieldRemoteDesktopLaunchStateIdle}</small>
+                <small>launch command：{remoteDesktopView?.clientLaunchCommand ?? copy.targetRegistryFieldNotEstablished}</small>
+                <small>launch pid：{remoteDesktopView?.clientLaunchPid ?? copy.targetRegistryFieldNa}</small>
                 <small>last observed：{formatLastSeenAt(remoteDesktopView?.lastObservedAt ?? remoteDesktopView?.lastUpdatedAt)}</small>
                 {latestRemoteDesktopNote ? <small>latest note：{latestRemoteDesktopNote}</small> : null}
-                {remoteDesktopActionBlocked ? <small>請先儲存這個 target，再與 gateway 互動。</small> : null}
+                {remoteDesktopActionBlocked ? <small>{copy.targetRegistryRemoteDesktopSaveRequired}</small> : null}
                 {remoteDesktopView?.clientLaunchError ? <small>launch error：{remoteDesktopView.clientLaunchError}</small> : null}
               </section>
             ) : null}
             {draft.kind === "ssh-terminal" ? (
               <section className="mcp-preview target-ssh-terminal-session">
-                <span>SSH Terminal Session</span>
+                <span>{copy.fieldSSHSessionTitle}</span>
                 <strong>{sshTerminalView?.targetName ?? draft.displayName}</strong>
                 <p>
                   {sshTerminalView?.state === "connected"
-                    ? "SSH session 已開啟，可送出 allowlisted command。"
+                    ? copy.fieldSSHSessionStateConnected
                     : sshTerminalView?.state === "closed"
-                      ? "SSH session 已關閉，必要時可重新開啟。"
-                    : "尚未開啟 SSH session，請先按開啟 Session。"}
+                      ? copy.fieldSSHSessionStateClosed
+                    : copy.fieldSSHSessionStateIdle}
                 </p>
-                <small>summary：{sshTerminalView?.sessionSummary ?? "未建立"}</small>
-                <small>state：{sshTerminalView?.state ?? "idle"} · mode：{sshTerminalView?.mode ?? draft.sessionMode}</small>
-                <small>prompt：{sshTerminalView?.prompt ?? "未建立"}</small>
-                <small>cwd：{sshTerminalView?.currentDirectory ?? "~"} · last exit：{sshTerminalView?.lastExitCode ?? "未執行"}</small>
-                <small>transport：{sshTerminalView?.transport ?? "未設定"}</small>
-                <small>last command：{sshTerminalView?.lastCommand ?? "未執行"}</small>
+                <small>{copy.fieldRemoteDesktopSessionSummary}：{sshTerminalView?.sessionSummary ?? copy.targetRegistryFieldNotEstablished}</small>
+                <small>{copy.fieldSshSessionStateIdle}：{sshTerminalView?.state ?? copy.fieldSshSessionStateIdle} · mode：{sshTerminalView?.mode ?? draft.sessionMode}</small>
+                <small>prompt：{sshTerminalView?.prompt ?? copy.targetRegistryFieldNotEstablished}</small>
+                <small>cwd：{sshTerminalView?.currentDirectory ?? "~"} · last exit：{sshTerminalView?.lastExitCode ?? copy.targetRegistryFieldNotEstablished}</small>
+                <small>transport：{sshTerminalView?.transport ?? copy.targetRegistryFieldNotConfigured}</small>
+                <small>last command：{sshTerminalView?.lastCommand ?? copy.targetRegistryFieldNotEstablished}</small>
                 <small>last observed：{formatLastSeenAt(sshTerminalView?.lastObservedAt ?? sshTerminalView?.lastUpdatedAt)}</small>
                 {latestSshTerminalNote ? <small>latest note：{latestSshTerminalNote}</small> : null}
-                {sshTerminalActionBlocked ? <small>請先儲存這個 target，再與 gateway 互動。</small> : null}
+                {sshTerminalActionBlocked ? <small>{copy.targetRegistrySSHSessionSaveRequired}</small> : null}
                 <label className="ssh-terminal-command">
-                  <span>SSH command</span>
+                  <span>{copy.fieldSSHCommandLabel}</span>
                   <textarea
                     value={sshTerminalCommandDraft}
                     onChange={(event) => setSshTerminalCommandDraft(event.target.value)}
-                    placeholder="git status"
+                    placeholder={copy.fieldSSHCommandPlaceholder}
                   />
-                  <small>只會透過 safe-dispatch 與 gateway-managed SSH session contract 執行 allowlisted 命令。</small>
+                  <small>{copy.fieldSSHSessionHint}</small>
                 </label>
                 <section className="ssh-terminal-transcript">
-                  <span>Transcript</span>
+                  <span>{copy.fieldSSHTranscriptTitle}</span>
                   <div className="ssh-terminal-transcript-list">
                     {sshTerminalTranscript.length > 0 ? (
                       sshTerminalTranscript.map((entry) => (
@@ -2607,7 +2607,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                         </article>
                       ))
                     ) : (
-                      <p>尚未建立 transcript。</p>
+                      <p>{copy.fieldSSHSessionNoTranscript}</p>
                     )}
                   </div>
                 </section>
@@ -2623,7 +2623,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     disabled={busy || remoteDesktopBusy || remoteDesktopActionBlocked}
                   >
                     <RefreshCw size={16} />
-                    觀察螢幕
+                    {copy.fieldRemoteDesktopObserveButton}
                   </button>
                   <button
                     className="secondary-button"
@@ -2632,7 +2632,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     disabled={busy || remoteDesktopBusy || remoteDesktopActionBlocked || !gatewayBaseUrl}
                   >
                     <Send size={16} />
-                    請求控制
+                    {copy.fieldRemoteDesktopRequestControlButton}
                   </button>
                   <button
                     className="secondary-button"
@@ -2640,7 +2640,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     onClick={() => void mutateRemoteDesktopSession("release_control")}
                     disabled={busy || remoteDesktopBusy || remoteDesktopActionBlocked}
                   >
-                    釋放控制
+                    {copy.fieldRemoteDesktopReleaseButton}
                   </button>
                   <button
                     className="secondary-button"
@@ -2649,7 +2649,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     disabled={busy || remoteDesktopBusy || remoteDesktopActionBlocked || draft.credentialMode !== "secret-ref" || !draft.credentialRef.trim()}
                   >
                     <Save size={16} />
-                    準備登入憑證
+                    {copy.fieldRemoteDesktopSeedButton}
                   </button>
                   <button
                     className="secondary-button"
@@ -2658,7 +2658,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     disabled={busy || remoteDesktopBusy || remoteDesktopActionBlocked}
                   >
                     <RefreshCw size={16} />
-                    重新整理 Session
+                    {copy.fieldRemoteDesktopRefreshButton}
                   </button>
                   <button
                     className="primary-button"
@@ -2667,7 +2667,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     disabled={busy || remoteDesktopBusy || remoteDesktopActionBlocked}
                   >
                     <Send size={16} />
-                    啟動 RDP Client
+                    {copy.fieldRemoteDesktopLaunchButton}
                   </button>
                 </>
               ) : null}
@@ -2680,7 +2680,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     disabled={busy || sshTerminalBusy || sshTerminalActionBlocked || connectionIssues.length > 0}
                   >
                     <RefreshCw size={16} />
-                    開啟 Session
+                    {copy.fieldSSHSessionOpenButton}
                   </button>
                   <button
                     className="primary-button"
@@ -2689,7 +2689,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     disabled={busy || sshTerminalBusy || sshTerminalActionBlocked || connectionIssues.length > 0 || !sshTerminalCommandDraft.trim()}
                   >
                     <Send size={16} />
-                    送出命令
+                    {copy.fieldSSHCommandSendButton}
                   </button>
                   <button
                     className="secondary-button"
@@ -2698,7 +2698,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     disabled={busy || sshTerminalBusy || sshTerminalActionBlocked || connectionIssues.length > 0}
                   >
                     <RefreshCw size={16} />
-                    重新整理
+                    {copy.targetRegistryConnectionReadinessRefreshAction}
                   </button>
                   <button
                     className="secondary-button"
@@ -2706,30 +2706,30 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     onClick={() => void mutateSshTerminalSession("close_session")}
                     disabled={busy || sshTerminalBusy || sshTerminalActionBlocked || connectionIssues.length > 0}
                   >
-                    關閉 Session
+                    {copy.fieldSSHSessionCloseButton}
                   </button>
                 </>
               ) : null}
               {draft.kind === "ssh-terminal" || draft.kind === "remote-desktop" ? (
                 <button className="secondary-button" type="button" onClick={() => void issueTargetCredentialRef()} disabled={busy || !sshPrivateKeyDraft.trim()}>
                   <Send size={16} />
-                  {draft.kind === "ssh-terminal" ? "發行 SSH credential ref" : "發行 RDP credential ref"}
+                  {draft.kind === "ssh-terminal" ? copy.fieldSSHCredentialRefIssueButton : copy.fieldRemoteDesktopCredentialRefIssueButton}
                 </button>
               ) : null}
               <button className="secondary-button" type="button" onClick={() => void exportCredentialBundle()} disabled={busy || !credentialBundlePassphraseDraft.trim()}>
-                匯出 Credential Bundle
+                {copy.fieldBundleExportButton}
               </button>
               <button className="secondary-button" type="button" onClick={() => void previewCredentialBundle()} disabled={busy || !credentialBundlePassphraseDraft.trim() || !credentialBundleImportDraft.trim()}>
-                預覽 Credential Bundle
+                {copy.fieldBundlePreviewButton}
               </button>
               <button className="secondary-button" type="button" onClick={() => void importCredentialBundle()} disabled={busy || !credentialBundlePassphraseDraft.trim() || !credentialBundleImportDraft.trim()}>
-                匯入 Credential Bundle
+                {copy.fieldBundleImportButton}
               </button>
               <button className="secondary-button" type="button" onClick={() => void runConnectionAction("pair")} disabled={busy}>
-                Pair
+                {copy.fieldConnectionBadgeNeedPair}
               </button>
               <button className="secondary-button" type="button" onClick={() => void runConnectionAction("probe")} disabled={busy}>
-                Probe
+                {copy.fieldConnectionBadgeNeedProbe}
               </button>
               <button
                 className="secondary-button"
@@ -2737,7 +2737,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 onClick={() => void runConnectionAction("verify_host_key")}
                 disabled={busy || draft.kind !== "ssh-terminal"}
               >
-                Verify host key
+                {copy.fieldConnectionBadgeNeedVerify}
               </button>
               <button
                 className="primary-button"
@@ -2745,37 +2745,37 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 onClick={() => void runConnectionAction("connect")}
                 disabled={busy || (draft.kind !== "local-shell" && connectionIssues.length > 0)}
               >
-                Connect
+                {copy.fieldConnectionBadgeNeedConnect}
               </button>
               <button className="secondary-button" type="button" onClick={() => void runConnectionAction("disconnect")} disabled={busy}>
-                Disconnect
+                {copy.fieldConnectionBadgeNeedDisconnect}
               </button>
               <button className="secondary-button" type="button" onClick={() => void runConnectionAction("refresh")} disabled={busy}>
-                Refresh
+                {copy.fieldConnectionBadgeNeedRefresh}
               </button>
             </div>
             <div className="panel-actions">
               <button className="primary-button" type="button" onClick={() => void saveDraft(false)} disabled={busy}>
                 <Save size={16} />
-                儲存目標
+                {copy.targetRegistryDraftSaveButton}
               </button>
               <button className="secondary-button" type="button" onClick={() => void saveDraft(true)} disabled={busy}>
                 <Save size={16} />
-                儲存並設為預設
+                {copy.targetRegistryDraftSaveDefaultButton}
               </button>
             </div>
             <small>
-              目前狀態：{selectedTarget ? summarizeTargetProfile(selectedTarget) : "草稿尚未儲存"} · {draftIsSaved ? "已對齊 registry" : "編輯中"}
+              {copy.targetRegistryDraftSaved}{selectedTarget ? summarizeTargetProfile(selectedTarget) : copy.targetRegistryDraftUnsaved} · {draftIsSaved ? copy.targetRegistryDraftSavedAligned : copy.targetRegistryDraftEditing}
             </small>
           </section>
 
           <section className="commercial-card target-dispatch-form">
             <div>
-              <h3>派發預覽</h3>
-              <p>先做本地判斷，再把安全決策送到 gateway 當成 audit record。</p>
+              <h3>{copy.targetRegistryDispatchTitle}</h3>
+              <p>{copy.targetRegistryDispatchDescription}</p>
             </div>
             <label>
-              <span>分類</span>
+              <span>{copy.fieldDispatchMode}</span>
               <select value={dispatchCategory} onChange={(event) => setDispatchCategory(event.target.value as TargetDispatchCategory)}>
                 {dispatchCategoryOptions.map((option) => (
                   <option key={option.value} value={option.value}>
@@ -2785,21 +2785,21 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               </select>
             </label>
             <label>
-              <span>摘要</span>
-              <textarea value={dispatchSummary} onChange={(event) => setDispatchSummary(event.target.value)} placeholder="說明這次要做什麼" />
+              <span>{copy.fieldDispatchSummary}</span>
+              <textarea value={dispatchSummary} onChange={(event) => setDispatchSummary(event.target.value)} placeholder={copy.fieldDispatchSummaryHint} />
             </label>
             <label>
-              <span>命令 / 動作</span>
+              <span>{copy.fieldDispatchCommand}</span>
               <textarea
                 value={dispatchCommand}
                 onChange={(event) => setDispatchCommand(event.target.value)}
-                placeholder="例如 git status / collect-debug-bundle / request-human-approval"
+                placeholder={copy.fieldDispatchCommandHint}
               />
             </label>
             <div className="panel-actions">
               <button className="primary-button" type="button" onClick={() => void previewDispatch()} disabled={busy || !draftTarget.id.trim() || !dispatchSummary.trim()}>
                 <Server size={16} />
-                預覽
+                {copy.fieldDispatchPreview}
               </button>
               <button
                 className="primary-button"
@@ -2808,7 +2808,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 disabled={busy || !preview || preview.request.category !== "execute_safe" || !preview.decision.allowed}
               >
                 <Send size={16} />
-                審批並執行
+                {copy.fieldDispatchExecutionButton}
               </button>
               <button
                 className="secondary-button"
@@ -2817,17 +2817,17 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 disabled={busy || !preview || preview.request.category !== "execute_safe" || !preview.decision.allowed || selectedBroadcastTargetIds.length < 2}
               >
                 <Send size={16} />
-                批次執行 {selectedBroadcastTargetIds.length > 0 ? `(${selectedBroadcastTargetIds.length})` : ""}
+                {copy.fieldDispatchBatchButton} {selectedBroadcastTargetIds.length > 0 ? `(${selectedBroadcastTargetIds.length})` : ""}
               </button>
               <button className="secondary-button" type="button" onClick={() => void queueDispatch()} disabled={busy || !draftSummaryReady(dispatchSummary)}>
                 <Send size={16} />
-                建立紀錄
+                {copy.fieldDispatchCreateRecord}
               </button>
             </div>
 
             {preview ? (
               <div className="mcp-preview">
-                <span>最新預覽</span>
+                <span>{copy.fieldDispatchLatestPreview}</span>
                 <strong>{preview.target.displayName}</strong>
                 <p>{preview.request.summary}</p>
                 <small>
@@ -2836,12 +2836,12 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 <small>adapter：{preview.decision.adapterKind ?? "unknown"}{preview.decision.commandSafety ? ` · command=${preview.decision.commandSafety}` : ""}</small>
               </div>
             ) : (
-              <div className="mcp-empty">尚未產生預覽，請先按「預覽」。</div>
+              <div className="mcp-empty">{copy.fieldMcpEmptyPreview}</div>
             )}
 
             {execution ? (
               <div className="mcp-preview target-execution-result">
-                <span>最近執行結果</span>
+                <span>{copy.fieldDispatchLatestExecution}</span>
                 <strong>{execution.targetName}</strong>
                 <p>{execution.mode} · exit {execution.exitCode ?? "unknown"}</p>
                 <small>credential source：{execution.credentialSource ?? "unknown"}</small>
@@ -2856,7 +2856,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
             ) : null}
             {batchExecutions.length > 0 ? (
               <section className="target-batch-execution-results">
-                <span>Batch execution</span>
+                <span>{copy.fieldDispatchBatchExecution}</span>
                 {batchExecutions.map((result) => (
                   <article key={result.targetId} className={`target-batch-execution-result ${result.allowed ? "allowed" : "blocked"}`}>
                     <strong>{result.targetName ?? result.targetId}</strong>
@@ -2873,11 +2873,11 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
 
             <dl className="status-list">
               <div>
-                <dt>目標</dt>
+                <dt>{copy.fieldTargetLabel}</dt>
                 <dd>{draftTarget.displayName} · {draftTarget.kind} · {draftTarget.state}</dd>
               </div>
               <div>
-                <dt>安全狀態</dt>
+                <dt>{copy.fieldSecurityStatusLabel}</dt>
                 <dd>
                   {preview ? (
                     <span className={`risk-pill ${dispatchStatusClass(preview.decision)}`}>{dispatchStatusLabel(preview.decision)}</span>
@@ -2887,18 +2887,18 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 </dd>
               </div>
               <div>
-                <dt>trusted workspaces</dt>
-                <dd>{trustedWorkspaceCount > 0 ? trustedWorkspaceCount : "未設定"}</dd>
+                <dt>{copy.fieldDispatchTrustedWorkspaces}</dt>
+                <dd>{trustedWorkspaceCount > 0 ? trustedWorkspaceCount : copy.fieldTargetEndpointMissing}</dd>
               </div>
             </dl>
 
             <section className="adapter-list">
               <div>
-                <dt>target timeline</dt>
+                <dt>{copy.fieldTargetListTargetTimeline}</dt>
                 {selectedTarget ? (
                   <dd>{selectedTarget.displayName} · 最近 {targetTimeline.length} 筆紀錄</dd>
                 ) : (
-                  <dd>尚未選取 target。</dd>
+                  <dd>{copy.fieldTargetListTimelineNoSelection}</dd>
                 )}
               </div>
               {targetTimeline.length > 0 ? (
@@ -2908,10 +2908,10 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                       {entry.eventType} · {entry.createdAt}
                     </dt>
                     <dd>{entry.summary}</dd>
-                    <dd>source：{entry.source}</dd>
+                    <dd>{copy.fieldTargetListTimelineSource}：{entry.source}</dd>
                     {entry.kind === "dispatch" ? (
                       <dd>
-                        {entry.allowed ? "allow" : "block"} · {entry.decision}
+                        {entry.allowed ? copy.targetRegistryFieldEnabled : copy.targetRegistryFieldDisabled} · {entry.decision}
                         {entry.category ? ` · ${entry.category}` : ""}
                       </dd>
                     ) : null}
@@ -2919,24 +2919,24 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     {entry.command ? <dd>command：{entry.command}</dd> : null}
                     {entry.state ? <dd>state：{entry.state}</dd> : null}
                     {entry.transport ? <dd>transport：{entry.transport}</dd> : null}
-                    {entry.lastProbeResult ? <dd>probe：{entry.lastProbeResult}</dd> : null}
-                    {entry.lastProbeHost ? <dd>probe endpoint：{entry.lastProbeHost}{entry.lastProbePort ? `:${entry.lastProbePort}` : ""}</dd> : null}
-                    {typeof entry.lastProbeLatencyMs === "number" ? <dd>probe latency：{entry.lastProbeLatencyMs}ms</dd> : null}
-                    {entry.lastProbeError ? <dd>probe error：{entry.lastProbeError}</dd> : null}
-                    {entry.credentialSource ? <dd>credential source：{entry.credentialSource}</dd> : null}
-                    {entry.credentialSeedState ? <dd>credential seed：{entry.credentialSeedState}</dd> : null}
+                    {entry.lastProbeResult ? <dd>{copy.fieldProbe}：{entry.lastProbeResult}</dd> : null}
+                    {entry.lastProbeHost ? <dd>{copy.fieldProbeEndpoint}：{entry.lastProbeHost}{entry.lastProbePort ? `:${entry.lastProbePort}` : ""}</dd> : null}
+                    {typeof entry.lastProbeLatencyMs === "number" ? <dd>{copy.fieldProbeLatency}：{entry.lastProbeLatencyMs}ms</dd> : null}
+                    {entry.lastProbeError ? <dd>{copy.fieldProbeError}：{entry.lastProbeError}</dd> : null}
+                    {entry.credentialSource ? <dd>{copy.fieldRemoteDesktopCredentialSource}：{entry.credentialSource}</dd> : null}
+                    {entry.credentialSeedState ? <dd>{copy.fieldRemoteDesktopCredentialSeedState}：{entry.credentialSeedState}</dd> : null}
                     {entry.credentialTarget ? <dd>credential target：{entry.credentialTarget}</dd> : null}
-                    {entry.lastCommand ? <dd>last command：{entry.lastCommand}</dd> : null}
-                    {typeof entry.lastExitCode === "number" ? <dd>last exit：{entry.lastExitCode}</dd> : null}
-                    {entry.clientLaunchState ? <dd>client launch：{entry.clientLaunchState}</dd> : null}
-                    {entry.clientLaunchCommand ? <dd>launch command：{entry.clientLaunchCommand}</dd> : null}
-                    {entry.activeWindow ? <dd>active window：{entry.activeWindow}</dd> : null}
+                    {entry.lastCommand ? <dd>{copy.fieldSshSessionLastCommandPrefix}{entry.lastCommand}</dd> : null}
+                    {typeof entry.lastExitCode === "number" ? <dd>{copy.fieldSshSessionExitPrefix}{entry.lastExitCode}</dd> : null}
+                    {entry.clientLaunchState ? <dd>{copy.fieldRemoteDesktopClientLaunchState}：{entry.clientLaunchState}</dd> : null}
+                    {entry.clientLaunchCommand ? <dd>{copy.fieldRemoteDesktopClientLaunchCommand}：{entry.clientLaunchCommand}</dd> : null}
+                    {entry.activeWindow ? <dd>{copy.fieldRemoteDesktopActiveWindow}：{entry.activeWindow}</dd> : null}
                   </div>
                 ))
               ) : (
                 <div>
-                  <dt>target timeline</dt>
-                  <dd>尚未有這台 target 的派發紀錄。</dd>
+                  <dt>{copy.fieldTargetListTargetTimeline}</dt>
+                  <dd>{copy.fieldTargetListTimelineNoRecords}</dd>
                 </div>
               )}
             </section>
@@ -2948,14 +2948,14 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   type="button"
                   onClick={() => setTimelineViewMode("target")}
                 >
-                  target timeline
+                  {copy.fieldTargetListTargetTimeline}
                 </button>
                 <button
                   className={timelineViewMode === "global" ? "primary-button" : "secondary-button"}
                   type="button"
                   onClick={() => setTimelineViewMode("global")}
                 >
-                  global dispatch log
+                  {copy.fieldTargetListGlobalDispatchLog}
                 </button>
               </div>
               {visibleDispatchRecords.map((record) => (
@@ -2969,7 +2969,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   {record.command ? <dd>command：{record.command}</dd> : null}
                 </div>
               ))}
-              {visibleDispatchRecords.length === 0 ? <div><dt>dispatch log</dt><dd>尚未有派發紀錄。</dd></div> : null}
+              {visibleDispatchRecords.length === 0 ? <div><dt>{copy.targetRegistryFieldDispatchLogTitle}</dt><dd>{copy.fieldTargetListTimelineEmpty}</dd></div> : null}
             </section>
           </section>
         </section>
