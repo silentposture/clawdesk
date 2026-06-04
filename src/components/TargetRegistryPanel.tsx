@@ -389,6 +389,22 @@ function readinessBadgeClass(report: TargetConnectionReadinessReport): string {
   return `readiness-${report.nextAction}`;
 }
 
+function readinessActionLabel(report: TargetConnectionReadinessReport): string {
+  if (report.readyToConnect) return "Connect";
+  switch (report.nextAction) {
+    case "pair":
+      return "Pair";
+    case "probe":
+      return "Probe";
+    case "verify_host_key":
+      return "Verify host key";
+    case "refresh":
+      return "Refresh";
+    default:
+      return "Connect";
+  }
+}
+
 function formatLastSeenAt(value?: string): string {
   if (!value) return "未記錄";
   const parsed = new Date(value);
@@ -986,8 +1002,8 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     return { target, request, decision, record };
   }
 
-  async function runConnectionAction(action: TargetConnectionAction) {
-    const currentTarget = draftTarget;
+  async function runConnectionAction(action: TargetConnectionAction, targetOverride?: TargetProfile) {
+    const currentTarget = targetOverride ?? draftTarget;
     const result = applyTargetConnectionAction(currentTarget, action);
     if (!result.allowed) {
       setError(result.reason);
@@ -1897,23 +1913,39 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 const readiness = buildTargetConnectionReadinessReport(target);
                 const readinessLabel = readiness.readyToConnect ? "ready" : readiness.nextAction;
                 return (
-                  <button key={target.id} type="button" className={active ? "active" : ""} onClick={() => selectExistingTarget(target)}>
-                    <strong>{target.displayName}</strong>
-                    <small className={`target-readiness-badge ${readinessBadgeClass(readiness)}`}>
-                      {readiness.readyToConnect ? "ready" : readiness.nextAction}
-                    </small>
-                    <small>{summarizeTargetProfile(target)}</small>
-                    <small>{summarizeTargetConnectionProfile(target)}</small>
-                    <small>
-                      readiness：{readinessLabel}
-                      {readiness.lastProbeResult ? ` · probe ${readiness.lastProbeResult}` : ""}
-                    </small>
-                    <small>{target.adapters[0]?.endpoint ?? "未設定 endpoint"}</small>
-                    <small>
-                      {target.id}
-                      {registry.defaultTargetId === target.id ? " · 預設" : ""}
-                    </small>
-                  </button>
+                  <article key={target.id} className={`target-list-item${active ? " active" : ""}`}>
+                    <button type="button" className="target-list-select" onClick={() => selectExistingTarget(target)}>
+                      <strong>{target.displayName}</strong>
+                      <small className={`target-readiness-badge ${readinessBadgeClass(readiness)}`}>
+                        {readiness.readyToConnect ? "ready" : readiness.nextAction}
+                      </small>
+                      <small>{summarizeTargetProfile(target)}</small>
+                      <small>{summarizeTargetConnectionProfile(target)}</small>
+                      <small>
+                        readiness：{readinessLabel}
+                        {readiness.lastProbeResult ? ` · probe ${readiness.lastProbeResult}` : ""}
+                      </small>
+                      <small>{target.adapters[0]?.endpoint ?? "未設定 endpoint"}</small>
+                      <small>
+                        {target.id}
+                        {registry.defaultTargetId === target.id ? " · 預設" : ""}
+                      </small>
+                    </button>
+                    <div className="target-list-actions">
+                      <button
+                        type="button"
+                        className="secondary-button target-list-action"
+                        onClick={() => {
+                          selectExistingTarget(target);
+                          void runConnectionAction(readiness.readyToConnect ? "connect" : readiness.nextAction === "none" ? "refresh" : readiness.nextAction, target);
+                        }}
+                        disabled={busy}
+                      >
+                        <Send size={16} />
+                        {readinessActionLabel(readiness)}
+                      </button>
+                    </div>
+                  </article>
                 );
               })}
             </div>
