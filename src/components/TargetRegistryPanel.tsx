@@ -1889,11 +1889,17 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
             <div className="target-list">
               {registry.targets.map((target) => {
                 const active = selectedTargetId === target.id;
+                const readiness = buildTargetConnectionReadinessReport(target);
+                const readinessLabel = readiness.readyToConnect ? "ready" : readiness.nextAction;
                 return (
                   <button key={target.id} type="button" className={active ? "active" : ""} onClick={() => selectExistingTarget(target)}>
                     <strong>{target.displayName}</strong>
                     <small>{summarizeTargetProfile(target)}</small>
                     <small>{summarizeTargetConnectionProfile(target)}</small>
+                    <small>
+                      readiness：{readinessLabel}
+                      {readiness.lastProbeResult ? ` · probe ${readiness.lastProbeResult}` : ""}
+                    </small>
                     <small>{target.adapters[0]?.endpoint ?? "未設定 endpoint"}</small>
                     <small>
                       {target.id}
