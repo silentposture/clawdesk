@@ -57,6 +57,7 @@
 - `POST /targets/dispatch-preview`
 - `POST /targets/dispatch`
 - `POST /targets/execute`
+- `POST /targets/execute-batch`
 
 SSH terminal sessions maintain a redacted transcript snapshot and session summary, and only allow allowlisted commands after pairing, credential-ref / known-host validation, and gateway-managed session open. Remote desktop sessions expose observe / control / release state and session summary under the same contract layer, plus a gated native client launch helper for the local RDP client.
 Remote desktop credential refs can be seeded into the local Windows credential flow before launch when the target uses `secret-ref` mode.
@@ -64,6 +65,7 @@ The remote-desktop session endpoint also accepts a `seed_credentials` action so 
 `credential-bundle` 匯出 / 預覽 / 匯入端點會把 target registry 與 gateway-managed credential refs 以 passphrase-protected encrypted bundle 在機器間移轉，匯入後會重新發行本機 credential refs；preview 只回傳可審核的 target / secret 摘要與匯入影響，不會暴露明文 secret。
 `POST /targets/connection` 現在支援 `pair`、`probe`、`verify_host_key`、`connect`、`disconnect` 與 `refresh`，其中 `probe` 會回報 SSH / RDP host 與 port 的實際可達性。
 `GET /targets/connection-readiness` 會回傳可連線前檢查報告，包含 pairing、credential mode、credential ref、SSH host key 與 probe 狀態，並提供 next-action 建議。
+`POST /targets/execute-batch` 會對多個已選 target 同步執行同一個 allowlisted local-shell / SSH safe command，並回傳 per-target execution results 與更新後的 registry。
 
 - `GET /compat/settings`
 - `POST /compat/settings`

@@ -1347,6 +1347,20 @@ th {
   justify-content: flex-end;
 }
 
+.target-list-select-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #53645d;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.02em;
+}
+
+.target-list-select-toggle input {
+  accent-color: #0f6f5c;
+}
+
 .target-list-action {
   min-height: 32px;
   padding: 0 11px;
@@ -1396,6 +1410,40 @@ th {
   font-size: 11px;
   font-weight: 650;
   text-transform: none;
+}
+
+.target-batch-execution-results {
+  display: grid;
+  gap: 8px;
+  padding: 14px;
+  border: 1px solid #bfd5cb;
+  border-radius: 8px;
+  background: #eef7f2;
+}
+
+.target-batch-execution-results > span {
+  font-size: 12px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: #1f6f5b;
+}
+
+.target-batch-execution-result {
+  display: grid;
+  gap: 4px;
+  padding: 10px;
+  border: 1px solid #d7e3dc;
+  border-radius: 8px;
+  background: #ffffff;
+}
+
+.target-batch-execution-result.allowed {
+  border-color: #9cc8ba;
+}
+
+.target-batch-execution-result.blocked {
+  border-color: #f0c4b4;
+  background: #fff7f2;
 }
 
 .target-toggle {

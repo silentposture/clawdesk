@@ -80,6 +80,14 @@ interface TargetExecutionState {
   targetName: string;
 }
 
+interface TargetBatchExecutionResult {
+  targetId: string;
+  targetName?: string;
+  allowed: boolean;
+  reason: string;
+  execution?: TargetExecutionState;
+}
+
 interface TargetConnectionReadinessState {
   report: TargetConnectionReadinessReport;
   source: "gateway" | "local";
@@ -664,6 +672,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const [dispatchCommand, setDispatchCommand] = useState("git status");
   const [preview, setPreview] = useState<DispatchPreviewState>();
   const [execution, setExecution] = useState<TargetExecutionState>();
+  const [batchExecutions, setBatchExecutions] = useState<TargetBatchExecutionResult[]>([]);
   const [timelineViewMode, setTimelineViewMode] = useState<"target" | "global">("target");
   const [connectionReadinessReport, setConnectionReadinessReport] = useState<TargetConnectionReadinessState>();
   const [remoteDesktopSession, setRemoteDesktopSession] = useState<RemoteDesktopSessionState>();
@@ -678,6 +687,9 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const [credentialBundleImportDraft, setCredentialBundleImportDraft] = useState("");
   const [credentialBundleTargetIds, setCredentialBundleTargetIds] = useState<string[]>(
     initialRegistry.targets.map((target) => target.id),
+  );
+  const [broadcastTargetIds, setBroadcastTargetIds] = useState<string[]>(
+    initialRegistry.targets.filter((target) => target.kind === "local-shell" || target.kind === "ssh-terminal").map((target) => target.id),
   );
   const [credentialBundlePreview, setCredentialBundlePreview] = useState<CredentialBundlePreviewSummary>();
   const [busy, setBusy] = useState(false);
@@ -709,6 +721,11 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     const selected = credentialBundleTargetIds.filter((targetId) => registryTargetIds.includes(targetId));
     return selected.length > 0 ? selected : registryTargetIds;
   }, [credentialBundleTargetIds, registry.targets]);
+  const selectedBroadcastTargetIds = useMemo(() => {
+    const registryTargetIds = registry.targets.map((target) => target.id);
+    const selected = broadcastTargetIds.filter((targetId) => registryTargetIds.includes(targetId));
+    return selected.length > 0 ? selected : [selectedTarget?.id ?? draftTarget.id].filter(Boolean);
+  }, [broadcastTargetIds, draftTarget.id, selectedTarget?.id, registry.targets]);
   const visibleDispatchRecords =
     timelineViewMode === "target" && selectedTarget
       ? dispatches.filter((record) => record.targetId === selectedTarget.id).slice(0, 6)
@@ -719,6 +736,10 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setCredentialBundleTargetIds((current) => {
       const next = current.filter((targetId) => registryTargetIds.includes(targetId));
       return next.length > 0 ? next : registryTargetIds;
+    });
+    setBroadcastTargetIds((current) => {
+      const next = current.filter((targetId) => registryTargetIds.includes(targetId));
+      return next.length > 0 ? next : registry.targets.filter((target) => target.kind === "local-shell" || target.kind === "ssh-terminal").map((target) => target.id);
     });
   }, [registry.targets]);
 
@@ -1189,6 +1210,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     const snapshot = createPreviewSnapshot(draftTarget);
     setPreview(snapshot);
     setError(undefined);
+    setBatchExecutions([]);
     clearSensitiveDraftState();
 
     if (snapshot.request.category !== "execute_safe") {
@@ -1209,12 +1231,19 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       return;
     }
 
+    const targetIds = selectedBroadcastTargetIds.length > 0 ? selectedBroadcastTargetIds : [snapshot.target.id];
+    const isBatch = targetIds.length > 1;
+
     setBusy(true);
     try {
-      const response = await fetch(`${gatewayBaseUrl}/targets/execute`, {
+      const response = await fetch(`${gatewayBaseUrl}${isBatch ? "/targets/execute-batch" : "/targets/execute"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ preview: snapshot, record: snapshot.record }),
+        body: JSON.stringify({
+          preview: snapshot,
+          record: snapshot.record,
+          targetIds: isBatch ? targetIds : undefined,
+        }),
       });
       if (!response.ok) throw new Error("bad response");
       const payload = (await response.json()) as {
@@ -1222,6 +1251,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         reason?: string;
         execution?: TargetExecutionState;
         record?: TargetDispatchRecord;
+        results?: TargetBatchExecutionResult[];
         dispatches?: TargetDispatchRecord[];
         registry?: TargetRegistry;
         target?: TargetProfile;
@@ -1241,14 +1271,20 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       } else if (payload.record) {
         setDispatches((current) => [payload.record!, ...current.filter((item) => item.id !== payload.record!.id)].slice(0, 100));
       }
-      setSelectedTargetId(nextTarget.id);
-      setDraft(draftFromTarget(nextTarget));
-      setExecution(payload.execution);
+      if (isBatch) {
+        setBatchExecutions(Array.isArray(payload.results) ? payload.results : []);
+        setMessage(`${payload.reason ?? "批次命令已執行"} · ${selectedBroadcastTargetIds.length} targets`);
+      } else {
+        setSelectedTargetId(nextTarget.id);
+        setDraft(draftFromTarget(nextTarget));
+        setExecution(payload.execution);
+        setMessage(`${payload.reason ?? "命令已執行"} · ${payload.execution?.mode ?? "unknown"}`);
+      }
       clearSensitiveDraftState();
       void loadTargetTimeline(nextTarget);
-      setMessage(`${payload.reason ?? "命令已執行"} · ${payload.execution?.mode ?? "unknown"}`);
     } catch {
       setExecution(undefined);
+      setBatchExecutions([]);
       setError("安全命令執行失敗，請先確認 ssh / PowerShell 可用且 target 已正確配對。");
     } finally {
       setBusy(false);
@@ -1995,6 +2031,20 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                       </small>
                     </button>
                     <div className="target-list-actions">
+                      <label className="target-list-select-toggle">
+                        <input
+                          type="checkbox"
+                          checked={selectedBroadcastTargetIds.includes(target.id)}
+                          onChange={(event) => {
+                            const checked = event.target.checked;
+                            setBroadcastTargetIds((current) => {
+                              const withoutTarget = current.filter((targetId) => targetId !== target.id);
+                              return checked ? [...withoutTarget, target.id] : withoutTarget;
+                            });
+                          }}
+                        />
+                        <span>broadcast</span>
+                      </label>
                       <button
                         type="button"
                         className="secondary-button target-list-action"
@@ -2609,6 +2659,15 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 <Send size={16} />
                 審批並執行
               </button>
+              <button
+                className="secondary-button"
+                type="button"
+                onClick={() => void executeSafeDispatch()}
+                disabled={busy || !preview || preview.request.category !== "execute_safe" || !preview.decision.allowed || selectedBroadcastTargetIds.length < 2}
+              >
+                <Send size={16} />
+                批次執行 {selectedBroadcastTargetIds.length > 0 ? `(${selectedBroadcastTargetIds.length})` : ""}
+              </button>
               <button className="secondary-button" type="button" onClick={() => void queueDispatch()} disabled={busy || !draftSummaryReady(dispatchSummary)}>
                 <Send size={16} />
                 建立紀錄
@@ -2643,6 +2702,22 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   <pre className="target-execution-stderr">{execution.stderr}</pre>
                 ) : null}
               </div>
+            ) : null}
+            {batchExecutions.length > 0 ? (
+              <section className="target-batch-execution-results">
+                <span>Batch execution</span>
+                {batchExecutions.map((result) => (
+                  <article key={result.targetId} className={`target-batch-execution-result ${result.allowed ? "allowed" : "blocked"}`}>
+                    <strong>{result.targetName ?? result.targetId}</strong>
+                    <p>{result.allowed ? "allowed" : "blocked"} · {result.reason}</p>
+                    {result.execution ? (
+                      <small>
+                        exit {result.execution.exitCode ?? "unknown"} · {result.execution.mode}
+                      </small>
+                    ) : null}
+                  </article>
+                ))}
+              </section>
             ) : null}
 
             <dl className="status-list">

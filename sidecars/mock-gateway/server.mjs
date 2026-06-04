@@ -8997,6 +8997,89 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && pathname === "/targets/execute-batch") {
+    try {
+      const body = await readJson(req);
+      const preview = body.preview ?? body;
+      const request = preview.request ?? body.request ?? {};
+      const command = typeof request.command === "string" ? request.command : typeof body.command === "string" ? body.command : "";
+      const targetIds = Array.isArray(body.targetIds)
+        ? body.targetIds.map((value) => (typeof value === "string" ? value.trim() : "")).filter(Boolean)
+        : [];
+      if (!targetIds.length) {
+        json(res, 400, { error: "targetIds are required" });
+        return;
+      }
+      const record = body.record ?? preview.record ?? null;
+      if (!record || typeof record !== "object" || typeof record.id !== "string") {
+        json(res, 400, { error: "record is required" });
+        return;
+      }
+
+      const executionResults = [];
+      const updatedTargets = new Map();
+      const appliedRecords = [];
+      for (const targetId of targetIds) {
+        const target = targetRegistry.targets.find((entry) => entry.id === targetId);
+        if (!target) {
+          executionResults.push({ targetId, allowed: false, reason: "target not found" });
+          continue;
+        }
+
+        const execution = await executeTargetCommandState(target, command);
+        if (!execution.allowed) {
+          executionResults.push({ targetId, allowed: false, reason: execution.reason, execution: execution.execution });
+          continue;
+        }
+
+        updatedTargets.set(targetId, execution.target);
+        const targetRecord = {
+          ...record,
+          id: `${record.id}-${sanitizeTargetStorageKey(targetId)}`,
+          targetId,
+          targetName: target.displayName,
+          createdAt: nowIso(),
+        };
+        appliedRecords.push(targetRecord);
+        executionResults.push({
+          targetId,
+          allowed: true,
+          reason: execution.reason,
+          execution: execution.execution,
+          record: targetRecord,
+          target: execution.target,
+        });
+      }
+
+      if (updatedTargets.size > 0) {
+        targetRegistry = {
+          ...targetRegistry,
+          targets: targetRegistry.targets.map((entry) => (updatedTargets.has(entry.id) ? updatedTargets.get(entry.id) : entry)),
+        };
+        targetDispatches.unshift(...appliedRecords);
+        targetDispatches = targetDispatches.slice(0, 200);
+      }
+      audit("targets.execute.batch", {
+        targetCount: executionResults.length,
+        allowedCount: executionResults.filter((item) => item.allowed).length,
+        failedCount: executionResults.filter((item) => !item.allowed).length,
+        category: request.category ?? "execute_safe",
+      });
+      scheduleStateSave();
+
+      json(res, 200, {
+        allowed: true,
+        reason: "Batch execution completed.",
+        results: executionResults,
+        registry: cloneTargetRegistryState(targetRegistry),
+        dispatches: targetDispatches.slice(0, 200),
+      });
+    } catch (error) {
+      json(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON" });
+    }
+    return;
+  }
+
   if (req.method === "POST" && pathname === "/targets/credential-ref/issue") {
     try {
       const body = await readJson(req);
