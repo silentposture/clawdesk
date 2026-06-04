@@ -73,12 +73,14 @@ interface TargetExecutionState {
 
 interface TargetTimelineEntry {
   id: string;
-  kind: "dispatch" | "session";
+  kind: "dispatch" | "session" | "audit";
+  eventType: string;
   targetId: string;
   targetName: string;
   createdAt: string;
   summary: string;
   source: string;
+  action?: string;
   category?: TargetDispatchCategory;
   command?: string;
   allowed?: boolean;
@@ -722,11 +724,13 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         .map((record) => ({
           id: record.id,
           kind: "dispatch" as const,
+          eventType: "dispatch.record",
           targetId: record.targetId,
           targetName: record.targetName,
           createdAt: record.createdAt,
           summary: record.summary,
           source: "local-dispatch-log",
+          action: record.category,
           category: record.category,
           command: record.command,
           allowed: record.decision.allowed,
@@ -2094,7 +2098,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 targetTimeline.map((entry) => (
                   <div key={entry.id}>
                     <dt>
-                      {entry.kind} · {entry.createdAt}
+                      {entry.eventType} · {entry.createdAt}
                     </dt>
                     <dd>{entry.summary}</dd>
                     <dd>source：{entry.source}</dd>
@@ -2104,6 +2108,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                         {entry.category ? ` · ${entry.category}` : ""}
                       </dd>
                     ) : null}
+                    {entry.kind === "audit" ? <dd>action：{entry.action}</dd> : null}
                     {entry.command ? <dd>command：{entry.command}</dd> : null}
                     {entry.state ? <dd>state：{entry.state}</dd> : null}
                     {entry.transport ? <dd>transport：{entry.transport}</dd> : null}

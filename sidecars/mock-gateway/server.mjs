@@ -2237,6 +2237,7 @@ function buildTargetTimelineEntryFromDispatch(record) {
   return {
     id: record.id,
     kind: "dispatch",
+    eventType: "dispatch.record",
     targetId: record.targetId,
     targetName: record.targetName,
     createdAt: record.createdAt,
@@ -2253,6 +2254,7 @@ function buildTargetTimelineEntryFromSshSession(session) {
   return {
     id: `${session.sessionId}:ssh`,
     kind: "session",
+    eventType: "ssh.session.snapshot",
     targetId: session.targetId,
     targetName: session.targetName,
     createdAt: session.lastUpdatedAt,
@@ -2269,6 +2271,7 @@ function buildTargetTimelineEntryFromRemoteDesktopSession(session) {
   return {
     id: `${session.sessionId}:rdp`,
     kind: "session",
+    eventType: "remote-desktop.session.snapshot",
     targetId: session.targetId,
     targetName: session.targetName,
     createdAt: session.lastUpdatedAt,
@@ -2279,6 +2282,55 @@ function buildTargetTimelineEntryFromRemoteDesktopSession(session) {
     clientLaunchState: session.clientLaunchState,
     clientLaunchCommand: session.clientLaunchCommand,
     activeWindow: session.activeWindow,
+  };
+}
+
+function extractTimelineTargetIdFromAuditDetails(details) {
+  if (!details || typeof details !== "object") return "";
+  const candidateFields = [
+    details.targetId,
+    details.record?.targetId,
+    details.session?.targetId,
+    details.request?.targetId,
+    details.permissionRequest?.targetId,
+  ];
+  for (const value of candidateFields) {
+    if (typeof value === "string" && value.trim()) {
+      return value.trim();
+    }
+  }
+  return "";
+}
+
+function buildTargetTimelineEntryFromAudit(event) {
+  const details = event.details && typeof event.details === "object" ? event.details : {};
+  const targetId = extractTimelineTargetIdFromAuditDetails(details);
+  if (!targetId) return null;
+  const target = targetRegistry.targets.find((entry) => entry.id === targetId);
+  return {
+    id: `${event.id}:audit`,
+    kind: "audit",
+    eventType: event.action,
+    targetId,
+    targetName: target?.displayName ?? targetId,
+    createdAt: event.createdAt,
+    summary: `${event.action}${details.reason ? ` · ${redactDiagnosticText(String(details.reason))}` : ""}`,
+    source: "audit-log",
+    action: event.action,
+    allowed: typeof details.allowed === "boolean" ? details.allowed : undefined,
+    decision:
+      typeof details.decision === "string"
+        ? details.decision
+        : typeof details.state === "string"
+          ? details.state
+          : "",
+    state: typeof details.state === "string" ? details.state : undefined,
+    transport: typeof details.transport === "string" ? details.transport : undefined,
+    clientLaunchState: typeof details.clientLaunchState === "string" ? details.clientLaunchState : undefined,
+    clientLaunchCommand: typeof details.clientLaunchCommand === "string" ? details.clientLaunchCommand : undefined,
+    lastCommand: typeof details.command === "string" ? details.command : undefined,
+    lastExitCode: typeof details.exitCode === "number" ? details.exitCode : undefined,
+    activeWindow: typeof details.activeWindow === "string" ? details.activeWindow : undefined,
   };
 }
 
@@ -2293,9 +2345,14 @@ function buildTargetTimelineState(targetId, limit = 6) {
     return { targetId: normalizedTargetId, entries: [] };
   }
 
-  const entries = targetDispatches
-    .filter((record) => record.targetId === normalizedTargetId)
-    .map((record) => buildTargetTimelineEntryFromDispatch(record));
+  const entries = [
+    ...targetDispatches
+      .filter((record) => record.targetId === normalizedTargetId)
+      .map((record) => buildTargetTimelineEntryFromDispatch(record)),
+    ...auditEvents
+      .map((event) => buildTargetTimelineEntryFromAudit(event))
+      .filter((entry) => entry && entry.targetId === normalizedTargetId),
+  ];
 
   const sshSession = sshTerminalSessions.get(sshTerminalSessionStorageKey(normalizedTargetId));
   if (sshSession) {
@@ -2312,6 +2369,7 @@ function buildTargetTimelineState(targetId, limit = 6) {
     targetName: target.displayName,
     entries: entries
       .filter((entry) => entry && typeof entry === "object")
+      .sort((left, right) => String(right.createdAt ?? "").localeCompare(String(left.createdAt ?? "")))
       .slice(0, Math.max(1, Math.min(Number(limit) || 6, 20))),
   };
 }
