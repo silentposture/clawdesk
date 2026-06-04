@@ -71,6 +71,27 @@ interface TargetExecutionState {
   targetName: string;
 }
 
+interface TargetTimelineEntry {
+  id: string;
+  kind: "dispatch" | "session";
+  targetId: string;
+  targetName: string;
+  createdAt: string;
+  summary: string;
+  source: string;
+  category?: TargetDispatchCategory;
+  command?: string;
+  allowed?: boolean;
+  decision?: string;
+  state?: string;
+  transport?: string;
+  lastCommand?: string;
+  lastExitCode?: number;
+  clientLaunchState?: string;
+  clientLaunchCommand?: string;
+  activeWindow?: string;
+}
+
 interface SshTerminalTranscriptEntry {
   id: string;
   role: "system" | "command" | "output" | "error";
@@ -89,6 +110,7 @@ interface SshTerminalSessionState {
   prompt: string;
   currentDirectory: string;
   transcript: SshTerminalTranscriptEntry[];
+  sessionSummary: string;
   commandHistory: string[];
   notes: string[];
   lastUpdatedAt: string;
@@ -109,6 +131,7 @@ interface RemoteDesktopSessionState {
   activeWindow: string;
   visibleWindows: string[];
   screenSummary: string;
+  sessionSummary: string;
   notes: string[];
   lastUpdatedAt: string;
   lastObservedAt?: string;
@@ -330,6 +353,34 @@ function defaultRemoteDesktopLaunchCommand(target: TargetProfile): string {
   return `xfreerdp /v:${host}${port}`;
 }
 
+function summarizeRemoteDesktopSession(target: TargetProfile, session: Partial<RemoteDesktopSessionState> = {}): string {
+  const stateLabel =
+    session.state === "controlling"
+      ? "控制中"
+      : session.state === "control-pending"
+        ? "等待控制審批"
+        : session.state === "released"
+          ? "控制已釋放"
+          : session.state === "observing"
+            ? "觀察中"
+            : "待就緒";
+  const launchLabel =
+    session.clientLaunchState && session.clientLaunchState !== "idle"
+      ? `client ${session.clientLaunchState}`
+      : "client idle";
+  const visibleCount = Array.isArray(session.visibleWindows) ? session.visibleWindows.length : 0;
+  const activeWindow = session.activeWindow ?? defaultRemoteDesktopVisibleWindows(target)[0];
+  return [`${target.displayName} 遠端桌面 ${stateLabel}`, `視窗 ${visibleCount} 個`, `active ${activeWindow}`, launchLabel].join(" · ");
+}
+
+function summarizeSshTerminalSession(target: TargetProfile, session: Partial<SshTerminalSessionState> = {}): string {
+  const stateLabel = session.state === "connected" ? "已連線" : session.state === "closed" ? "已關閉" : "待開啟";
+  const lastCommand = session.lastCommand ? `last ${session.lastCommand}` : "last none";
+  const lastExit = typeof session.lastExitCode === "number" ? `exit ${session.lastExitCode}` : "exit n/a";
+  const prompt = session.prompt ?? `${target.connection.username?.trim() || "ssh"}@${target.adapters[0]?.endpoint ?? target.displayName}:~$`;
+  return [`${target.displayName} SSH ${stateLabel}`, lastCommand, lastExit, prompt].join(" · ");
+}
+
 function createRemoteDesktopSessionPreview(target: TargetProfile, overrides: Partial<RemoteDesktopSessionState> = {}): RemoteDesktopSessionState {
   const visibleWindows = Array.isArray(overrides.visibleWindows) && overrides.visibleWindows.length > 0
     ? overrides.visibleWindows
@@ -346,6 +397,7 @@ function createRemoteDesktopSessionPreview(target: TargetProfile, overrides: Par
     activeWindow: overrides.activeWindow ?? visibleWindows[0],
     visibleWindows,
     screenSummary: overrides.screenSummary ?? `遠端桌面預覽已就緒：${target.displayName}。`,
+    sessionSummary: overrides.sessionSummary ?? summarizeRemoteDesktopSession(target, overrides),
     notes: overrides.notes ?? ["等待 observe_screen 或 request_control。"],
     lastUpdatedAt: now,
     lastObservedAt: overrides.lastObservedAt,
@@ -394,6 +446,7 @@ function createSshTerminalSessionPreview(
     prompt,
     currentDirectory: overrides.currentDirectory ?? "~",
     transcript,
+    sessionSummary: overrides.sessionSummary ?? summarizeSshTerminalSession(target, overrides),
     commandHistory: Array.isArray(overrides.commandHistory) ? [...overrides.commandHistory] : [],
     notes,
     lastUpdatedAt: now,
@@ -420,6 +473,7 @@ function normalizeSshTerminalSessionState(
     prompt: session?.prompt ?? base.prompt,
     currentDirectory: session?.currentDirectory ?? base.currentDirectory,
     transcript: Array.isArray(session?.transcript) && session.transcript.length > 0 ? [...session.transcript] : base.transcript,
+    sessionSummary: session?.sessionSummary ?? base.sessionSummary,
     commandHistory: Array.isArray(session?.commandHistory) ? [...session.commandHistory] : base.commandHistory,
     notes: Array.isArray(session?.notes) && session.notes.length > 0 ? [...session.notes] : base.notes,
     lastUpdatedAt: session?.lastUpdatedAt ?? base.lastUpdatedAt,
@@ -446,6 +500,7 @@ function normalizeRemoteDesktopSessionState(
     activeWindow: session?.activeWindow ?? base.activeWindow,
     visibleWindows: Array.isArray(session?.visibleWindows) && session.visibleWindows.length > 0 ? [...session.visibleWindows] : base.visibleWindows,
     screenSummary: session?.screenSummary ?? base.screenSummary,
+    sessionSummary: session?.sessionSummary ?? base.sessionSummary,
     notes: Array.isArray(session?.notes) && session.notes.length > 0 ? [...session.notes] : base.notes,
     lastUpdatedAt: session?.lastUpdatedAt ?? base.lastUpdatedAt,
     lastObservedAt: session?.lastObservedAt ?? base.lastObservedAt,
@@ -467,6 +522,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const { t } = useI18n();
   const [registry, setRegistry] = useState<TargetRegistry>(() => cloneTargetRegistry(initialRegistry));
   const [dispatches, setDispatches] = useState<TargetDispatchRecord[]>([]);
+  const [targetTimeline, setTargetTimeline] = useState<TargetTimelineEntry[]>([]);
   const [selectedTargetId, setSelectedTargetId] = useState(
     initialRegistry.defaultTargetId ?? initialRegistry.targets[0]?.id ?? "",
   );
@@ -590,6 +646,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     if (!gatewayBaseUrl) {
       setRegistry(cloneTargetRegistry(initialRegistry));
       setDispatches([]);
+      setTargetTimeline([]);
       const nextTarget = initialRegistry.targets[0];
       if (nextTarget) {
         setSelectedTargetId(nextTarget.id);
@@ -626,10 +683,16 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setExecution(undefined);
       clearSensitiveDraftState();
       syncManagedSessionForTarget(nextTarget);
+      if (nextTarget) {
+        await loadTargetTimeline(nextTarget);
+      } else {
+        setTargetTimeline([]);
+      }
       setMessage("已讀取 gateway target registry。");
     } catch {
       setRegistry(cloneTargetRegistry(initialRegistry));
       setDispatches([]);
+      setTargetTimeline([]);
       const nextTarget = initialRegistry.targets[0];
       if (nextTarget) {
         setSelectedTargetId(nextTarget.id);
@@ -645,6 +708,44 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     }
   }
 
+  async function loadTargetTimeline(target?: TargetProfile) {
+    const nextTarget = target ?? selectedTarget;
+    if (!nextTarget) {
+      setTargetTimeline([]);
+      return;
+    }
+
+    if (!gatewayBaseUrl) {
+      const localTimeline = dispatches
+        .filter((record) => record.targetId === nextTarget.id)
+        .slice(0, 6)
+        .map((record) => ({
+          id: record.id,
+          kind: "dispatch" as const,
+          targetId: record.targetId,
+          targetName: record.targetName,
+          createdAt: record.createdAt,
+          summary: record.summary,
+          source: "local-dispatch-log",
+          category: record.category,
+          command: record.command,
+          allowed: record.decision.allowed,
+          decision: record.decision.reason,
+        }));
+      setTargetTimeline(localTimeline);
+      return;
+    }
+
+    try {
+      const response = await fetch(`${gatewayBaseUrl}/targets/timeline?targetId=${encodeURIComponent(nextTarget.id)}`);
+      if (!response.ok) throw new Error("bad response");
+      const payload = (await response.json()) as { entries?: TargetTimelineEntry[] };
+      setTargetTimeline(Array.isArray(payload.entries) ? payload.entries : []);
+    } catch {
+      setTargetTimeline([]);
+    }
+  }
+
   function selectExistingTarget(target: TargetProfile) {
     setSelectedTargetId(target.id);
     setDraft(draftFromTarget(target));
@@ -652,6 +753,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setExecution(undefined);
     clearSensitiveDraftState();
     syncManagedSessionForTarget(target);
+    void loadTargetTimeline(target);
     setMessage(undefined);
     setError(undefined);
   }
@@ -667,6 +769,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setSshTerminalCommandDraft("git status");
     }
     previewManagedSessionForTarget(buildTargetFromDraft(nextDraft));
+    void loadTargetTimeline(buildTargetFromDraft(nextDraft));
     setMessage(`已建立 ${defaultDisplayNameForKind(kind)} 的草稿。`);
     setError(undefined);
   }
@@ -688,6 +791,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
           if (Array.isArray(payload.dispatches)) {
             setDispatches(payload.dispatches);
           }
+          void loadTargetTimeline(sessionTarget);
         } else {
           setRegistry(cloneTargetRegistry(nextRegistry));
         }
@@ -698,6 +802,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setExecution(undefined);
       clearSensitiveDraftState();
       syncManagedSessionForTarget(sessionTarget);
+      void loadTargetTimeline(sessionTarget);
       setMessage(statusMessage);
     } catch {
       setRegistry(cloneTargetRegistry(nextRegistry));
@@ -705,6 +810,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setExecution(undefined);
       clearSensitiveDraftState();
       previewManagedSessionForTarget(sessionTarget);
+      void loadTargetTimeline(sessionTarget);
       setMessage(`${statusMessage}（僅保留本機狀態，gateway 儲存失敗）`);
       setError(undefined);
     } finally {
@@ -775,6 +881,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         setExecution(undefined);
         clearSensitiveDraftState();
         syncManagedSessionForTarget(nextTarget);
+        void loadTargetTimeline(nextTarget);
         setMessage(payload.reason || result.reason);
       } catch {
         const nextRegistry = upsertTarget(registry, result.target);
@@ -918,6 +1025,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setDraft(draftFromTarget(nextTarget));
       setExecution(payload.execution);
       clearSensitiveDraftState();
+      void loadTargetTimeline(nextTarget);
       setMessage(`${payload.reason ?? "命令已執行"} · ${payload.execution?.mode ?? "unknown"}`);
     } catch {
       setExecution(undefined);
@@ -1257,6 +1365,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setSelectedTargetId(nextTarget.id);
       setDraft(draftFromTarget(nextTarget));
       setSshTerminalSession(nextSession);
+      void loadTargetTimeline(nextTarget);
       if (payload.execution?.command) {
         setSshTerminalCommandDraft(payload.execution.command);
       } else if (nextSession.lastCommand) {
@@ -1399,6 +1508,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setSelectedTargetId(nextTarget.id);
       setDraft(draftFromTarget(nextTarget));
       setRemoteDesktopSession(normalizeRemoteDesktopSessionState(nextTarget, payload.session, payload.permissionRequest?.requestId));
+      void loadTargetTimeline(nextTarget);
       setMessage(payload.reason || "遠端桌面 session 已更新。");
       setError(undefined);
     } catch (caught) {
@@ -1672,6 +1782,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 <span>遠端桌面 Session</span>
                 <strong>{remoteDesktopView?.targetName ?? draft.displayName}</strong>
                 <p>{remoteDesktopView?.screenSummary ?? "尚未讀取遠端桌面 session，請先按觀察或重新整理。"}</p>
+                <small>summary：{remoteDesktopView?.sessionSummary ?? "未建立"}</small>
                 <small>
                   state：{remoteDesktopView?.state ?? "idle"} · mode：{remoteDesktopView?.mode ?? draft.sessionMode}
                 </small>
@@ -1699,8 +1810,9 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     ? "SSH session 已開啟，可送出 allowlisted command。"
                     : sshTerminalView?.state === "closed"
                       ? "SSH session 已關閉，必要時可重新開啟。"
-                      : "尚未開啟 SSH session，請先按開啟 Session。"}
+                    : "尚未開啟 SSH session，請先按開啟 Session。"}
                 </p>
+                <small>summary：{sshTerminalView?.sessionSummary ?? "未建立"}</small>
                 <small>state：{sshTerminalView?.state ?? "idle"} · mode：{sshTerminalView?.mode ?? draft.sessionMode}</small>
                 <small>prompt：{sshTerminalView?.prompt ?? "未建立"}</small>
                 <small>cwd：{sshTerminalView?.currentDirectory ?? "~"} · last exit：{sshTerminalView?.lastExitCode ?? "未執行"}</small>
@@ -1968,6 +2080,47 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 <dd>{trustedWorkspaceCount > 0 ? trustedWorkspaceCount : "未設定"}</dd>
               </div>
             </dl>
+
+            <section className="adapter-list">
+              <div>
+                <dt>target timeline</dt>
+                {selectedTarget ? (
+                  <dd>{selectedTarget.displayName} · 最近 {targetTimeline.length} 筆紀錄</dd>
+                ) : (
+                  <dd>尚未選取 target。</dd>
+                )}
+              </div>
+              {targetTimeline.length > 0 ? (
+                targetTimeline.map((entry) => (
+                  <div key={entry.id}>
+                    <dt>
+                      {entry.kind} · {entry.createdAt}
+                    </dt>
+                    <dd>{entry.summary}</dd>
+                    <dd>source：{entry.source}</dd>
+                    {entry.kind === "dispatch" ? (
+                      <dd>
+                        {entry.allowed ? "allow" : "block"} · {entry.decision}
+                        {entry.category ? ` · ${entry.category}` : ""}
+                      </dd>
+                    ) : null}
+                    {entry.command ? <dd>command：{entry.command}</dd> : null}
+                    {entry.state ? <dd>state：{entry.state}</dd> : null}
+                    {entry.transport ? <dd>transport：{entry.transport}</dd> : null}
+                    {entry.lastCommand ? <dd>last command：{entry.lastCommand}</dd> : null}
+                    {typeof entry.lastExitCode === "number" ? <dd>last exit：{entry.lastExitCode}</dd> : null}
+                    {entry.clientLaunchState ? <dd>client launch：{entry.clientLaunchState}</dd> : null}
+                    {entry.clientLaunchCommand ? <dd>launch command：{entry.clientLaunchCommand}</dd> : null}
+                    {entry.activeWindow ? <dd>active window：{entry.activeWindow}</dd> : null}
+                  </div>
+                ))
+              ) : (
+                <div>
+                  <dt>target timeline</dt>
+                  <dd>尚未有這台 target 的派發紀錄。</dd>
+                </div>
+              )}
+            </section>
 
             <section className="adapter-list">
               {dispatches.slice(0, 6).map((record) => (

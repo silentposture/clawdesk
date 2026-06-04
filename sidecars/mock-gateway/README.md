@@ -54,7 +54,7 @@
 - `POST /targets/dispatch`
 - `POST /targets/execute`
 
-SSH terminal sessions maintain a redacted transcript snapshot and only allow allowlisted commands after pairing, credential-ref / known-host validation, and gateway-managed session open. Remote desktop sessions expose observe / control / release state under the same contract layer, plus a gated native client launch helper for the local RDP client.
+SSH terminal sessions maintain a redacted transcript snapshot and session summary, and only allow allowlisted commands after pairing, credential-ref / known-host validation, and gateway-managed session open. Remote desktop sessions expose observe / control / release state and session summary under the same contract layer, plus a gated native client launch helper for the local RDP client.
 
 - `GET /compat/settings`
 - `POST /compat/settings`

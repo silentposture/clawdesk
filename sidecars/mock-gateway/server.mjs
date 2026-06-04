@@ -2233,6 +2233,89 @@ function cloneTargetProfileState(target) {
   return JSON.parse(JSON.stringify(target));
 }
 
+function buildTargetTimelineEntryFromDispatch(record) {
+  return {
+    id: record.id,
+    kind: "dispatch",
+    targetId: record.targetId,
+    targetName: record.targetName,
+    createdAt: record.createdAt,
+    summary: record.summary,
+    category: record.category,
+    command: record.command,
+    allowed: Boolean(record.decision?.allowed),
+    decision: record.decision?.reason ?? "",
+    source: "dispatch-log",
+  };
+}
+
+function buildTargetTimelineEntryFromSshSession(session) {
+  return {
+    id: `${session.sessionId}:ssh`,
+    kind: "session",
+    targetId: session.targetId,
+    targetName: session.targetName,
+    createdAt: session.lastUpdatedAt,
+    summary: session.sessionSummary ?? `SSH terminal ${session.targetName} session snapshot.`,
+    state: session.state,
+    transport: session.transport,
+    source: "ssh-session",
+    lastCommand: session.lastCommand,
+    lastExitCode: session.lastExitCode,
+  };
+}
+
+function buildTargetTimelineEntryFromRemoteDesktopSession(session) {
+  return {
+    id: `${session.sessionId}:rdp`,
+    kind: "session",
+    targetId: session.targetId,
+    targetName: session.targetName,
+    createdAt: session.lastUpdatedAt,
+    summary: session.sessionSummary ?? `Remote desktop ${session.targetName} session snapshot.`,
+    state: session.state,
+    transport: session.transport,
+    source: "remote-desktop-session",
+    clientLaunchState: session.clientLaunchState,
+    clientLaunchCommand: session.clientLaunchCommand,
+    activeWindow: session.activeWindow,
+  };
+}
+
+function buildTargetTimelineState(targetId, limit = 6) {
+  const normalizedTargetId = typeof targetId === "string" ? targetId.trim() : "";
+  if (!normalizedTargetId) {
+    return { targetId: "", entries: [] };
+  }
+
+  const target = targetRegistry.targets.find((entry) => entry.id === normalizedTargetId);
+  if (!target) {
+    return { targetId: normalizedTargetId, entries: [] };
+  }
+
+  const entries = targetDispatches
+    .filter((record) => record.targetId === normalizedTargetId)
+    .map((record) => buildTargetTimelineEntryFromDispatch(record));
+
+  const sshSession = sshTerminalSessions.get(sshTerminalSessionStorageKey(normalizedTargetId));
+  if (sshSession) {
+    entries.unshift(buildTargetTimelineEntryFromSshSession(sshSession));
+  }
+
+  const remoteDesktopSession = remoteDesktopSessions.get(remoteDesktopSessionStorageKey(normalizedTargetId));
+  if (remoteDesktopSession) {
+    entries.unshift(buildTargetTimelineEntryFromRemoteDesktopSession(remoteDesktopSession));
+  }
+
+  return {
+    targetId: normalizedTargetId,
+    targetName: target.displayName,
+    entries: entries
+      .filter((entry) => entry && typeof entry === "object")
+      .slice(0, Math.max(1, Math.min(Number(limit) || 6, 20))),
+  };
+}
+
 function targetConnectionReadinessIssuesState(target) {
   const issues = [];
   const connection = target.connection ?? defaultTargetConnectionState(target.kind);
@@ -2994,6 +3077,36 @@ function cloneRemoteDesktopSessionState(session) {
   };
 }
 
+function buildRemoteDesktopSessionSummary(target, session) {
+  const stateLabel =
+    session.state === "controlling"
+      ? "控制中"
+      : session.state === "control-pending"
+        ? "等待控制審批"
+        : session.state === "released"
+          ? "控制已釋放"
+          : "觀察中";
+  const visibleCount = Array.isArray(session.visibleWindows) ? session.visibleWindows.length : 0;
+  const activeWindow = session.activeWindow || defaultRemoteDesktopVisibleWindows(target)[0];
+  const launchLabel =
+    session.clientLaunchState && session.clientLaunchState !== "idle"
+      ? `client ${session.clientLaunchState}`
+      : "client idle";
+  return [
+    `${target.displayName} 遠端桌面 ${stateLabel}`,
+    `視窗 ${visibleCount} 個`,
+    `active ${activeWindow}`,
+    launchLabel,
+  ].join(" · ");
+}
+
+function withRemoteDesktopSessionSummary(target, session) {
+  return {
+    ...session,
+    sessionSummary: buildRemoteDesktopSessionSummary(target, session),
+  };
+}
+
 function defaultRemoteDesktopVisibleWindows(target) {
   const host = extractTargetHost(target) || target.endpoint || target.displayName;
   return [
@@ -3010,7 +3123,7 @@ function createRemoteDesktopSessionState(target, now = nowIso()) {
     .update(`clawdesk-remote-desktop:${target.id}`)
     .digest("hex")
     .slice(0, 24)}`;
-  return {
+  return withRemoteDesktopSessionSummary(target, {
     sessionId,
     targetId: target.id,
     targetName: target.displayName,
@@ -3021,10 +3134,11 @@ function createRemoteDesktopSessionState(target, now = nowIso()) {
     activeWindow: visibleWindows[0],
     visibleWindows,
     screenSummary: `遠端桌面契約已準備好：${target.displayName}。`,
+    sessionSummary: `遠端桌面 ${target.displayName} 已就緒。`,
     notes: ["等待 observe_screen 或 request_control。"],
     launchHistory: [],
     lastUpdatedAt: now,
-  };
+  });
 }
 
 function getRemoteDesktopSessionState(target) {
@@ -3047,7 +3161,7 @@ function refreshRemoteDesktopSessionState(target, session, now = nowIso()) {
         ? "control-pending"
         : "observing";
   const nextMode = nextState === "controlling" || nextState === "control-pending" ? "control" : "observe";
-  return {
+  return withRemoteDesktopSessionSummary(target, {
     ...session,
     endpoint: target.adapters[0]?.endpoint ?? target.endpoint,
     targetName: target.displayName,
@@ -3056,11 +3170,12 @@ function refreshRemoteDesktopSessionState(target, session, now = nowIso()) {
     activeWindow: session.activeWindow && nextState === "controlling" ? session.activeWindow : visibleWindows[0],
     visibleWindows,
     screenSummary: `Gateway 遠端桌面契約觀察：${target.displayName} · ${extractTargetHost(target) || target.endpoint}.`,
+    sessionSummary: buildRemoteDesktopSessionSummary(target, session),
     launchHistory: Array.isArray(session.launchHistory) ? [...session.launchHistory] : [],
     lastObservedAt: now,
     lastUpdatedAt: now,
     notes: [...session.notes.slice(-4), `Observation refreshed at ${now}.`],
-  };
+  });
 }
 
 function buildRemoteDesktopLaunchSpec(target) {
@@ -3182,7 +3297,7 @@ function requestRemoteDesktopControlState(target) {
     risk: "high",
     summary: `${baseTarget.displayName} 的遠端桌面控制權需要人工授權。`,
   };
-  const nextSession = {
+  const nextSession = withRemoteDesktopSessionSummary(baseTarget, {
     ...currentSession,
     state: "control-pending",
     mode: "control",
@@ -3190,7 +3305,7 @@ function requestRemoteDesktopControlState(target) {
     controlRequestedAt: now,
     lastUpdatedAt: now,
     notes: [...currentSession.notes.slice(-4), "Control request submitted for human approval."],
-  };
+  });
   remoteDesktopSessions.set(remoteDesktopSessionStorageKey(baseTarget.id), nextSession);
   pendingPermissions.set(permissionRequest.requestId, permissionRequest);
   broadcast(permissionRequest);
@@ -3211,7 +3326,7 @@ function releaseRemoteDesktopSessionState(target) {
 
   const now = nowIso();
   const currentSession = getRemoteDesktopSessionState(baseTarget);
-  const nextSession = {
+  const nextSession = withRemoteDesktopSessionSummary(baseTarget, {
     ...currentSession,
     state: "released",
     mode: "observe",
@@ -3219,7 +3334,7 @@ function releaseRemoteDesktopSessionState(target) {
     releasedAt: now,
     lastUpdatedAt: now,
     notes: [...currentSession.notes.slice(-4), "Control released by operator."],
-  };
+  });
   remoteDesktopSessions.set(remoteDesktopSessionStorageKey(baseTarget.id), nextSession);
   return {
     allowed: true,
@@ -3261,7 +3376,7 @@ async function launchRemoteDesktopClientState(target) {
   };
 
   if (dryRun) {
-    const nextSession = {
+    const nextSession = withRemoteDesktopSessionSummary(baseTarget, {
       ...currentSession,
       state: baseTarget.connection?.sessionMode === "control" ? "controlling" : "observing",
       mode: baseTarget.connection?.sessionMode ?? "observe",
@@ -3274,7 +3389,7 @@ async function launchRemoteDesktopClientState(target) {
       launchHistory: [...(Array.isArray(currentSession.launchHistory) ? currentSession.launchHistory : []).slice(-4), launchEntry],
       lastUpdatedAt: now,
       notes: [...currentSession.notes.slice(-4), `Remote desktop client launch dry-run recorded: ${launchSpec.command}`],
-    };
+    });
     remoteDesktopSessions.set(remoteDesktopSessionStorageKey(baseTarget.id), nextSession);
     return {
       allowed: true,
@@ -3287,7 +3402,7 @@ async function launchRemoteDesktopClientState(target) {
 
   const execution = await spawnDetachedProcess(launchSpec.executable, launchSpec.args, { cwd: homeDir });
   if (!execution.ok) {
-    const failedSession = {
+    const failedSession = withRemoteDesktopSessionSummary(baseTarget, {
       ...currentSession,
       clientLaunchState: "failed",
       clientLaunchCommand: launchSpec.command,
@@ -3297,7 +3412,7 @@ async function launchRemoteDesktopClientState(target) {
       launchHistory: [...(Array.isArray(currentSession.launchHistory) ? currentSession.launchHistory : []).slice(-4), { ...launchEntry, error: execution.error }],
       lastUpdatedAt: now,
       notes: [...currentSession.notes.slice(-4), `Remote desktop client launch failed: ${execution.error}`],
-    };
+    });
     remoteDesktopSessions.set(remoteDesktopSessionStorageKey(baseTarget.id), failedSession);
     return {
       allowed: false,
@@ -3308,7 +3423,7 @@ async function launchRemoteDesktopClientState(target) {
     };
   }
 
-  const nextSession = {
+  const nextSession = withRemoteDesktopSessionSummary(baseTarget, {
     ...currentSession,
     state: baseTarget.connection?.sessionMode === "control" ? "controlling" : "observing",
     mode: baseTarget.connection?.sessionMode ?? "observe",
@@ -3321,7 +3436,7 @@ async function launchRemoteDesktopClientState(target) {
     launchHistory: [...(Array.isArray(currentSession.launchHistory) ? currentSession.launchHistory : []).slice(-4), { ...launchEntry, pid: execution.pid ?? null }],
     lastUpdatedAt: now,
     notes: [...currentSession.notes.slice(-4), `Remote desktop client launched: ${launchSpec.command}`],
-  };
+  });
   remoteDesktopSessions.set(remoteDesktopSessionStorageKey(baseTarget.id), nextSession);
   return {
     allowed: true,
@@ -3345,7 +3460,7 @@ function applyRemoteDesktopPermissionDecisionState(request, allowed, reason) {
   if (!currentSession) return undefined;
 
   const now = nowIso();
-  const nextSession = {
+  const nextSession = withRemoteDesktopSessionSummary(baseTarget, {
     ...currentSession,
     state: allowed ? "controlling" : "observing",
     mode: allowed ? "control" : "observe",
@@ -3357,7 +3472,7 @@ function applyRemoteDesktopPermissionDecisionState(request, allowed, reason) {
       ...currentSession.notes.slice(-4),
       allowed ? "Control request approved." : `Control request denied${reason ? `: ${reason}` : ""}.`,
     ],
-  };
+  });
   remoteDesktopSessions.set(sessionKey, nextSession);
   return nextSession;
 }
@@ -3420,6 +3535,25 @@ function createSshTerminalPrompt(target) {
   return `${user}@${host}:~$`;
 }
 
+function buildSshTerminalSessionSummary(target, session) {
+  const stateLabel =
+    session.state === "connected"
+      ? "已連線"
+      : session.state === "closed"
+        ? "已關閉"
+        : "待開啟";
+  const commandLabel = session.lastCommand ? `last ${session.lastCommand}` : "last none";
+  const exitLabel = typeof session.lastExitCode === "number" ? `exit ${session.lastExitCode}` : "exit n/a";
+  return [`${target.displayName} SSH ${stateLabel}`, commandLabel, exitLabel].join(" · ");
+}
+
+function withSshTerminalSessionSummary(target, session) {
+  return {
+    ...session,
+    sessionSummary: buildSshTerminalSessionSummary(target, session),
+  };
+}
+
 function createSshTerminalSessionState(target, now = nowIso()) {
   const host = extractTargetHost(target) || target.adapters[0]?.endpoint || target.displayName;
   const prompt = createSshTerminalPrompt(target);
@@ -3428,7 +3562,7 @@ function createSshTerminalSessionState(target, now = nowIso()) {
     .update(`clawdesk-ssh-terminal:${target.id}`)
     .digest("hex")
     .slice(0, 24)}`;
-  return {
+  return withSshTerminalSessionSummary(target, {
     sessionId,
     targetId: target.id,
     targetName: target.displayName,
@@ -3448,8 +3582,9 @@ function createSshTerminalSessionState(target, now = nowIso()) {
     ],
     commandHistory: [],
     notes: ["Awaiting open_session or run_command."],
+    sessionSummary: `SSH terminal ${target.displayName} 已就緒。`,
     lastUpdatedAt: now,
-  };
+  });
 }
 
 function getSshTerminalSessionState(target) {
@@ -3472,6 +3607,7 @@ function refreshSshTerminalSessionState(target, session, now = nowIso()) {
     mode: target.connection?.sessionMode ?? session.mode ?? "control",
     prompt,
     currentDirectory: session.currentDirectory ?? "~",
+    sessionSummary: buildSshTerminalSessionSummary(target, session),
     lastUpdatedAt: now,
     notes: [...session.notes.slice(-4), `Session snapshot refreshed at ${now}.`],
   };
@@ -3506,6 +3642,7 @@ function openSshTerminalSessionState(target) {
       },
     ],
   };
+  nextSession.sessionSummary = buildSshTerminalSessionSummary(baseTarget, nextSession);
   sshTerminalSessions.set(sshTerminalSessionStorageKey(baseTarget.id), nextSession);
   return {
     allowed: true,
@@ -3541,6 +3678,7 @@ function closeSshTerminalSessionState(target) {
       },
     ],
   };
+  nextSession.sessionSummary = buildSshTerminalSessionSummary(baseTarget, nextSession);
   sshTerminalSessions.set(sshTerminalSessionStorageKey(baseTarget.id), nextSession);
   return {
     allowed: true,
@@ -3609,6 +3747,7 @@ async function runSshTerminalSessionCommandState(target, command) {
         },
       ],
     };
+    blockedSession.sessionSummary = buildSshTerminalSessionSummary(baseTarget, blockedSession);
     sshTerminalSessions.set(sessionKey, blockedSession);
     return {
       allowed: false,
@@ -3639,6 +3778,7 @@ async function runSshTerminalSessionCommandState(target, command) {
         },
       ],
     };
+    reviewSession.sessionSummary = buildSshTerminalSessionSummary(baseTarget, reviewSession);
     sshTerminalSessions.set(sessionKey, reviewSession);
     return {
       allowed: false,
@@ -3670,6 +3810,7 @@ async function runSshTerminalSessionCommandState(target, command) {
         },
       ],
     };
+    failedSession.sessionSummary = buildSshTerminalSessionSummary(baseTarget, failedSession);
     sshTerminalSessions.set(sessionKey, failedSession);
     return {
       allowed: false,
@@ -3717,6 +3858,7 @@ async function runSshTerminalSessionCommandState(target, command) {
     ],
     transcript: sessionTranscript,
   };
+  nextSession.sessionSummary = buildSshTerminalSessionSummary(baseTarget, nextSession);
   sshTerminalSessions.set(sessionKey, nextSession);
   const dispatchRecord = {
     id: `dispatch-${crypto.randomUUID().slice(0, 8)}`,
@@ -8049,6 +8191,27 @@ const server = http.createServer(async (req, res) => {
         pairedTargets: targetRegistry.targets.filter((target) => target.paired).length,
         defaultTargetId: targetRegistry.defaultTargetId,
       },
+    });
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/targets/timeline") {
+    const targetId = typeof parsedUrl.searchParams.get("targetId") === "string" ? parsedUrl.searchParams.get("targetId").trim() : "";
+    if (!targetId) {
+      json(res, 400, { error: "targetId is required" });
+      return;
+    }
+    const timeline = buildTargetTimelineState(targetId, 6);
+    if (!timeline.targetId || !timeline.entries.length) {
+      const targetExists = targetRegistry.targets.some((target) => target.id === targetId);
+      if (!targetExists) {
+        json(res, 404, { error: "target not found" });
+        return;
+      }
+    }
+    json(res, 200, {
+      ...timeline,
+      registry: cloneTargetRegistryState(targetRegistry),
     });
     return;
   }
