@@ -6,12 +6,17 @@ import {
   createTargetRegistry,
   createTargetDispatchRecord,
   defaultTargetRegistry,
+  findTargetGroup,
   decideTargetDispatch,
+  defaultTargetGroups,
   selectTargetForDispatch,
   summarizeTargetConnectionProfile,
   summarizeTargetRegistry,
   summarizeTargetProfile,
   targetConnectionReadinessIssues,
+  listTargetsForGroup,
+  normalizeTargetGroup,
+  upsertTargetGroup,
 } from "./targets";
 
 describe("target orchestration contract", () => {
@@ -183,6 +188,102 @@ describe("target orchestration contract", () => {
     expect(summary.pairedTargets).toBe(2);
     expect(summary.defaultTargetId).toBe("local-builder");
     expect(summary.defaultTargetName).toBe("Local Builder");
+    expect(summary.targetGroupCount).toBe(0);
+  });
+
+  it("keeps target groups in the registry and normalizes them to known targets", () => {
+    const registry = createTargetRegistry([
+      createTargetProfile({
+        id: "local-builder",
+        displayName: "Local Builder",
+        kind: "local-shell",
+        endpoint: "local://workspace",
+        state: "ready",
+        paired: true,
+      }),
+      createTargetProfile({
+        id: "builder-ssh",
+        displayName: "Builder SSH",
+        kind: "ssh-terminal",
+        endpoint: "ssh://builder.example",
+        paired: true,
+        state: "ready",
+        adapterOverrides: { authenticated: true, hostKeyVerified: true },
+        connectionOverrides: {
+          username: "builder",
+          credentialMode: "ssh-agent",
+          knownHostFingerprint: "ssh-ed25519 AAAA...builder",
+        },
+      }),
+    ]);
+
+    const withGroups = upsertTargetGroup(registry, {
+      id: "fleet-alpha",
+      name: "Fleet Alpha",
+      description: "Main fleet preset",
+      targetIds: ["local-builder", "builder-ssh", "missing-target"],
+    });
+
+    const group = findTargetGroup(withGroups, "fleet-alpha");
+    expect(group?.targetIds).toEqual(["local-builder", "builder-ssh"]);
+
+    const summary = summarizeTargetRegistry(withGroups);
+    expect(summary.targetGroupCount).toBe(1);
+  });
+
+  it("provides default target groups for the built-in registry", () => {
+    const groups = defaultTargetGroups(["local-builder", "builder-ssh", "ops-rdp", "lab-mock"]);
+    expect(groups.length).toBeGreaterThan(0);
+    expect(groups[0].targetIds.length).toBeGreaterThan(0);
+  });
+
+  it("normalizes target groups against the current target ids", () => {
+    const group = normalizeTargetGroup(
+      {
+        id: "",
+        name: "Fleet Alpha",
+        description: "Main fleet preset",
+        targetIds: ["local-builder", "missing-target", "builder-ssh", "local-builder"],
+      },
+      ["local-builder", "builder-ssh"],
+    );
+
+    expect(group.id).toBe("fleet-alpha");
+    expect(group.targetIds).toEqual(["local-builder", "builder-ssh"]);
+  });
+
+  it("lists targets for a saved target group", () => {
+    const registry = createTargetRegistry([
+      createTargetProfile({
+        id: "local-builder",
+        displayName: "Local Builder",
+        kind: "local-shell",
+        endpoint: "local://workspace",
+        state: "ready",
+        paired: true,
+      }),
+      createTargetProfile({
+        id: "builder-ssh",
+        displayName: "Builder SSH",
+        kind: "ssh-terminal",
+        endpoint: "ssh://builder.example",
+        paired: true,
+        state: "ready",
+        adapterOverrides: { authenticated: true, hostKeyVerified: true },
+        connectionOverrides: {
+          username: "builder",
+          credentialMode: "ssh-agent",
+          knownHostFingerprint: "ssh-ed25519 AAAA...builder",
+        },
+      }),
+    ]);
+    const withGroup = upsertTargetGroup(registry, {
+      id: "fleet-alpha",
+      name: "Fleet Alpha",
+      targetIds: ["local-builder", "builder-ssh"],
+    });
+
+    expect(listTargetsForGroup(withGroup, "fleet-alpha").map((target) => target.id)).toEqual(["local-builder", "builder-ssh"]);
   });
 
   it("requires approval for safe remote shell dispatch and blocks unsafe commands", () => {

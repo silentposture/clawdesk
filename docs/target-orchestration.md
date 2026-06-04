@@ -23,6 +23,8 @@ The control plane chooses a target and then chooses the safest adapter for the r
 - `execute_safe`: run an allowlisted shell command.
 - `request_approval`: ask a human to approve the next step.
 
+Saved target groups let operators keep recurring broadcast sets, such as local + SSH fleets or remote ops sets, and reuse them across dispatch sessions without rebuilding the selection each time.
+
 ## Safety rules
 
 - Pair before any remote dispatch.
@@ -48,6 +50,7 @@ The control plane chooses a target and then chooses the safest adapter for the r
 - Connection readiness report with pairing, credential, host-key, and probe checks plus next-action guidance, surfaced both in the selected target details and the target list badges: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/lib/targets.ts`](../src/lib/targets.ts), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
 - Target list quick actions that execute the recommended next connection step directly from each target card, plus a copyable readiness report for issues and approvals: [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
 - Multi-target safe execute that can broadcast the same allowlisted command to several selected SSH/local targets and collect per-target results: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
+- Saved target groups / fleet presets that can be applied to the broadcast selection and persisted through the registry save flow: [`src/lib/targets.ts`](../src/lib/targets.ts), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx), [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
 - Gateway-managed SSH credential ref issuance, allowlisted local-shell / SSH safe command execution, gateway-managed SSH terminal session contracts with redacted transcripts and audit-friendly summaries, and remote-desktop observe/control session contracts with permission-gated control requests plus a gated native client launch helper, credential-seed action, and session summaries through the gateway. Remote-desktop secret-ref credentials can be seeded into the local Windows client flow before launch: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
 - Passphrase-protected credential bundle export/import for target registry migration and gateway-managed credential ref rehydration: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
 - Bundle preview before import so operators can inspect target/secret summaries without exposing plaintext secrets: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)

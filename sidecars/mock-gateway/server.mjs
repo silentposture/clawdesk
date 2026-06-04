@@ -282,6 +282,26 @@ let safetyQueue = [
 ];
 const defaultTargetRegistry = {
   defaultTargetId: "local-builder",
+  targetGroups: [
+    {
+      id: "default-local-ssh",
+      name: "Local + SSH",
+      description: "本機與 SSH 終端機的日常發配群組。",
+      targetIds: ["local-builder", "builder-ssh"],
+    },
+    {
+      id: "remote-ops",
+      name: "Remote Ops",
+      description: "遠端桌面與 lab target 的觀察 / 控制群組。",
+      targetIds: ["ops-rdp", "lab-mock"],
+    },
+    {
+      id: "all-targets",
+      name: "All Targets",
+      description: "全部已註冊 target。",
+      targetIds: ["local-builder", "builder-ssh", "ops-rdp", "lab-mock"],
+    },
+  ],
   targets: [
     {
       id: "local-builder",
@@ -2229,6 +2249,32 @@ function normalizeTargetRegistryState(registry) {
 
   const cloned = cloneTargetRegistryState(registry);
   cloned.targets = cloned.targets.map((target) => normalizeTargetProfileState(target));
+  const validTargetIds = cloned.targets.map((target) => target.id);
+  cloned.targetGroups = Array.isArray(cloned.targetGroups)
+    ? cloned.targetGroups
+        .map((group) => {
+          if (!group || typeof group !== "object") return undefined;
+          const name = typeof group.name === "string" && group.name.trim() ? group.name.trim() : "未命名群組";
+          const id = typeof group.id === "string" && group.id.trim() ? group.id.trim() : name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+          const targetIds = Array.isArray(group.targetIds)
+            ? [...new Set(group.targetIds.map((targetId) => (typeof targetId === "string" ? targetId.trim() : "")).filter((targetId) => targetId && validTargetIds.includes(targetId)))]
+            : [];
+          if (!targetIds.length) return undefined;
+          return {
+            id,
+            name,
+            description: typeof group.description === "string" && group.description.trim() ? group.description.trim() : undefined,
+            targetIds,
+          };
+        })
+        .filter(Boolean)
+    : [];
+  if (!cloned.targetGroups.length) {
+    cloned.targetGroups = (defaultTargetRegistry.targetGroups ?? []).map((group) => ({
+      ...group,
+      targetIds: group.targetIds.filter((targetId) => validTargetIds.includes(targetId)),
+    })).filter((group) => group.targetIds.length > 0);
+  }
   if (!cloned.defaultTargetId) {
     cloned.defaultTargetId = cloned.targets[0]?.id;
   }
@@ -2883,6 +2929,10 @@ async function createTargetCredentialBundleState({ targetIds, passphrase } = {})
       defaultTargetId: requestedTargetIds.length > 0 && requestedTargetIds.includes(targetRegistry.defaultTargetId ?? "")
         ? targetRegistry.defaultTargetId
         : targetRegistry.defaultTargetId,
+      targetGroups: Array.isArray(targetRegistry.targetGroups) ? targetRegistry.targetGroups.map((group) => ({
+        ...group,
+        targetIds: group.targetIds.filter((targetId) => requestedTargetIds.length > 0 ? requestedTargetIds.includes(targetId) : true),
+      })).filter((group) => group.targetIds.length > 0) : [],
     },
     credentialSecrets,
   };
@@ -2925,6 +2975,7 @@ async function applyTargetCredentialBundleState(bundle, passphrase) {
   targetRegistry = normalizeTargetRegistryState({
     targets: mergedTargets,
     defaultTargetId: importedRegistry.defaultTargetId ?? targetRegistry.defaultTargetId,
+    targetGroups: importedRegistry.targetGroups ?? targetRegistry.targetGroups,
   });
   scheduleStateSave();
   audit("targets.credential-bundle.import", {
@@ -9155,6 +9206,7 @@ const server = http.createServer(async (req, res) => {
       const importedRegistry = normalizeTargetRegistryState(payload.registry);
       const importedSecrets = normalizeCredentialBundleSecrets(payload.credentialSecrets);
       const currentTargetById = new Map(targetRegistry.targets.map((target) => [target.id, target]));
+      const currentGroupById = new Map((targetRegistry.targetGroups ?? []).map((group) => [group.id, group]));
       const addedTargets = importedRegistry.targets.filter((target) => !currentTargetById.has(target.id));
       const updatedTargets = importedRegistry.targets.filter((target) => {
         const current = currentTargetById.get(target.id);
@@ -9167,14 +9219,26 @@ const server = http.createServer(async (req, res) => {
           || current.endpoint !== target.endpoint;
       });
       const unchangedTargets = importedRegistry.targets.filter((target) => !addedTargets.some((item) => item.id === target.id) && !updatedTargets.some((item) => item.id === target.id));
+      const addedGroups = (importedRegistry.targetGroups ?? []).filter((group) => !currentGroupById.has(group.id));
+      const updatedGroups = (importedRegistry.targetGroups ?? []).filter((group) => {
+        const current = currentGroupById.get(group.id);
+        if (!current) return false;
+        return JSON.stringify(current.targetIds) !== JSON.stringify(group.targetIds)
+          || current.name !== group.name
+          || current.description !== group.description;
+      });
+      const unchangedGroups = (importedRegistry.targetGroups ?? []).filter((group) => !addedGroups.some((item) => item.id === group.id) && !updatedGroups.some((item) => item.id === group.id));
       const secretTargetIds = importedSecrets.map((secretEntry) => secretEntry.targetId);
       const summary = {
         version: payload.version,
         createdAt: payload.createdAt ?? null,
         targetCount: importedRegistry.targets.length,
+        groupCount: Array.isArray(importedRegistry.targetGroups) ? importedRegistry.targetGroups.length : 0,
         secretCount: importedSecrets.length,
         targetIds: importedRegistry.targets.map((target) => target.id),
         targetNames: importedRegistry.targets.map((target) => target.displayName),
+        groupIds: Array.isArray(importedRegistry.targetGroups) ? importedRegistry.targetGroups.map((group) => group.id) : [],
+        groupNames: Array.isArray(importedRegistry.targetGroups) ? importedRegistry.targetGroups.map((group) => group.name) : [],
         secretKinds: importedSecrets.map((secretEntry) => secretEntry.kind),
         secretLabels: importedSecrets.map((secretEntry) => secretEntry.label || secretEntry.targetName || secretEntry.targetId),
         addedTargetIds: addedTargets.map((target) => target.id),
@@ -9182,15 +9246,24 @@ const server = http.createServer(async (req, res) => {
         updatedTargetIds: updatedTargets.map((target) => target.id),
         updatedTargetNames: updatedTargets.map((target) => target.displayName),
         unchangedTargetIds: unchangedTargets.map((target) => target.id),
+        addedGroupIds: addedGroups.map((group) => group.id),
+        addedGroupNames: addedGroups.map((group) => group.name),
+        updatedGroupIds: updatedGroups.map((group) => group.id),
+        updatedGroupNames: updatedGroups.map((group) => group.name),
+        unchangedGroupIds: unchangedGroups.map((group) => group.id),
         secretTargetIds,
         overwriteCount: updatedTargets.length,
+        groupOverwriteCount: updatedGroups.length,
         importCount: importedRegistry.targets.length,
       };
       audit("targets.credential-bundle.preview", {
         targetCount: summary.targetCount,
+        groupCount: summary.groupCount,
         secretCount: summary.secretCount,
         addedTargetCount: summary.addedTargetIds.length,
         updatedTargetCount: summary.updatedTargetIds.length,
+        addedGroupCount: summary.addedGroupIds.length,
+        updatedGroupCount: summary.updatedGroupIds.length,
       });
       json(res, 200, {
         allowed: true,
