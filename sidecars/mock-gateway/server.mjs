@@ -3366,6 +3366,15 @@ function requestRemoteDesktopControlState(target) {
   });
   remoteDesktopSessions.set(remoteDesktopSessionStorageKey(baseTarget.id), nextSession);
   pendingPermissions.set(permissionRequest.requestId, permissionRequest);
+  audit("targets.remote-desktop.control-request", {
+    targetId: baseTarget.id,
+    targetName: baseTarget.displayName,
+    requestId: permissionRequest.requestId,
+    sessionId: currentSession.sessionId,
+    state: nextSession.state,
+    mode: nextSession.mode,
+    summary: permissionRequest.summary,
+  });
   broadcast(permissionRequest);
   return {
     allowed: true,
@@ -3516,9 +3525,11 @@ function applyRemoteDesktopPermissionDecisionState(request, allowed, reason) {
   const sessionKey = remoteDesktopSessionStorageKey(request.targetId);
   const currentSession = remoteDesktopSessions.get(sessionKey);
   if (!currentSession) return undefined;
+  const target = targetRegistry.targets.find((entry) => entry.id === request.targetId);
+  if (!target) return undefined;
 
   const now = nowIso();
-  const nextSession = withRemoteDesktopSessionSummary(baseTarget, {
+  const nextSession = withRemoteDesktopSessionSummary(target, {
     ...currentSession,
     state: allowed ? "controlling" : "observing",
     mode: allowed ? "control" : "observe",
@@ -3555,6 +3566,8 @@ function applyPermissionResultState(result) {
     audit("targets.remote-desktop.permission-result", {
       requestId,
       targetId: request?.targetId,
+      targetName: request?.target ?? request?.targetName,
+      sessionId: request?.sessionId,
       allowed,
       reason,
     });
