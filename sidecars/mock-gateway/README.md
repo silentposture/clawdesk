@@ -49,6 +49,7 @@
 - `POST /targets/credential-bundle/preview`
 - `POST /targets/credential-bundle/import`
 - `POST /targets/connection`
+- `GET /targets/connection-readiness`
 - `GET /targets/ssh-terminal/session`
 - `POST /targets/ssh-terminal/session`
 - `GET /targets/remote-desktop/session`
@@ -62,6 +63,7 @@ Remote desktop credential refs can be seeded into the local Windows credential f
 The remote-desktop session endpoint also accepts a `seed_credentials` action so the control plane can prepare the client credential before the actual launch.
 `credential-bundle` 匯出 / 預覽 / 匯入端點會把 target registry 與 gateway-managed credential refs 以 passphrase-protected encrypted bundle 在機器間移轉，匯入後會重新發行本機 credential refs；preview 只回傳可審核的 target / secret 摘要與匯入影響，不會暴露明文 secret。
 `POST /targets/connection` 現在支援 `pair`、`probe`、`verify_host_key`、`connect`、`disconnect` 與 `refresh`，其中 `probe` 會回報 SSH / RDP host 與 port 的實際可達性。
+`GET /targets/connection-readiness` 會回傳可連線前檢查報告，包含 pairing、credential mode、credential ref、SSH host key 與 probe 狀態，並提供 next-action 建議。
 
 - `GET /compat/settings`
 - `POST /compat/settings`
