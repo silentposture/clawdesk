@@ -568,6 +568,9 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const [sshTerminalCommandDraft, setSshTerminalCommandDraft] = useState("git status");
   const [credentialBundlePassphraseDraft, setCredentialBundlePassphraseDraft] = useState("");
   const [credentialBundleImportDraft, setCredentialBundleImportDraft] = useState("");
+  const [credentialBundleTargetIds, setCredentialBundleTargetIds] = useState<string[]>(
+    initialRegistry.targets.map((target) => target.id),
+  );
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
@@ -590,10 +593,23 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     .split(/[\n,]/g)
     .map((item) => item.trim())
     .filter(Boolean).length;
+  const selectedCredentialBundleTargetIds = useMemo(() => {
+    const registryTargetIds = registry.targets.map((target) => target.id);
+    const selected = credentialBundleTargetIds.filter((targetId) => registryTargetIds.includes(targetId));
+    return selected.length > 0 ? selected : registryTargetIds;
+  }, [credentialBundleTargetIds, registry.targets]);
   const visibleDispatchRecords =
     timelineViewMode === "target" && selectedTarget
       ? dispatches.filter((record) => record.targetId === selectedTarget.id).slice(0, 6)
       : dispatches.slice(0, 6);
+
+  useEffect(() => {
+    const registryTargetIds = registry.targets.map((target) => target.id);
+    setCredentialBundleTargetIds((current) => {
+      const next = current.filter((targetId) => registryTargetIds.includes(targetId));
+      return next.length > 0 ? next : registryTargetIds;
+    });
+  }, [registry.targets]);
 
   function clearSensitiveDraftState() {
     setSshPrivateKeyDraft("");
@@ -1143,7 +1159,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           passphrase,
-          targetIds: registry.targets.map((target) => target.id),
+          targetIds: selectedCredentialBundleTargetIds,
         }),
       });
       const payload = (await response.json()) as {
@@ -1926,6 +1942,47 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               <span>Credential Bundle</span>
               <strong>加密匯出 / 匯入</strong>
               <p>使用 passphrase 將目前 target registry 與已發行的 credential refs 匯出成加密 bundle，方便換機或跨機器部署。</p>
+              <div className="target-credential-bundle-targets">
+                <div className="target-credential-bundle-targets-header">
+                  <strong>匯出目標</strong>
+                  <span>{selectedCredentialBundleTargetIds.length} / {registry.targets.length}</span>
+                </div>
+                <div className="target-credential-bundle-targets-actions">
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => setCredentialBundleTargetIds(registry.targets.map((target) => target.id))}
+                  >
+                    全選
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => setCredentialBundleTargetIds([])}
+                  >
+                    清除
+                  </button>
+                </div>
+                <div className="target-credential-bundle-targets-list">
+                  {registry.targets.map((target) => (
+                    <label key={target.id} className="target-credential-bundle-target-item">
+                      <input
+                        type="checkbox"
+                        checked={selectedCredentialBundleTargetIds.includes(target.id)}
+                        onChange={(event) => {
+                          const checked = event.target.checked;
+                          setCredentialBundleTargetIds((current) => {
+                            const withoutTarget = current.filter((targetId) => targetId !== target.id);
+                            return checked ? [...withoutTarget, target.id] : withoutTarget;
+                          });
+                        }}
+                      />
+                      <span>{target.displayName}</span>
+                      <small>{target.kind}</small>
+                    </label>
+                  ))}
+                </div>
+              </div>
               <label>
                 <span>Bundle passphrase</span>
                 <input
@@ -1945,6 +2002,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 />
               </label>
               <small>bundle 內只保存加密後的 credential payload；匯入時會重新發行 gateway-managed credential refs。</small>
+              <small>匯出時只包含勾選的 target；未勾選者不會進 bundle。</small>
             </section>
             {draft.kind === "remote-desktop" ? (
               <section className="mcp-preview target-remote-desktop-session">
