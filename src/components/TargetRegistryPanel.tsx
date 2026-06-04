@@ -2104,6 +2104,15 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   <RefreshCw size={16} />
                   重新整理 readiness
                 </button>
+                <button
+                  className="primary-button"
+                  type="button"
+                  onClick={() => void runConnectionAction(connectionReadiness.nextAction === "none" ? "refresh" : connectionReadiness.nextAction)}
+                  disabled={busy || connectionReadiness.nextAction === "none"}
+                >
+                  <Send size={16} />
+                  執行建議動作
+                </button>
                 <small>source：{connectionReadinessReport?.source ?? "local"}</small>
               </div>
               <strong>Connection readiness</strong>
