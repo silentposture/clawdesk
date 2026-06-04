@@ -33,6 +33,7 @@ import {
 } from "../lib/targets";
 import { saveLegalExport } from "../lib/tauri";
 import { useI18n } from "../lib/i18n";
+import { targetRegistryCopy as copy } from "../lib/targetRegistryCopy";
 
 interface TargetRegistryPanelProps {
   gatewayBaseUrl?: string;
@@ -873,7 +874,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setExecution(undefined);
       clearSensitiveDraftState();
       syncManagedSessionForTarget(nextTarget);
-      setMessage("已使用本機預設 target 登錄。");
+      setMessage(copy.targetRegistryRegistryLocalLoadedMessage);
       setError(undefined);
       return;
     }
@@ -905,7 +906,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       } else {
         setTargetTimeline([]);
       }
-      setMessage("已讀取 gateway target registry。");
+      setMessage(copy.targetRegistryRegistryGatewayLoadedMessage);
     } catch {
       setRegistry(cloneTargetRegistry(initialRegistry));
       setDispatches([]);
@@ -919,7 +920,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setExecution(undefined);
       clearSensitiveDraftState();
       syncManagedSessionForTarget(nextTarget);
-      setError("無法讀取 gateway 的 target registry，已切回本機預設清單。");
+      setError(copy.targetRegistryRegistryGatewayFallbackMessage);
     } finally {
       setBusy(false);
     }
@@ -994,7 +995,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   async function copyConnectionReadinessReport(target?: TargetProfile) {
     const nextTarget = target ?? selectedTarget ?? draftTarget;
     if (!nextTarget) {
-      setError("尚未選取 target，無法複製 readiness report。");
+      setError(copy.targetRegistryReadinessCopyFailedMessage);
       return;
     }
 
@@ -1055,7 +1056,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     }
     previewManagedSessionForTarget(buildTargetFromDraft(nextDraft));
     void loadTargetTimeline(buildTargetFromDraft(nextDraft));
-    setMessage(`已建立 ${defaultDisplayNameForKind(kind)} 的草稿。`);
+      setMessage(copy.targetRegistryDraftCreatedMessage(defaultDisplayNameForKind(kind)));
     setError(undefined);
   }
 
@@ -1096,7 +1097,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       clearSensitiveDraftState();
       previewManagedSessionForTarget(sessionTarget);
       void loadTargetTimeline(sessionTarget);
-      setMessage(`${statusMessage}（僅保留本機狀態，gateway 儲存失敗）`);
+      setMessage(copy.targetRegistryDraftSavedLocalFallbackMessage(statusMessage));
       setError(undefined);
     } finally {
       setBusy(false);
@@ -1117,13 +1118,13 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   async function saveTargetGroup() {
     const name = targetGroupNameDraft.trim();
     if (!name) {
-      setError("請先輸入群組名稱。");
+      setError(copy.targetRegistryDraftGroupNameRequired);
       return;
     }
 
     const nextTargetIds = selectedBroadcastTargetIds.filter((targetId) => registry.targets.some((target) => target.id === targetId));
     if (!nextTargetIds.length) {
-      setError("請先選擇至少一個 target。");
+      setError(copy.targetRegistryDraftGroupSelectionRequired);
       return;
     }
 
@@ -1134,7 +1135,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       targetIds: nextTargetIds,
     };
     const nextRegistry = upsertTargetGroup(registry, group);
-    await persistRegistry(nextRegistry, `已儲存群組 ${group.name}。`, selectedTarget ?? draftTarget);
+    await persistRegistry(nextRegistry, copy.targetRegistryDraftGroupSavedMessage(group.name), selectedTarget ?? draftTarget);
     setSelectedTargetGroupId(group.id);
   }
 
@@ -1146,7 +1147,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setSelectedTargetGroupId(group.id);
     setTargetGroupNameDraft(group.name);
     setTargetGroupDescriptionDraft(group.description ?? "");
-    setMessage(`已套用群組 ${group.name}。`);
+    setMessage(copy.targetRegistryDraftGroupAppliedMessage(group.name));
     setError(undefined);
   }
 
@@ -1158,7 +1159,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
 
     const nextGroups = (registry.targetGroups ?? []).filter((item) => item.id !== groupId);
     const nextRegistry = cloneTargetRegistry({ ...registry, targetGroups: nextGroups });
-    await persistRegistry(nextRegistry, `已刪除群組 ${group.name}。`, selectedTarget ?? draftTarget);
+    await persistRegistry(nextRegistry, copy.targetRegistryDraftGroupDeletedMessage(group.name), selectedTarget ?? draftTarget);
     const fallbackGroup = nextGroups[0];
     setSelectedTargetGroupId(fallbackGroup?.id ?? "");
     setTargetGroupNameDraft(fallbackGroup?.name ?? "");
@@ -1251,7 +1252,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setPreview(snapshot);
     setExecution(undefined);
     clearSensitiveDraftState();
-    setMessage(`已產生 ${snapshot.target.displayName} 的派發預覽。`);
+      setMessage(copy.targetRegistryDispatchPreviewCreatedMessage(snapshot.target.displayName));
     setError(undefined);
 
     if (!gatewayBaseUrl) return;
@@ -1264,7 +1265,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       });
       if (!response.ok) throw new Error("bad response");
     } catch {
-      setError("派發預覽已在本機產生，但 gateway 回傳失敗。");
+      setError(copy.targetRegistryDispatchPreviewLocalError);
     }
   }
 
@@ -1288,16 +1289,16 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         } else {
           setDispatches((current) => [snapshot.record, ...current].slice(0, 100));
         }
-        setMessage(`已建立 ${snapshot.record.targetName} 的派發紀錄。`);
+        setMessage(copy.targetRegistryDispatchRecordCreatedMessage(snapshot.record.targetName));
         setError(undefined);
         return;
       } catch {
-        setMessage(`已建立本機派發紀錄，但 gateway 儲存失敗。`);
+        setMessage(copy.targetRegistryDispatchRecordCreatedLocalMessage);
       }
     }
 
     setDispatches((current) => [snapshot.record, ...current].slice(0, 100));
-    setMessage(`已建立 ${snapshot.record.targetName} 的派發紀錄。`);
+    setMessage(copy.targetRegistryDispatchRecordCreatedMessage(snapshot.record.targetName));
     setError(undefined);
   }
 
@@ -1310,7 +1311,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
 
     if (snapshot.request.category !== "execute_safe") {
       setExecution(undefined);
-      setError("只有 execute_safe 分類才能直接執行。");
+      setError(copy.targetRegistryDispatchExecuteSafeOnly);
       return;
     }
 
@@ -1322,7 +1323,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
 
     if (!gatewayBaseUrl) {
       setExecution(undefined);
-      setError("需要 gateway 才能執行實際連線。");
+      setError(copy.targetRegistryDispatchGatewayRequired);
       return;
     }
 
@@ -1380,7 +1381,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     } catch {
       setExecution(undefined);
       setBatchExecutions([]);
-      setError("安全命令執行失敗，請先確認 ssh / PowerShell 可用且 target 已正確配對。");
+      setError(copy.targetRegistryDispatchExecutionFailed);
     } finally {
       setBusy(false);
     }
@@ -1388,18 +1389,18 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
 
   async function issueTargetCredentialRef() {
     if (!gatewayBaseUrl) {
-      setError("需要 gateway 才能發行 credential ref。");
+      setError(copy.targetRegistryCredentialRefGatewayRequired);
       return;
     }
 
     if (draft.kind !== "ssh-terminal" && draft.kind !== "remote-desktop") {
-      setError("只有 SSH / 遠端桌面 target 才能發行 credential ref。");
+      setError(copy.targetRegistryCredentialRefOnlyRemote);
       return;
     }
 
     const privateKey = sshPrivateKeyDraft.trim();
     if (!privateKey) {
-      setError(draft.kind === "ssh-terminal" ? "請先貼上 SSH private key。" : "請先貼上遠端桌面登入 secret / password。");
+      setError(draft.kind === "ssh-terminal" ? copy.targetRegistryCredentialSecretSshRequired : copy.targetRegistryCredentialSecretRdpRequired);
       return;
     }
 
@@ -1449,13 +1450,13 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
 
   async function exportCredentialBundle() {
     if (!gatewayBaseUrl) {
-      setError("需要 gateway 才能匯出 credential bundle。");
+      setError(copy.targetRegistryCredentialBundleGatewayRequiredExport);
       return;
     }
 
     const passphrase = credentialBundlePassphraseDraft.trim();
     if (!passphrase) {
-      setError("請先輸入 bundle passphrase。");
+      setError(copy.targetRegistryCredentialBundlePassphraseRequired);
       return;
     }
 
@@ -1498,18 +1499,18 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
 
   async function previewCredentialBundle() {
     if (!gatewayBaseUrl) {
-      setError("需要 gateway 才能預覽 credential bundle。");
+      setError(copy.targetRegistryCredentialBundleGatewayRequiredPreview);
       return;
     }
 
     const passphrase = credentialBundlePassphraseDraft.trim();
     const bundleText = credentialBundleImportDraft.trim();
     if (!passphrase) {
-      setError("請先輸入 bundle passphrase。");
+      setError(copy.targetRegistryCredentialBundlePassphraseRequired);
       return;
     }
     if (!bundleText) {
-      setError("請先貼上 credential bundle JSON。");
+      setError(copy.targetRegistryCredentialBundleJsonRequired);
       return;
     }
 
@@ -1548,18 +1549,18 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
 
   async function importCredentialBundle() {
     if (!gatewayBaseUrl) {
-      setError("需要 gateway 才能匯入 credential bundle。");
+      setError(copy.targetRegistryCredentialBundleGatewayRequiredImport);
       return;
     }
 
     const passphrase = credentialBundlePassphraseDraft.trim();
     const bundleText = credentialBundleImportDraft.trim();
     if (!passphrase) {
-      setError("請先輸入 bundle passphrase。");
+      setError(copy.targetRegistryCredentialBundlePassphraseRequired);
       return;
     }
     if (!bundleText) {
-      setError("請先貼上 credential bundle JSON。");
+      setError(copy.targetRegistryCredentialBundleJsonRequired);
       return;
     }
 
@@ -1733,12 +1734,12 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   async function mutateSshTerminalSession(action: SshTerminalSessionAction) {
     const currentTarget = draftTarget;
     if (currentTarget.kind !== "ssh-terminal") {
-      setError("只有 SSH target 才能操作 session。");
+      setError(copy.targetRegistrySSHSessionBlocked);
       return;
     }
 
     if (gatewayBaseUrl && !draftIsSaved) {
-      setError("請先儲存這個 target，再與 gateway 互動。");
+      setError(copy.targetRegistrySSHSessionSaveRequired);
       return;
     }
 
@@ -1749,11 +1750,11 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       if (action === "run_command") {
         const command = sshTerminalCommandDraft.trim();
         if (!command) {
-          setError("請先輸入 SSH command。");
+          setError(copy.targetRegistrySSHCommandRequired);
           return;
         }
         if (currentSession.state !== "connected") {
-          setError("請先開啟 SSH terminal session。");
+          setError(copy.targetRegistrySSHSessionOpenRequired);
           return;
         }
 
@@ -1796,7 +1797,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
           ],
         });
         setSshTerminalSession(nextSession);
-        setMessage("已在本機預覽中開啟 SSH session。");
+        setMessage(copy.targetRegistrySSHSessionOpenMessage);
         setError(undefined);
         return;
       }
@@ -1813,7 +1814,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
           ],
         });
         setSshTerminalSession(nextSession);
-        setMessage("已在本機預覽中關閉 SSH session。");
+        setMessage(copy.targetRegistrySSHSessionCloseMessage);
         setError(undefined);
         return;
       }
@@ -1825,7 +1826,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         notes: [...currentSession.notes.slice(-4), "SSH terminal preview snapshot refreshed."],
       });
       setSshTerminalSession(refreshedSession);
-      setMessage("已在本機預覽中重新整理 SSH session。");
+      setMessage(copy.targetRegistrySSHSessionRefreshMessage);
       setError(undefined);
       return;
     }
@@ -1908,19 +1909,19 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   async function mutateRemoteDesktopSession(action: RemoteDesktopSessionAction) {
     const currentTarget = draftTarget;
     if (currentTarget.kind !== "remote-desktop") {
-      setError("只有遠端桌面 target 才能操作 session。");
+      setError(copy.targetRegistryRemoteDesktopBlocked);
       return;
     }
 
     if (gatewayBaseUrl && !draftIsSaved) {
-      setError("請先儲存遠端桌面 target，再與 gateway 互動。");
+      setError(copy.targetRegistryRemoteDesktopSaveRequired);
       return;
     }
 
     if (!gatewayBaseUrl) {
       const now = new Date().toISOString();
       if (action === "request_control") {
-        setError("需要 gateway 才能請求遠端桌面控制。");
+        setError(copy.targetRegistryRemoteDesktopGatewayRequired);
         return;
       }
 
