@@ -30,6 +30,7 @@ The control plane chooses a target and then chooses the safest adapter for the r
 - Issue SSH private keys and remote-desktop login secrets as gateway-managed credential refs for secret-ref dispatch flows when ssh-agent or platform-managed secrets are not used.
 - Export / import passphrase-protected credential bundles so SSH and remote-desktop secret refs can move between trusted machines without exposing plaintext secrets.
 - Preview credential bundles before import so operators can confirm the target list and secret counts before rehydration.
+- Preview bundle import impact so operators can see which targets will be added, updated, or left unchanged before committing the import.
 - Send remote-desktop control requests through the permission queue before switching into control mode.
 - Require human approval for execute-safe actions.
 - Only allowlisted commands may flow through `execute_safe`.

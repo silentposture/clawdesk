@@ -8827,6 +8827,20 @@ const server = http.createServer(async (req, res) => {
       }
       const importedRegistry = normalizeTargetRegistryState(payload.registry);
       const importedSecrets = normalizeCredentialBundleSecrets(payload.credentialSecrets);
+      const currentTargetById = new Map(targetRegistry.targets.map((target) => [target.id, target]));
+      const addedTargets = importedRegistry.targets.filter((target) => !currentTargetById.has(target.id));
+      const updatedTargets = importedRegistry.targets.filter((target) => {
+        const current = currentTargetById.get(target.id);
+        if (!current) return false;
+        return JSON.stringify(current.connection) !== JSON.stringify(target.connection)
+          || JSON.stringify(current.adapters) !== JSON.stringify(target.adapters)
+          || JSON.stringify(current.trustedWorkspaces) !== JSON.stringify(target.trustedWorkspaces)
+          || current.displayName !== target.displayName
+          || current.kind !== target.kind
+          || current.endpoint !== target.endpoint;
+      });
+      const unchangedTargets = importedRegistry.targets.filter((target) => !addedTargets.some((item) => item.id === target.id) && !updatedTargets.some((item) => item.id === target.id));
+      const secretTargetIds = importedSecrets.map((secretEntry) => secretEntry.targetId);
       const summary = {
         version: payload.version,
         createdAt: payload.createdAt ?? null,
@@ -8836,10 +8850,20 @@ const server = http.createServer(async (req, res) => {
         targetNames: importedRegistry.targets.map((target) => target.displayName),
         secretKinds: importedSecrets.map((secretEntry) => secretEntry.kind),
         secretLabels: importedSecrets.map((secretEntry) => secretEntry.label || secretEntry.targetName || secretEntry.targetId),
+        addedTargetIds: addedTargets.map((target) => target.id),
+        addedTargetNames: addedTargets.map((target) => target.displayName),
+        updatedTargetIds: updatedTargets.map((target) => target.id),
+        updatedTargetNames: updatedTargets.map((target) => target.displayName),
+        unchangedTargetIds: unchangedTargets.map((target) => target.id),
+        secretTargetIds,
+        overwriteCount: updatedTargets.length,
+        importCount: importedRegistry.targets.length,
       };
       audit("targets.credential-bundle.preview", {
         targetCount: summary.targetCount,
         secretCount: summary.secretCount,
+        addedTargetCount: summary.addedTargetIds.length,
+        updatedTargetCount: summary.updatedTargetIds.length,
       });
       json(res, 200, {
         allowed: true,
