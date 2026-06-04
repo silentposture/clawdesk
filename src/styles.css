@@ -1313,6 +1313,60 @@ th {
   align-items: start;
 }
 
+.target-group-manager {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+  padding: 14px;
+  border: 1px solid #bfd5cb;
+  border-radius: 10px;
+  background: #eef6f1;
+}
+
+.target-group-manager-header {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  color: #53645d;
+  font-size: 12px;
+}
+
+.target-group-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.target-group-chip {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid #bfd5cb;
+  background: #ffffff;
+  color: #23332d;
+  cursor: pointer;
+}
+
+.target-group-chip.active {
+  border-color: #0f6f5c;
+  background: #e9f5ef;
+}
+
+.target-group-chip strong,
+.target-group-chip small {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.target-group-chip small {
+  color: #65736c;
+  font-size: 11px;
+}
+
 .target-list {
   display: grid;
   gap: 8px;

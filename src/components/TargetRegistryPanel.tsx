@@ -9,10 +9,13 @@ import {
   defaultTargetRegistry,
   defaultTargetConnection,
   decideTargetDispatch,
+  findTargetGroup,
   summarizeTargetProfile,
   summarizeTargetConnectionProfile,
   summarizeTargetRegistry,
+  normalizeTargetGroupId,
   upsertTarget,
+  upsertTargetGroup,
   type TargetConnectionReadinessCheck,
   type TargetConnectionReadinessReport,
   type TargetConnectionState,
@@ -26,6 +29,7 @@ import {
   type TargetSessionMode,
   type TargetProfile,
   type TargetRegistry,
+  type TargetGroup,
 } from "../lib/targets";
 import { saveLegalExport } from "../lib/tauri";
 import { useI18n } from "../lib/i18n";
@@ -97,9 +101,12 @@ interface CredentialBundlePreviewSummary {
   version: number;
   createdAt?: string | null;
   targetCount: number;
+  groupCount?: number;
   secretCount: number;
   targetIds: string[];
   targetNames: string[];
+  groupIds?: string[];
+  groupNames?: string[];
   secretKinds: string[];
   secretLabels: string[];
   addedTargetIds: string[];
@@ -107,8 +114,14 @@ interface CredentialBundlePreviewSummary {
   updatedTargetIds: string[];
   updatedTargetNames: string[];
   unchangedTargetIds: string[];
+  addedGroupIds?: string[];
+  addedGroupNames?: string[];
+  updatedGroupIds?: string[];
+  updatedGroupNames?: string[];
+  unchangedGroupIds?: string[];
   secretTargetIds: string[];
   overwriteCount: number;
+  groupOverwriteCount?: number;
   importCount: number;
 }
 
@@ -692,6 +705,9 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     initialRegistry.targets.filter((target) => target.kind === "local-shell" || target.kind === "ssh-terminal").map((target) => target.id),
   );
   const [credentialBundlePreview, setCredentialBundlePreview] = useState<CredentialBundlePreviewSummary>();
+  const [selectedTargetGroupId, setSelectedTargetGroupId] = useState<string>(initialRegistry.targetGroups?.[0]?.id ?? "");
+  const [targetGroupNameDraft, setTargetGroupNameDraft] = useState(initialRegistry.targetGroups?.[0]?.name ?? "");
+  const [targetGroupDescriptionDraft, setTargetGroupDescriptionDraft] = useState(initialRegistry.targetGroups?.[0]?.description ?? "");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
@@ -721,6 +737,11 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     const selected = credentialBundleTargetIds.filter((targetId) => registryTargetIds.includes(targetId));
     return selected.length > 0 ? selected : registryTargetIds;
   }, [credentialBundleTargetIds, registry.targets]);
+  const targetGroups = registry.targetGroups ?? [];
+  const selectedTargetGroup = useMemo(
+    () => (selectedTargetGroupId ? findTargetGroup(registry, selectedTargetGroupId) ?? targetGroups[0] : targetGroups[0]),
+    [registry, selectedTargetGroupId, targetGroups],
+  );
   const selectedBroadcastTargetIds = useMemo(() => {
     const registryTargetIds = registry.targets.map((target) => target.id);
     const selected = broadcastTargetIds.filter((targetId) => registryTargetIds.includes(targetId));
@@ -742,6 +763,29 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       return next.length > 0 ? next : registry.targets.filter((target) => target.kind === "local-shell" || target.kind === "ssh-terminal").map((target) => target.id);
     });
   }, [registry.targets]);
+
+  useEffect(() => {
+    if (!targetGroups.length) {
+      setSelectedTargetGroupId("");
+      setTargetGroupNameDraft("");
+      setTargetGroupDescriptionDraft("");
+      return;
+    }
+
+    const activeGroup = selectedTargetGroup ?? targetGroups[0];
+    if (!activeGroup) {
+      setSelectedTargetGroupId("");
+      setTargetGroupNameDraft("");
+      setTargetGroupDescriptionDraft("");
+      return;
+    }
+
+    if (activeGroup.id !== selectedTargetGroupId) {
+      setSelectedTargetGroupId(activeGroup.id);
+    }
+    setTargetGroupNameDraft(activeGroup.name);
+    setTargetGroupDescriptionDraft(activeGroup.description ?? "");
+  }, [selectedTargetGroup, selectedTargetGroupId, targetGroups]);
 
   function clearSensitiveDraftState() {
     setSshPrivateKeyDraft("");
@@ -1068,6 +1112,57 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     setSelectedTargetId(target.id);
     setDraft(draftFromTarget(target));
     await persistRegistry(nextRegistry, makeDefault ? `已儲存 ${target.displayName} 並設為預設 target。` : `已儲存 ${target.displayName}。`, target);
+  }
+
+  async function saveTargetGroup() {
+    const name = targetGroupNameDraft.trim();
+    if (!name) {
+      setError("請先輸入群組名稱。");
+      return;
+    }
+
+    const nextTargetIds = selectedBroadcastTargetIds.filter((targetId) => registry.targets.some((target) => target.id === targetId));
+    if (!nextTargetIds.length) {
+      setError("請先選擇至少一個 target。");
+      return;
+    }
+
+    const group: TargetGroup = {
+      id: selectedTargetGroup?.id?.trim() || normalizeTargetGroupId(name),
+      name,
+      description: targetGroupDescriptionDraft.trim() || undefined,
+      targetIds: nextTargetIds,
+    };
+    const nextRegistry = upsertTargetGroup(registry, group);
+    await persistRegistry(nextRegistry, `已儲存群組 ${group.name}。`, selectedTarget ?? draftTarget);
+    setSelectedTargetGroupId(group.id);
+  }
+
+  function applyTargetGroup(group?: TargetGroup) {
+    if (!group) return;
+    const registryTargetIds = registry.targets.map((target) => target.id);
+    const targetIds = group.targetIds.filter((targetId) => registryTargetIds.includes(targetId));
+    setBroadcastTargetIds(targetIds.length > 0 ? targetIds : registryTargetIds);
+    setSelectedTargetGroupId(group.id);
+    setTargetGroupNameDraft(group.name);
+    setTargetGroupDescriptionDraft(group.description ?? "");
+    setMessage(`已套用群組 ${group.name}。`);
+    setError(undefined);
+  }
+
+  async function removeTargetGroup(groupId: string) {
+    const group = findTargetGroup(registry, groupId);
+    if (!group) {
+      return;
+    }
+
+    const nextGroups = (registry.targetGroups ?? []).filter((item) => item.id !== groupId);
+    const nextRegistry = cloneTargetRegistry({ ...registry, targetGroups: nextGroups });
+    await persistRegistry(nextRegistry, `已刪除群組 ${group.name}。`, selectedTarget ?? draftTarget);
+    const fallbackGroup = nextGroups[0];
+    setSelectedTargetGroupId(fallbackGroup?.id ?? "");
+    setTargetGroupNameDraft(fallbackGroup?.name ?? "");
+    setTargetGroupDescriptionDraft(fallbackGroup?.description ?? "");
   }
 
   function buildRequest(): TargetDispatchRequest {
@@ -1976,7 +2071,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
           <article className="commercial-card">
             <CircleCheck size={23} />
             <h3>就緒 {summary.readyTargets} · 已配對 {summary.pairedTargets}</h3>
-            <p>只有就緒且已配對的 target 才會進入安全派發選擇。</p>
+            <p>群組 {summary.targetGroupCount ?? 0} · 只有就緒且已配對的 target 才會進入安全派發選擇。</p>
           </article>
           <article className="commercial-card">
             <CircleAlert size={23} />
@@ -2005,6 +2100,53 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 新增 Mock
               </button>
             </div>
+            <section className="target-group-manager">
+              <div className="target-group-manager-header">
+                <strong>Target groups</strong>
+                <span>{targetGroups.length} groups</span>
+              </div>
+              <label>
+                <span>套用群組</span>
+                <select value={selectedTargetGroup?.id ?? ""} onChange={(event) => applyTargetGroup(findTargetGroup(registry, event.target.value))}>
+                  <option value="">未選擇</option>
+                  {targetGroups.map((group) => (
+                    <option key={group.id} value={group.id}>
+                      {group.name} · {group.targetIds.length}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span>群組名稱</span>
+                <input value={targetGroupNameDraft} onChange={(event) => setTargetGroupNameDraft(event.target.value)} placeholder="例如：每天早上巡檢" />
+              </label>
+              <label>
+                <span>群組描述</span>
+                <input value={targetGroupDescriptionDraft} onChange={(event) => setTargetGroupDescriptionDraft(event.target.value)} placeholder="選填，說明這組 target 的用途" />
+              </label>
+              <div className="panel-actions">
+                <button className="secondary-button" type="button" onClick={() => void saveTargetGroup()} disabled={busy || selectedBroadcastTargetIds.length === 0}>
+                  <Save size={16} />
+                  儲存為群組
+                </button>
+                <button className="secondary-button" type="button" onClick={() => applyTargetGroup(selectedTargetGroup)} disabled={busy || !selectedTargetGroup}>
+                  <Send size={16} />
+                  套用群組
+                </button>
+                <button className="secondary-button" type="button" onClick={() => void removeTargetGroup(selectedTargetGroup?.id ?? "")} disabled={busy || !selectedTargetGroup}>
+                  <X size={16} />
+                  刪除群組
+                </button>
+              </div>
+              <div className="target-group-list">
+                {targetGroups.map((group) => (
+                  <button key={group.id} type="button" className={`target-group-chip${selectedTargetGroup?.id === group.id ? " active" : ""}`} onClick={() => applyTargetGroup(group)}>
+                    <strong>{group.name}</strong>
+                    <small>{group.targetIds.length} targets</small>
+                  </button>
+                ))}
+              </div>
+            </section>
             <div className="target-list">
               {registry.targets.map((target) => {
                 const active = selectedTargetId === target.id;
@@ -2374,17 +2516,25 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               {credentialBundlePreview ? (
                 <section className="target-credential-bundle-preview">
                   <span>Bundle preview</span>
-                  <strong>{credentialBundlePreview.targetCount} targets · {credentialBundlePreview.secretCount} secrets</strong>
+                  <strong>
+                    {credentialBundlePreview.targetCount} targets · {credentialBundlePreview.groupCount ?? 0} groups · {credentialBundlePreview.secretCount} secrets
+                  </strong>
                   <small>createdAt：{credentialBundlePreview.createdAt ?? "n/a"} · version：{credentialBundlePreview.version}</small>
                   <small>targetIds：{credentialBundlePreview.targetIds.join(", ") || "none"}</small>
                   <small>targetNames：{credentialBundlePreview.targetNames.join(", ") || "none"}</small>
+                  <small>groupIds：{credentialBundlePreview.groupIds?.join(", ") || "none"}</small>
+                  <small>groupNames：{credentialBundlePreview.groupNames?.join(", ") || "none"}</small>
                   <small>secretKinds：{credentialBundlePreview.secretKinds.join(", ") || "none"}</small>
                   <small>secretLabels：{credentialBundlePreview.secretLabels.join(", ") || "none"}</small>
                   <small>新增 target：{credentialBundlePreview.addedTargetNames.join(", ") || "none"}</small>
                   <small>更新 target：{credentialBundlePreview.updatedTargetNames.join(", ") || "none"}</small>
                   <small>不變 target：{credentialBundlePreview.unchangedTargetIds.join(", ") || "none"}</small>
+                  <small>新增 group：{credentialBundlePreview.addedGroupNames?.join(", ") || "none"}</small>
+                  <small>更新 group：{credentialBundlePreview.updatedGroupNames?.join(", ") || "none"}</small>
+                  <small>不變 group：{credentialBundlePreview.unchangedGroupIds?.join(", ") || "none"}</small>
                   <small>secret targets：{credentialBundlePreview.secretTargetIds.join(", ") || "none"}</small>
                   <small>overwrite count：{credentialBundlePreview.overwriteCount}</small>
+                  <small>group overwrite count：{credentialBundlePreview.groupOverwriteCount ?? 0}</small>
                 </section>
               ) : null}
             </section>

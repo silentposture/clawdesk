@@ -48,6 +48,14 @@ export interface TargetProfile {
 export interface TargetRegistry {
   targets: TargetProfile[];
   defaultTargetId?: string;
+  targetGroups?: TargetGroup[];
+}
+
+export interface TargetGroup {
+  id: string;
+  name: string;
+  description?: string;
+  targetIds: string[];
 }
 
 export interface TargetRegistrySummary {
@@ -56,6 +64,7 @@ export interface TargetRegistrySummary {
   pairedTargets: number;
   defaultTargetId?: string;
   defaultTargetName?: string;
+  targetGroupCount?: number;
 }
 
 export interface TargetDispatchRequest {
@@ -264,11 +273,12 @@ export function createTargetRegistry(targets: TargetProfile[] = [], defaultTarge
   return {
     targets: [...targets],
     defaultTargetId: defaultTargetId ?? targets[0]?.id,
+    targetGroups: [],
   };
 }
 
 export function defaultTargetRegistry(): TargetRegistry {
-  return createTargetRegistry([
+  const targets = [
     createTargetProfile({
       id: "local-builder",
       displayName: "Local Builder",
@@ -307,12 +317,23 @@ export function defaultTargetRegistry(): TargetRegistry {
       paired: true,
       trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
     }),
-  ]);
+  ];
+
+  return {
+    ...createTargetRegistry(targets),
+    targetGroups: defaultTargetGroups(targets.map((target) => target.id)),
+  };
 }
 
 export function cloneTargetRegistry(registry: TargetRegistry): TargetRegistry {
   return {
     defaultTargetId: registry.defaultTargetId,
+    targetGroups: Array.isArray(registry.targetGroups)
+      ? registry.targetGroups.map((group) => ({
+          ...group,
+          targetIds: [...group.targetIds],
+        }))
+      : [],
     targets: registry.targets.map((target) => ({
       ...target,
       trustedWorkspaces: [...target.trustedWorkspaces],
@@ -330,6 +351,7 @@ export function summarizeTargetRegistry(registry: TargetRegistry): TargetRegistr
     pairedTargets: registry.targets.filter((target) => target.paired).length,
     defaultTargetId: registry.defaultTargetId,
     defaultTargetName: defaultTarget?.displayName,
+    targetGroupCount: Array.isArray(registry.targetGroups) ? registry.targetGroups.length : 0,
   };
 }
 
@@ -343,8 +365,94 @@ export function upsertTarget(registry: TargetRegistry, target: TargetProfile): T
   };
 }
 
+export function normalizeTargetGroup(group: TargetGroup, validTargetIds: string[] = []): TargetGroup {
+  const targetIds = Array.isArray(group.targetIds)
+    ? group.targetIds
+        .map((targetId) => (typeof targetId === "string" ? targetId.trim() : ""))
+        .filter((targetId) => targetId && (!validTargetIds.length || validTargetIds.includes(targetId)))
+    : [];
+  const dedupedTargetIds = [...new Set(targetIds)];
+  const name = typeof group.name === "string" && group.name.trim() ? group.name.trim() : "未命名群組";
+  const description = typeof group.description === "string" && group.description.trim() ? group.description.trim() : undefined;
+  const id = typeof group.id === "string" && group.id.trim() ? group.id.trim() : normalizeTargetGroupId(name);
+  return {
+    id,
+    name,
+    description,
+    targetIds: dedupedTargetIds,
+  };
+}
+
+export function defaultTargetGroups(targetIds: string[] = []): TargetGroup[] {
+  const valid = targetIds.filter(Boolean);
+  const allTargets = valid.length > 0 ? valid : ["local-builder", "builder-ssh", "ops-rdp", "lab-mock"];
+  return [
+    normalizeTargetGroup({
+      id: "default-local-ssh",
+      name: "Local + SSH",
+      description: "本機與 SSH 終端機的日常發配群組。",
+      targetIds: ["local-builder", "builder-ssh"],
+    }, allTargets),
+    normalizeTargetGroup({
+      id: "remote-ops",
+      name: "Remote Ops",
+      description: "遠端桌面與 lab target 的觀察 / 控制群組。",
+      targetIds: ["ops-rdp", "lab-mock"],
+    }, allTargets),
+    normalizeTargetGroup({
+      id: "all-targets",
+      name: "All Targets",
+      description: "全部已註冊 target。",
+      targetIds: allTargets,
+    }, allTargets),
+  ].filter((group) => group.targetIds.length > 0);
+}
+
+export function normalizeTargetGroupId(name: string): string {
+  return name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 48) || `group-${Date.now().toString(36)}`;
+}
+
 export function findTarget(registry: TargetRegistry, targetId: string): TargetProfile | undefined {
   return registry.targets.find((target) => target.id === targetId);
+}
+
+export function findTargetGroup(registry: TargetRegistry, groupId: string): TargetGroup | undefined {
+  return Array.isArray(registry.targetGroups) ? registry.targetGroups.find((group) => group.id === groupId) : undefined;
+}
+
+export function listTargetsForGroup(registry: TargetRegistry, group: TargetGroup | string): TargetProfile[] {
+  const groupId = typeof group === "string" ? group : group.id;
+  const nextGroup = typeof group === "string" ? findTargetGroup(registry, group) : group;
+  if (!nextGroup) return [];
+  const targetIds = new Set(nextGroup.targetIds);
+  return registry.targets.filter((target) => targetIds.has(target.id));
+}
+
+export function upsertTargetGroup(registry: TargetRegistry, group: TargetGroup): TargetRegistry {
+  const targetGroups = Array.isArray(registry.targetGroups) ? registry.targetGroups.slice() : [];
+  const nextGroup = normalizeTargetGroup(group, registry.targets.map((target) => target.id));
+  const index = targetGroups.findIndex((entry) => entry.id === nextGroup.id);
+  if (index >= 0) {
+    targetGroups[index] = nextGroup;
+  } else {
+    targetGroups.unshift(nextGroup);
+  }
+  return {
+    ...registry,
+    targetGroups,
+  };
+}
+
+export function removeTargetGroup(registry: TargetRegistry, groupId: string): TargetRegistry {
+  return {
+    ...registry,
+    targetGroups: Array.isArray(registry.targetGroups) ? registry.targetGroups.filter((group) => group.id !== groupId) : [],
+  };
 }
 
 export function listReadyTargets(registry: TargetRegistry): TargetProfile[] {
