@@ -405,6 +405,32 @@ function readinessActionLabel(report: TargetConnectionReadinessReport): string {
   }
 }
 
+function readinessIssueSummary(report: TargetConnectionReadinessReport): string {
+  const failures = report.checks.filter((check) => check.status === "fail").slice(0, 2);
+  if (failures.length === 0) {
+    return "all checks passed";
+  }
+  return `needs ${failures.map((check) => check.label.toLowerCase()).join(" · ")}`;
+}
+
+function formatConnectionReadinessReport(report: TargetConnectionReadinessReport): string {
+  const lines = [
+    `Target: ${report.targetName} (${report.targetId})`,
+    `Kind: ${report.kind}`,
+    `State: ${report.state}`,
+    `Ready to connect: ${report.readyToConnect ? "yes" : "no"}`,
+    `Next action: ${report.nextAction}`,
+  ];
+  if (report.lastProbeResult) {
+    lines.push(`Last probe: ${report.lastProbeResult}`);
+  }
+  lines.push("Checks:");
+  for (const check of report.checks) {
+    lines.push(`- ${check.label}: ${check.status} · ${check.detail}`);
+  }
+  return lines.join("\n");
+}
+
 function formatLastSeenAt(value?: string): string {
   if (!value) return "未記錄";
   const parsed = new Date(value);
@@ -897,6 +923,42 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       }
     } catch {
       setConnectionReadinessReport({ report: buildTargetConnectionReadinessReport(nextTarget), source: "local" });
+    }
+  }
+
+  async function copyConnectionReadinessReport(target?: TargetProfile) {
+    const nextTarget = target ?? selectedTarget ?? draftTarget;
+    if (!nextTarget) {
+      setError("尚未選取 target，無法複製 readiness report。");
+      return;
+    }
+
+    const report = connectionReadinessReport?.report ?? buildTargetConnectionReadinessReport(nextTarget);
+    const text = formatConnectionReadinessReport(report);
+
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else if (typeof document !== "undefined") {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "true");
+        textarea.style.position = "absolute";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        const copied = document.execCommand("copy");
+        document.body.removeChild(textarea);
+        if (!copied) {
+          throw new Error("clipboard copy failed");
+        }
+      } else {
+        throw new Error("clipboard not available");
+      }
+      setMessage(`已複製 ${nextTarget.displayName} 的 connection readiness report。`);
+      setError(undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "無法複製 readiness report。");
     }
   }
 
@@ -1919,6 +1981,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                       <small className={`target-readiness-badge ${readinessBadgeClass(readiness)}`}>
                         {readiness.readyToConnect ? "ready" : readiness.nextAction}
                       </small>
+                      <small className="target-readiness-summary">{readinessIssueSummary(readiness)}</small>
                       <small>{summarizeTargetProfile(target)}</small>
                       <small>{summarizeTargetConnectionProfile(target)}</small>
                       <small>
@@ -2149,6 +2212,10 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 <button className="secondary-button" type="button" onClick={() => void loadTargetConnectionReadiness(selectedTarget ?? draftTarget)} disabled={busy}>
                   <RefreshCw size={16} />
                   重新整理 readiness
+                </button>
+                <button className="secondary-button" type="button" onClick={() => void copyConnectionReadinessReport(selectedTarget ?? draftTarget)} disabled={busy}>
+                  <Save size={16} />
+                  複製 readiness report
                 </button>
                 <button
                   className="primary-button"

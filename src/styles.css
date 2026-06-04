@@ -1391,6 +1391,13 @@ th {
   background: #fff2e6;
 }
 
+.target-readiness-summary {
+  color: #51635d;
+  font-size: 11px;
+  font-weight: 650;
+  text-transform: none;
+}
+
 .target-toggle {
   display: flex;
   align-items: center;
