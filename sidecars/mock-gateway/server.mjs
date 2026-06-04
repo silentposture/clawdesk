@@ -36,6 +36,7 @@ const backendIdentityPasswordResetCodes = new Map();
 const targetCredentialVaultDurable = true;
 const targetCredentialVaultFilePath = path.join(homeDir, ".clawdesk", "ssh-credential-vault.json");
 const targetCredentialVaultKeyPath = path.join(homeDir, ".clawdesk", "ssh-credential-vault.key");
+const targetCredentialBundleIterations = 120_000;
 const openClawUpstreamSnapshot = {
   repository: "https://github.com/openclaw/openclaw",
   commit: "278e3eabf29dd8ff31d633907525bda35ec6474a",
@@ -230,6 +231,9 @@ const gatewayAdapterMethods = [
   { name: "diagnostics", method: "POST", path: "/diagnostics/create-report", status: "ready", purpose: "產生 redacted support bundle 與 release/build/signature 狀態。" },
   { name: "targetsRegistry", method: "GET", path: "/targets", status: "mock", purpose: "讀取多電腦 target registry 與 dispatch log。" },
   { name: "targetsSave", method: "POST", path: "/targets", status: "mock", purpose: "儲存 target registry 與 default target 選擇。" },
+  { name: "targetsCredentialRefIssue", method: "POST", path: "/targets/credential-ref/issue", status: "partial", purpose: "將 SSH private key 或遠端桌面登入 secret 發行成 gateway-managed credential ref，供安全 SSH / RDP dispatch 使用。" },
+  { name: "targetsCredentialBundleExport", method: "POST", path: "/targets/credential-bundle/export", status: "partial", purpose: "將 target registry 與已發行的 credential refs 匯出成 passphrase-protected encrypted bundle，用於換機或跨機器遷移。" },
+  { name: "targetsCredentialBundleImport", method: "POST", path: "/targets/credential-bundle/import", status: "partial", purpose: "匯入 passphrase-protected encrypted bundle，還原 target registry 與 gateway-managed credential refs。" },
   { name: "targetsDispatchPreview", method: "POST", path: "/targets/dispatch-preview", status: "mock", purpose: "建立 target dispatch 預覽與 audit record。" },
   { name: "targetsDispatch", method: "POST", path: "/targets/dispatch", status: "mock", purpose: "儲存 target dispatch record 與 audit trail。" },
   { name: "targetsSshTerminalSessionRead", method: "GET", path: "/targets/ssh-terminal/session", status: "partial", purpose: "讀取 SSH terminal session 與 transcript snapshot。" },
@@ -2630,6 +2634,183 @@ function resolveTargetCredentialRefState(credentialRef) {
   const normalizedRef = typeof credentialRef === "string" ? credentialRef.trim() : "";
   if (!normalizedRef) return undefined;
   return targetCredentialVault.get(targetCredentialRefStorageKey(normalizedRef));
+}
+
+function deriveTargetCredentialBundleKey(passphrase, salt) {
+  const normalizedPassphrase = typeof passphrase === "string" ? passphrase.trim() : "";
+  if (!normalizedPassphrase) {
+    throw new Error("Bundle passphrase is required.");
+  }
+  if (!Buffer.isBuffer(salt) || salt.length < 16) {
+    throw new Error("Bundle salt is required.");
+  }
+  return crypto.pbkdf2Sync(normalizedPassphrase, salt, targetCredentialBundleIterations, 32, "sha256");
+}
+
+function encryptTargetCredentialBundlePayload(payload, passphrase) {
+  const salt = crypto.randomBytes(16);
+  const iv = crypto.randomBytes(12);
+  const key = deriveTargetCredentialBundleKey(passphrase, salt);
+  const cipher = crypto.createCipheriv("aes-256-gcm", key, iv);
+  const plaintext = JSON.stringify(payload);
+  const ciphertext = Buffer.concat([cipher.update(plaintext, "utf8"), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return {
+    version: 1,
+    scope: "target-credential-bundle",
+    algorithm: "aes-256-gcm",
+    kdf: "pbkdf2-sha256",
+    iterations: targetCredentialBundleIterations,
+    createdAt: nowIso(),
+    salt: salt.toString("base64"),
+    iv: iv.toString("base64"),
+    payload: Buffer.concat([tag, ciphertext]).toString("base64"),
+  };
+}
+
+function decryptTargetCredentialBundlePayload(bundle, passphrase) {
+  if (!bundle || typeof bundle !== "object") {
+    throw new Error("Credential bundle is required.");
+  }
+  if (bundle.version !== 1 || bundle.scope !== "target-credential-bundle") {
+    throw new Error("Unsupported credential bundle format.");
+  }
+  const salt = typeof bundle.salt === "string" && bundle.salt.trim() ? Buffer.from(bundle.salt, "base64") : Buffer.alloc(0);
+  const iv = typeof bundle.iv === "string" && bundle.iv.trim() ? Buffer.from(bundle.iv, "base64") : Buffer.alloc(0);
+  const payload = typeof bundle.payload === "string" && bundle.payload.trim() ? Buffer.from(bundle.payload, "base64") : Buffer.alloc(0);
+  if (salt.length < 16 || iv.length < 12 || payload.length < 16) {
+    throw new Error("Credential bundle payload is invalid.");
+  }
+  const key = deriveTargetCredentialBundleKey(passphrase, salt);
+  const tag = payload.subarray(0, 16);
+  const ciphertext = payload.subarray(16);
+  const decipher = crypto.createDecipheriv("aes-256-gcm", key, iv);
+  decipher.setAuthTag(tag);
+  const plaintext = Buffer.concat([decipher.update(ciphertext), decipher.final()]).toString("utf8");
+  const parsed = JSON.parse(plaintext);
+  if (!parsed || typeof parsed !== "object") {
+    throw new Error("Credential bundle payload is invalid.");
+  }
+  return parsed;
+}
+
+function normalizeCredentialBundleSecrets(secrets = []) {
+  if (!Array.isArray(secrets)) return [];
+  return secrets
+    .map((entry) => {
+      if (!entry || typeof entry !== "object") return undefined;
+      const targetId = typeof entry.targetId === "string" ? entry.targetId.trim() : "";
+      const secret = typeof entry.secret === "string" ? entry.secret.trim() : "";
+      if (!targetId || !secret) return undefined;
+      return {
+        targetId,
+        targetName: typeof entry.targetName === "string" ? entry.targetName.trim() : "",
+        label: typeof entry.label === "string" ? entry.label.trim() : "",
+        kind: typeof entry.kind === "string" && entry.kind.trim() ? entry.kind.trim() : "ssh-private-key",
+        credentialRef: typeof entry.credentialRef === "string" ? entry.credentialRef.trim() : "",
+        secret,
+      };
+    })
+    .filter(Boolean);
+}
+
+async function createTargetCredentialBundleState({ targetIds, passphrase } = {}) {
+  const requestedTargetIds = Array.isArray(targetIds)
+    ? targetIds.map((targetId) => (typeof targetId === "string" ? targetId.trim() : "")).filter(Boolean)
+    : [];
+  const targets = requestedTargetIds.length > 0
+    ? targetRegistry.targets.filter((target) => requestedTargetIds.includes(target.id))
+    : targetRegistry.targets;
+  const normalizedTargets = targets.map((target) => cloneTargetProfileState(target));
+  const credentialSecrets = [];
+
+  for (const target of normalizedTargets) {
+    const credentialRef = target.connection?.credentialRef?.trim() ?? "";
+    if (target.connection?.credentialMode !== "secret-ref" || !credentialRef) {
+      continue;
+    }
+    const entry = resolveTargetCredentialRefState(credentialRef);
+    if (!entry) {
+      throw new Error(`Credential ref ${credentialRef} is not registered in the gateway vault.`);
+    }
+    const secret = entry.privateKey ?? (entry.cipherText ? await decryptTargetCredentialSecret(entry.cipherText) : "");
+    if (!secret.trim()) {
+      throw new Error(`Credential ref ${credentialRef} does not contain decryptable secret material.`);
+    }
+    credentialSecrets.push({
+      targetId: target.id,
+      targetName: target.displayName,
+      label: entry.label ?? target.displayName,
+      kind: entry.kind,
+      credentialRef,
+      secret: secret.trim(),
+    });
+  }
+
+  const payload = {
+    version: 1,
+    createdAt: nowIso(),
+    registry: {
+      targets: normalizedTargets,
+      defaultTargetId: requestedTargetIds.length > 0 && requestedTargetIds.includes(targetRegistry.defaultTargetId ?? "")
+        ? targetRegistry.defaultTargetId
+        : targetRegistry.defaultTargetId,
+    },
+    credentialSecrets,
+  };
+
+  return {
+    bundle: encryptTargetCredentialBundlePayload(payload, passphrase),
+    targetCount: normalizedTargets.length,
+    secretCount: credentialSecrets.length,
+  };
+}
+
+async function applyTargetCredentialBundleState(bundle, passphrase) {
+  const payload = decryptTargetCredentialBundlePayload(bundle, passphrase);
+  if (!payload || typeof payload !== "object" || payload.version !== 1) {
+    throw new Error("Unsupported credential bundle payload.");
+  }
+
+  const importedRegistry = normalizeTargetRegistryState(payload.registry);
+  const importedSecrets = normalizeCredentialBundleSecrets(payload.credentialSecrets);
+
+  for (const secretEntry of importedSecrets) {
+    await issueTargetCredentialRefState({
+      targetId: secretEntry.targetId,
+      label: secretEntry.label,
+      kind: secretEntry.kind,
+      privateKey: secretEntry.secret,
+    });
+  }
+
+  const mergedTargets = targetRegistry.targets.slice();
+  for (const importedTarget of importedRegistry.targets) {
+    const existingIndex = mergedTargets.findIndex((target) => target.id === importedTarget.id);
+    if (existingIndex >= 0) {
+      mergedTargets[existingIndex] = importedTarget;
+    } else {
+      mergedTargets.push(importedTarget);
+    }
+  }
+
+  targetRegistry = normalizeTargetRegistryState({
+    targets: mergedTargets,
+    defaultTargetId: importedRegistry.defaultTargetId ?? targetRegistry.defaultTargetId,
+  });
+  scheduleStateSave();
+  audit("targets.credential-bundle.import", {
+    targetCount: importedRegistry.targets.length,
+    secretCount: importedSecrets.length,
+  });
+
+  return {
+    allowed: true,
+    reason: "Credential bundle imported.",
+    registry: cloneTargetRegistryState(targetRegistry),
+    targetCount: importedRegistry.targets.length,
+    secretCount: importedSecrets.length,
+  };
 }
 
 async function resolveTargetCredentialSecretText(target) {
@@ -8601,6 +8782,51 @@ const server = http.createServer(async (req, res) => {
       json(res, 200, {
         ...payload,
         targetName: target.displayName,
+      });
+    } catch (error) {
+      json(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/targets/credential-bundle/export") {
+    try {
+      const body = await readJson(req);
+      const targetIds = Array.isArray(body.targetIds) ? body.targetIds : undefined;
+      const passphrase = typeof body.passphrase === "string" ? body.passphrase : "";
+      const payload = await createTargetCredentialBundleState({ targetIds, passphrase });
+      const bundleText = `${JSON.stringify(payload.bundle, null, 2)}\n`;
+      audit("targets.credential-bundle.export", {
+        targetCount: payload.targetCount,
+        secretCount: payload.secretCount,
+        targetIds: Array.isArray(targetIds)
+          ? targetIds.filter((value) => typeof value === "string").slice(0, 20)
+          : [],
+      });
+      json(res, 200, {
+        bundle: payload.bundle,
+        bundleText,
+        targetCount: payload.targetCount,
+        secretCount: payload.secretCount,
+      });
+    } catch (error) {
+      json(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/targets/credential-bundle/import") {
+    try {
+      const body = await readJson(req);
+      const passphrase = typeof body.passphrase === "string" ? body.passphrase : "";
+      const bundle = body.bundle ?? (typeof body.bundleText === "string" && body.bundleText.trim() ? JSON.parse(body.bundleText) : undefined);
+      const result = await applyTargetCredentialBundleState(bundle, passphrase);
+      json(res, 200, {
+        allowed: result.allowed,
+        reason: result.reason,
+        registry: result.registry,
+        targetCount: result.targetCount,
+        secretCount: result.secretCount,
       });
     } catch (error) {
       json(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON" });
