@@ -25,6 +25,7 @@ import {
   type TargetProfile,
   type TargetRegistry,
 } from "../lib/targets";
+import { saveLegalExport } from "../lib/tauri";
 import { useI18n } from "../lib/i18n";
 
 interface TargetRegistryPanelProps {
@@ -565,6 +566,8 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const sshTerminalSessionRequestTokenRef = useRef(0);
   const [sshPrivateKeyDraft, setSshPrivateKeyDraft] = useState("");
   const [sshTerminalCommandDraft, setSshTerminalCommandDraft] = useState("git status");
+  const [credentialBundlePassphraseDraft, setCredentialBundlePassphraseDraft] = useState("");
+  const [credentialBundleImportDraft, setCredentialBundleImportDraft] = useState("");
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
@@ -1115,6 +1118,121 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setError(undefined);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "credential ref issuance failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function exportCredentialBundle() {
+    if (!gatewayBaseUrl) {
+      setError("需要 gateway 才能匯出 credential bundle。");
+      return;
+    }
+
+    const passphrase = credentialBundlePassphraseDraft.trim();
+    if (!passphrase) {
+      setError("請先輸入 bundle passphrase。");
+      return;
+    }
+
+    setBusy(true);
+    setError(undefined);
+    try {
+      const response = await fetch(`${gatewayBaseUrl}/targets/credential-bundle/export`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          passphrase,
+          targetIds: registry.targets.map((target) => target.id),
+        }),
+      });
+      const payload = (await response.json()) as {
+        bundle?: Record<string, unknown>;
+        bundleText?: string;
+        targetCount?: number;
+        secretCount?: number;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "credential bundle export failed");
+      }
+      if (!payload.bundleText) {
+        throw new Error("credential bundle text was not returned by the gateway.");
+      }
+
+      const savedPath = await saveLegalExport("clawdesk-target-credential-bundle.json", payload.bundleText);
+      setMessage(
+        `已匯出 credential bundle · targets ${payload.targetCount ?? 0} · secrets ${payload.secretCount ?? 0}${savedPath ? ` · ${savedPath}` : ""}`,
+      );
+      setError(undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "credential bundle export failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function importCredentialBundle() {
+    if (!gatewayBaseUrl) {
+      setError("需要 gateway 才能匯入 credential bundle。");
+      return;
+    }
+
+    const passphrase = credentialBundlePassphraseDraft.trim();
+    const bundleText = credentialBundleImportDraft.trim();
+    if (!passphrase) {
+      setError("請先輸入 bundle passphrase。");
+      return;
+    }
+    if (!bundleText) {
+      setError("請先貼上 credential bundle JSON。");
+      return;
+    }
+
+    setBusy(true);
+    setError(undefined);
+    try {
+      const response = await fetch(`${gatewayBaseUrl}/targets/credential-bundle/import`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ passphrase, bundleText }),
+      });
+      const payload = (await response.json()) as {
+        allowed?: boolean;
+        reason?: string;
+        registry?: TargetRegistry;
+        targetCount?: number;
+        secretCount?: number;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "credential bundle import failed");
+      }
+      if (!payload.allowed || !payload.registry) {
+        throw new Error(payload.reason || "credential bundle import failed");
+      }
+
+      const nextRegistry = cloneTargetRegistry(payload.registry);
+      const nextTarget =
+        nextRegistry.targets.find((target) => target.id === nextRegistry.defaultTargetId) ??
+        nextRegistry.targets[0] ??
+        undefined;
+      setRegistry(nextRegistry);
+      if (nextTarget) {
+        setSelectedTargetId(nextTarget.id);
+        setDraft(draftFromTarget(nextTarget));
+        previewManagedSessionForTarget(nextTarget);
+        syncManagedSessionForTarget(nextTarget);
+        void loadTargetTimeline(nextTarget);
+      }
+      setCredentialBundleImportDraft("");
+      setSshPrivateKeyDraft("");
+      setMessage(
+        `已匯入 credential bundle · targets ${payload.targetCount ?? 0} · secrets ${payload.secretCount ?? 0}`,
+      );
+      setError(undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "credential bundle import failed");
     } finally {
       setBusy(false);
     }
@@ -1804,6 +1922,30 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 ))}
               </section>
             ) : null}
+            <section className="mcp-preview target-credential-bundle">
+              <span>Credential Bundle</span>
+              <strong>加密匯出 / 匯入</strong>
+              <p>使用 passphrase 將目前 target registry 與已發行的 credential refs 匯出成加密 bundle，方便換機或跨機器部署。</p>
+              <label>
+                <span>Bundle passphrase</span>
+                <input
+                  type="password"
+                  value={credentialBundlePassphraseDraft}
+                  onChange={(event) => setCredentialBundlePassphraseDraft(event.target.value)}
+                  placeholder="請輸入僅你知道的匯出密碼"
+                  autoComplete="new-password"
+                />
+              </label>
+              <label>
+                <span>Import bundle JSON</span>
+                <textarea
+                  value={credentialBundleImportDraft}
+                  onChange={(event) => setCredentialBundleImportDraft(event.target.value)}
+                  placeholder='貼上 export 回傳的 JSON bundleText，例如 {"version":1,...}'
+                />
+              </label>
+              <small>bundle 內只保存加密後的 credential payload；匯入時會重新發行 gateway-managed credential refs。</small>
+            </section>
             {draft.kind === "remote-desktop" ? (
               <section className="mcp-preview target-remote-desktop-session">
                 <span>遠端桌面 Session</span>
@@ -1981,6 +2123,12 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   {draft.kind === "ssh-terminal" ? "發行 SSH credential ref" : "發行 RDP credential ref"}
                 </button>
               ) : null}
+              <button className="secondary-button" type="button" onClick={() => void exportCredentialBundle()} disabled={busy || !credentialBundlePassphraseDraft.trim()}>
+                匯出 Credential Bundle
+              </button>
+              <button className="secondary-button" type="button" onClick={() => void importCredentialBundle()} disabled={busy || !credentialBundlePassphraseDraft.trim() || !credentialBundleImportDraft.trim()}>
+                匯入 Credential Bundle
+              </button>
               <button className="secondary-button" type="button" onClick={() => void runConnectionAction("pair")} disabled={busy}>
                 Pair
               </button>
