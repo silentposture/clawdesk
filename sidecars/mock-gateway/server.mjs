@@ -233,6 +233,7 @@ const gatewayAdapterMethods = [
   { name: "targetsSave", method: "POST", path: "/targets", status: "mock", purpose: "儲存 target registry 與 default target 選擇。" },
   { name: "targetsCredentialRefIssue", method: "POST", path: "/targets/credential-ref/issue", status: "partial", purpose: "將 SSH private key 或遠端桌面登入 secret 發行成 gateway-managed credential ref，供安全 SSH / RDP dispatch 使用。" },
   { name: "targetsCredentialBundleExport", method: "POST", path: "/targets/credential-bundle/export", status: "partial", purpose: "將 target registry 與已發行的 credential refs 匯出成 passphrase-protected encrypted bundle，用於換機或跨機器遷移。" },
+  { name: "targetsCredentialBundlePreview", method: "POST", path: "/targets/credential-bundle/preview", status: "partial", purpose: "在匯入前預覽 passphrase-protected encrypted bundle 的 target / secret 摘要與來源資訊。" },
   { name: "targetsCredentialBundleImport", method: "POST", path: "/targets/credential-bundle/import", status: "partial", purpose: "匯入 passphrase-protected encrypted bundle，還原 target registry 與 gateway-managed credential refs。" },
   { name: "targetsDispatchPreview", method: "POST", path: "/targets/dispatch-preview", status: "mock", purpose: "建立 target dispatch 預覽與 audit record。" },
   { name: "targetsDispatch", method: "POST", path: "/targets/dispatch", status: "mock", purpose: "儲存 target dispatch record 與 audit trail。" },
@@ -8808,6 +8809,42 @@ const server = http.createServer(async (req, res) => {
         bundleText,
         targetCount: payload.targetCount,
         secretCount: payload.secretCount,
+      });
+    } catch (error) {
+      json(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/targets/credential-bundle/preview") {
+    try {
+      const body = await readJson(req);
+      const passphrase = typeof body.passphrase === "string" ? body.passphrase : "";
+      const bundle = body.bundle ?? (typeof body.bundleText === "string" && body.bundleText.trim() ? JSON.parse(body.bundleText) : undefined);
+      const payload = decryptTargetCredentialBundlePayload(bundle, passphrase);
+      if (!payload || typeof payload !== "object" || payload.version !== 1) {
+        throw new Error("Unsupported credential bundle payload.");
+      }
+      const importedRegistry = normalizeTargetRegistryState(payload.registry);
+      const importedSecrets = normalizeCredentialBundleSecrets(payload.credentialSecrets);
+      const summary = {
+        version: payload.version,
+        createdAt: payload.createdAt ?? null,
+        targetCount: importedRegistry.targets.length,
+        secretCount: importedSecrets.length,
+        targetIds: importedRegistry.targets.map((target) => target.id),
+        targetNames: importedRegistry.targets.map((target) => target.displayName),
+        secretKinds: importedSecrets.map((secretEntry) => secretEntry.kind),
+        secretLabels: importedSecrets.map((secretEntry) => secretEntry.label || secretEntry.targetName || secretEntry.targetId),
+      };
+      audit("targets.credential-bundle.preview", {
+        targetCount: summary.targetCount,
+        secretCount: summary.secretCount,
+      });
+      json(res, 200, {
+        allowed: true,
+        reason: "Credential bundle preview ready.",
+        summary,
       });
     } catch (error) {
       json(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON" });
