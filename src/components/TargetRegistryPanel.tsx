@@ -384,6 +384,11 @@ function dispatchStatusClass(decision: TargetDispatchDecision): string {
   return decision.requiresApproval ? "risk-medium" : "risk-low";
 }
 
+function readinessBadgeClass(report: TargetConnectionReadinessReport): string {
+  if (report.readyToConnect) return "readiness-ready";
+  return `readiness-${report.nextAction}`;
+}
+
 function formatLastSeenAt(value?: string): string {
   if (!value) return "未記錄";
   const parsed = new Date(value);
@@ -1894,6 +1899,9 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 return (
                   <button key={target.id} type="button" className={active ? "active" : ""} onClick={() => selectExistingTarget(target)}>
                     <strong>{target.displayName}</strong>
+                    <small className={`target-readiness-badge ${readinessBadgeClass(readiness)}`}>
+                      {readiness.readyToConnect ? "ready" : readiness.nextAction}
+                    </small>
                     <small>{summarizeTargetProfile(target)}</small>
                     <small>{summarizeTargetConnectionProfile(target)}</small>
                     <small>
