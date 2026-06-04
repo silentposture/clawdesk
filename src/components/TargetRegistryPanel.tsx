@@ -49,6 +49,12 @@ interface TargetDraftState {
   knownHostFingerprint: string;
   sessionMode: TargetSessionMode;
   note: string;
+  lastProbeAt: string;
+  lastProbeResult: "reachable" | "unreachable" | "error" | "";
+  lastProbeHost: string;
+  lastProbePort: string;
+  lastProbeLatencyMs: string;
+  lastProbeError: string;
   trustedWorkspaces: string;
 }
 
@@ -115,6 +121,12 @@ interface TargetTimelineEntry {
   credentialSource?: string;
   credentialSeedState?: string;
   credentialTarget?: string;
+  lastProbeAt?: string;
+  lastProbeResult?: string;
+  lastProbeHost?: string;
+  lastProbePort?: number;
+  lastProbeLatencyMs?: number;
+  lastProbeError?: string;
 }
 
 interface SshTerminalTranscriptEntry {
@@ -272,6 +284,12 @@ function createDraft(kind: TargetKind = "ssh-terminal"): TargetDraftState {
     knownHostFingerprint: "",
     sessionMode: connection.sessionMode,
     note: "",
+    lastProbeAt: "",
+    lastProbeResult: "",
+    lastProbeHost: "",
+    lastProbePort: "",
+    lastProbeLatencyMs: "",
+    lastProbeError: "",
     trustedWorkspaces: defaultTrustedWorkspaceList(),
   };
 }
@@ -295,6 +313,12 @@ function draftFromTarget(target: TargetProfile): TargetDraftState {
     knownHostFingerprint: connection.knownHostFingerprint ?? "",
     sessionMode: connection.sessionMode,
     note: connection.note ?? "",
+    lastProbeAt: connection.lastProbeAt ?? "",
+    lastProbeResult: connection.lastProbeResult ?? "",
+    lastProbeHost: connection.lastProbeHost ?? "",
+    lastProbePort: connection.lastProbePort?.toString() ?? "",
+    lastProbeLatencyMs: connection.lastProbeLatencyMs?.toString() ?? "",
+    lastProbeError: connection.lastProbeError ?? "",
     trustedWorkspaces: target.trustedWorkspaces.join("\n"),
   };
 }
@@ -309,6 +333,10 @@ function parseTrustedWorkspaces(value: string): string[] {
 function buildTargetFromDraft(draft: TargetDraftState): TargetProfile {
   const portValue = draft.port.trim() ? Number.parseInt(draft.port, 10) : undefined;
   const parsedPort = Number.isFinite(portValue) ? portValue : undefined;
+  const probePortValue = draft.lastProbePort.trim() ? Number.parseInt(draft.lastProbePort, 10) : undefined;
+  const parsedProbePort = Number.isFinite(probePortValue) ? probePortValue : undefined;
+  const probeLatencyValue = draft.lastProbeLatencyMs.trim() ? Number.parseInt(draft.lastProbeLatencyMs, 10) : undefined;
+  const parsedProbeLatency = Number.isFinite(probeLatencyValue) ? probeLatencyValue : undefined;
   return createTargetProfile({
     id: draft.id.trim() || createDraftId(draft.kind),
     displayName: draft.displayName.trim() || defaultDisplayNameForKind(draft.kind),
@@ -325,6 +353,12 @@ function buildTargetFromDraft(draft: TargetDraftState): TargetProfile {
       knownHostFingerprint: draft.knownHostFingerprint.trim() || undefined,
       sessionMode: draft.sessionMode,
       note: draft.note.trim() || undefined,
+      lastProbeAt: draft.lastProbeAt.trim() || undefined,
+      lastProbeResult: draft.lastProbeResult || undefined,
+      lastProbeHost: draft.lastProbeHost.trim() || undefined,
+      lastProbePort: parsedProbePort,
+      lastProbeLatencyMs: parsedProbeLatency,
+      lastProbeError: draft.lastProbeError.trim() || undefined,
     },
     adapterOverrides: {
       authenticated: draft.authenticated,
@@ -2001,6 +2035,28 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 <strong>Connection profile</strong>
                 <span>{summarizeTargetConnectionProfile(draftTarget)}</span>
               </div>
+              <div>
+                <strong>Probe</strong>
+                <span>{draft.lastProbeResult || "未探測"}</span>
+              </div>
+              <div>
+                <strong>Probe endpoint</strong>
+                <span>
+                  {draft.lastProbeHost ? `${draft.lastProbeHost}${draft.lastProbePort ? `:${draft.lastProbePort}` : ""}` : "未設定"}
+                </span>
+              </div>
+              <div>
+                <strong>Probe at</strong>
+                <span>{draft.lastProbeAt ? formatLastSeenAt(draft.lastProbeAt) : "未探測"}</span>
+              </div>
+              <div>
+                <strong>Probe latency</strong>
+                <span>{draft.lastProbeLatencyMs ? `${draft.lastProbeLatencyMs}ms` : "n/a"}</span>
+              </div>
+              <div>
+                <strong>Probe error</strong>
+                <span>{draft.lastProbeError || "none"}</span>
+              </div>
             </section>
             {connectionIssues.length > 0 ? (
               <section className="target-connection-issues">
@@ -2280,6 +2336,9 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               <button className="secondary-button" type="button" onClick={() => void runConnectionAction("pair")} disabled={busy}>
                 Pair
               </button>
+              <button className="secondary-button" type="button" onClick={() => void runConnectionAction("probe")} disabled={busy}>
+                Probe
+              </button>
               <button
                 className="secondary-button"
                 type="button"
@@ -2443,6 +2502,10 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     {entry.command ? <dd>command：{entry.command}</dd> : null}
                     {entry.state ? <dd>state：{entry.state}</dd> : null}
                     {entry.transport ? <dd>transport：{entry.transport}</dd> : null}
+                    {entry.lastProbeResult ? <dd>probe：{entry.lastProbeResult}</dd> : null}
+                    {entry.lastProbeHost ? <dd>probe endpoint：{entry.lastProbeHost}{entry.lastProbePort ? `:${entry.lastProbePort}` : ""}</dd> : null}
+                    {typeof entry.lastProbeLatencyMs === "number" ? <dd>probe latency：{entry.lastProbeLatencyMs}ms</dd> : null}
+                    {entry.lastProbeError ? <dd>probe error：{entry.lastProbeError}</dd> : null}
                     {entry.credentialSource ? <dd>credential source：{entry.credentialSource}</dd> : null}
                     {entry.credentialSeedState ? <dd>credential seed：{entry.credentialSeedState}</dd> : null}
                     {entry.credentialTarget ? <dd>credential target：{entry.credentialTarget}</dd> : null}

@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import net from "node:net";
 import { spawn } from "node:child_process";
 
 const port = Number(process.env.CLAWDESK_MOCK_PORT ?? process.env.OPENCLAW_MOCK_PORT ?? 18890);
@@ -2341,6 +2342,12 @@ function buildTargetTimelineEntryFromAudit(event) {
     lastCommand: typeof details.command === "string" ? details.command : undefined,
     lastExitCode: typeof details.exitCode === "number" ? details.exitCode : undefined,
     activeWindow: typeof details.activeWindow === "string" ? details.activeWindow : undefined,
+    lastProbeAt: typeof details.lastProbeAt === "string" ? details.lastProbeAt : undefined,
+    lastProbeResult: typeof details.lastProbeResult === "string" ? details.lastProbeResult : undefined,
+    lastProbeHost: typeof details.lastProbeHost === "string" ? details.lastProbeHost : undefined,
+    lastProbePort: typeof details.lastProbePort === "number" ? details.lastProbePort : undefined,
+    lastProbeLatencyMs: typeof details.lastProbeLatencyMs === "number" ? details.lastProbeLatencyMs : undefined,
+    lastProbeError: typeof details.lastProbeError === "string" ? details.lastProbeError : undefined,
   };
 }
 
@@ -3208,6 +3215,73 @@ function updatePrimaryTargetAdapterState(target, updater) {
   };
 }
 
+function resolveTargetConnectivityProbeState(target) {
+  const baseTarget = normalizeTargetProfileState(target);
+  const adapter = Array.isArray(baseTarget.adapters) ? baseTarget.adapters[0] : undefined;
+  const endpointSource = typeof baseTarget.endpoint === "string" && baseTarget.endpoint.trim()
+    ? baseTarget.endpoint.trim()
+    : typeof adapter?.endpoint === "string"
+      ? adapter.endpoint.trim()
+      : "";
+  const endpoint = endpointSource;
+  const fallbackPort = baseTarget.kind === "remote-desktop" ? 3389 : 22;
+  let host = "";
+  let port = Number.isFinite(baseTarget.connection?.port) ? Number(baseTarget.connection.port) : fallbackPort;
+
+  if (!endpoint) {
+    return { allowed: false, reason: "Endpoint is required for connectivity probe.", target: baseTarget };
+  }
+
+  try {
+    const url = new URL(endpoint);
+    host = url.hostname || url.host || endpoint;
+    if (url.port) {
+      const parsedPort = Number.parseInt(url.port, 10);
+      if (Number.isFinite(parsedPort) && parsedPort > 0) {
+        port = parsedPort;
+      }
+    }
+  } catch {
+    host = endpoint.replace(/^[a-z]+:\/\//i, "");
+  }
+
+  if (!host) {
+    return { allowed: false, reason: "Endpoint host is required for connectivity probe.", target: baseTarget };
+  }
+
+  return { allowed: true, reason: "Endpoint parsed for connectivity probe.", target: baseTarget, host, port };
+}
+
+function probeTcpReachability(host, port, timeoutMs = 3000) {
+  return new Promise((resolve) => {
+    const startedAt = Date.now();
+    const socket = net.createConnection({ host, port });
+    let settled = false;
+
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      try {
+        socket.destroy();
+      } catch {
+        // ignore
+      }
+      resolve(result);
+    };
+
+    socket.setTimeout(timeoutMs);
+    socket.once("connect", () => {
+      finish({ reachable: true, latencyMs: Date.now() - startedAt });
+    });
+    socket.once("timeout", () => {
+      finish({ reachable: false, error: `Probe timed out after ${timeoutMs}ms.` });
+    });
+    socket.once("error", (error) => {
+      finish({ reachable: false, error: error instanceof Error ? error.message : "Probe failed." });
+    });
+  });
+}
+
 async function applyTargetConnectionActionState(target, action) {
   const now = nowIso();
   const baseTarget = normalizeTargetProfileState(target);
@@ -3236,6 +3310,56 @@ async function applyTargetConnectionActionState(target, action) {
       target: {
         ...baseTarget,
         lastSeenAt: now,
+      },
+    };
+  }
+
+  if (action === "probe") {
+    const probeState = resolveTargetConnectivityProbeState(baseTarget);
+    if (!probeState.allowed) {
+      return probeState;
+    }
+
+    if (baseTarget.kind === "local-shell" || baseTarget.kind === "mock") {
+      return {
+        allowed: true,
+        reason: "Local target connectivity probe succeeded.",
+        target: {
+          ...baseTarget,
+          state: "ready",
+          lastSeenAt: now,
+          connection: {
+            ...baseTarget.connection,
+            lastProbeAt: now,
+            lastProbeResult: "reachable",
+            lastProbeHost: probeState.host,
+            lastProbePort: probeState.port,
+            lastProbeLatencyMs: 0,
+            lastProbeError: undefined,
+          },
+        },
+      };
+    }
+
+    const result = await probeTcpReachability(probeState.host, probeState.port, 3000);
+    return {
+      allowed: true,
+      reason: result.reachable
+        ? `Connectivity probe succeeded for ${probeState.host}:${probeState.port}.`
+        : result.error || `Connectivity probe failed for ${probeState.host}:${probeState.port}.`,
+      target: {
+        ...baseTarget,
+        state: result.reachable ? "ready" : "degraded",
+        lastSeenAt: now,
+        connection: {
+          ...baseTarget.connection,
+          lastProbeAt: now,
+          lastProbeResult: result.reachable ? "reachable" : result.error ? "error" : "unreachable",
+          lastProbeHost: probeState.host,
+          lastProbePort: probeState.port,
+          lastProbeLatencyMs: result.reachable ? result.latencyMs : undefined,
+          lastProbeError: result.reachable ? undefined : result.error,
+        },
       },
     };
   }
@@ -8915,11 +9039,17 @@ const server = http.createServer(async (req, res) => {
           ...targetRegistry,
           targets: targetRegistry.targets.map((entry) => (entry.id === targetId ? result.target : entry)),
         };
-        audit("targets.connection", {
+        audit(action === "probe" ? "targets.connection.probe" : "targets.connection", {
           targetId,
           action,
           state: result.target.state,
           allowed: result.allowed,
+          lastProbeAt: result.target.connection?.lastProbeAt,
+          lastProbeResult: result.target.connection?.lastProbeResult,
+          lastProbeHost: result.target.connection?.lastProbeHost,
+          lastProbePort: result.target.connection?.lastProbePort,
+          lastProbeLatencyMs: result.target.connection?.lastProbeLatencyMs,
+          lastProbeError: result.target.connection?.lastProbeError,
         });
         scheduleStateSave();
       } else {
