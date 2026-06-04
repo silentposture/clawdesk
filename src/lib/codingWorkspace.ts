@@ -49,6 +49,7 @@ export interface GatewayAdapterMethod {
   | "targetsDispatch"
   | "targetsTimeline"
   | "targetsExecute"
+  | "targetsExecuteBatch"
   | "targetsSshTerminalSessionRead"
   | "targetsSshTerminalSession"
   | "targetsRemoteDesktopSessionRead"
@@ -124,6 +125,7 @@ export const gatewayAdapterMethods: GatewayAdapterMethod[] = [
   { name: "targetsDispatch", method: "POST", path: "/targets/dispatch", status: "mock", purpose: "儲存 target dispatch record 與 audit trail。" },
   { name: "targetsTimeline", method: "GET", path: "/targets/timeline", status: "partial", purpose: "讀取單一 target 的 session / dispatch timeline，讓控制面直接看到最近操作。" },
   { name: "targetsExecute", method: "POST", path: "/targets/execute", status: "partial", purpose: "執行 allowlisted local-shell 或 SSH safe command，必要時可經 gateway-managed SSH credential ref，並回傳 stdout/stderr 摘要。" },
+  { name: "targetsExecuteBatch", method: "POST", path: "/targets/execute-batch", status: "partial", purpose: "對多個已選 target 同步執行同一個 allowlisted local-shell 或 SSH safe command，並回收 per-target results。" },
   { name: "targetsSshTerminalSessionRead", method: "GET", path: "/targets/ssh-terminal/session", status: "partial", purpose: "讀取 SSH terminal session、redacted transcript snapshot 與 session summary。" },
   { name: "targetsSshTerminalSession", method: "POST", path: "/targets/ssh-terminal/session", status: "partial", purpose: "建立 SSH terminal open / command / close contract，並維持 allowlisted command、redacted transcript、session summary 與審批安全邊界。" },
   { name: "targetsRemoteDesktopSessionRead", method: "GET", path: "/targets/remote-desktop/session", status: "partial", purpose: "讀取遠端桌面 session 快照、觀察摘要、session summary 與 native client launch 狀態。" },
