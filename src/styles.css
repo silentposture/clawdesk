@@ -1318,7 +1318,13 @@ th {
   gap: 8px;
 }
 
-.target-list button {
+.target-list-item {
+  display: grid;
+  gap: 8px;
+  padding: 0;
+}
+
+.target-list-select {
   display: grid;
   gap: 4px;
   border: 1px solid #d8e1db;
@@ -1330,10 +1336,21 @@ th {
   cursor: pointer;
 }
 
-.target-list button.active,
-.target-list button:hover {
+.target-list-item.active .target-list-select,
+.target-list-select:hover {
   border-color: #0f6f5c;
   background: #ffffff;
+}
+
+.target-list-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.target-list-action {
+  min-height: 32px;
+  padding: 0 11px;
+  font-size: 12px;
 }
 
 .target-list strong,
