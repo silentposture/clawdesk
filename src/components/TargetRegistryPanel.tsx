@@ -72,6 +72,17 @@ interface TargetExecutionState {
   targetName: string;
 }
 
+interface CredentialBundlePreviewSummary {
+  version: number;
+  createdAt?: string | null;
+  targetCount: number;
+  secretCount: number;
+  targetIds: string[];
+  targetNames: string[];
+  secretKinds: string[];
+  secretLabels: string[];
+}
+
 interface TargetTimelineEntry {
   id: string;
   kind: "dispatch" | "session" | "audit";
@@ -571,6 +582,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const [credentialBundleTargetIds, setCredentialBundleTargetIds] = useState<string[]>(
     initialRegistry.targets.map((target) => target.id),
   );
+  const [credentialBundlePreview, setCredentialBundlePreview] = useState<CredentialBundlePreviewSummary>();
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
   const [error, setError] = useState<string>();
@@ -1188,6 +1200,56 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     }
   }
 
+  async function previewCredentialBundle() {
+    if (!gatewayBaseUrl) {
+      setError("需要 gateway 才能預覽 credential bundle。");
+      return;
+    }
+
+    const passphrase = credentialBundlePassphraseDraft.trim();
+    const bundleText = credentialBundleImportDraft.trim();
+    if (!passphrase) {
+      setError("請先輸入 bundle passphrase。");
+      return;
+    }
+    if (!bundleText) {
+      setError("請先貼上 credential bundle JSON。");
+      return;
+    }
+
+    setBusy(true);
+    setError(undefined);
+    try {
+      const response = await fetch(`${gatewayBaseUrl}/targets/credential-bundle/preview`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ passphrase, bundleText }),
+      });
+      const payload = (await response.json()) as {
+        allowed?: boolean;
+        reason?: string;
+        summary?: CredentialBundlePreviewSummary;
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "credential bundle preview failed");
+      }
+      if (!payload.allowed || !payload.summary) {
+        throw new Error(payload.reason || "credential bundle preview failed");
+      }
+      setCredentialBundlePreview(payload.summary);
+      setMessage(
+        `已預覽 credential bundle · targets ${payload.summary.targetCount} · secrets ${payload.summary.secretCount}`,
+      );
+      setError(undefined);
+    } catch (caught) {
+      setCredentialBundlePreview(undefined);
+      setError(caught instanceof Error ? caught.message : "credential bundle preview failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function importCredentialBundle() {
     if (!gatewayBaseUrl) {
       setError("需要 gateway 才能匯入 credential bundle。");
@@ -1242,6 +1304,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         void loadTargetTimeline(nextTarget);
       }
       setCredentialBundleImportDraft("");
+      setCredentialBundlePreview(undefined);
       setSshPrivateKeyDraft("");
       setMessage(
         `已匯入 credential bundle · targets ${payload.targetCount ?? 0} · secrets ${payload.secretCount ?? 0}`,
@@ -2003,6 +2066,17 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               </label>
               <small>bundle 內只保存加密後的 credential payload；匯入時會重新發行 gateway-managed credential refs。</small>
               <small>匯出時只包含勾選的 target；未勾選者不會進 bundle。</small>
+              {credentialBundlePreview ? (
+                <section className="target-credential-bundle-preview">
+                  <span>Bundle preview</span>
+                  <strong>{credentialBundlePreview.targetCount} targets · {credentialBundlePreview.secretCount} secrets</strong>
+                  <small>createdAt：{credentialBundlePreview.createdAt ?? "n/a"} · version：{credentialBundlePreview.version}</small>
+                  <small>targetIds：{credentialBundlePreview.targetIds.join(", ") || "none"}</small>
+                  <small>targetNames：{credentialBundlePreview.targetNames.join(", ") || "none"}</small>
+                  <small>secretKinds：{credentialBundlePreview.secretKinds.join(", ") || "none"}</small>
+                  <small>secretLabels：{credentialBundlePreview.secretLabels.join(", ") || "none"}</small>
+                </section>
+              ) : null}
             </section>
             {draft.kind === "remote-desktop" ? (
               <section className="mcp-preview target-remote-desktop-session">
@@ -2183,6 +2257,9 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               ) : null}
               <button className="secondary-button" type="button" onClick={() => void exportCredentialBundle()} disabled={busy || !credentialBundlePassphraseDraft.trim()}>
                 匯出 Credential Bundle
+              </button>
+              <button className="secondary-button" type="button" onClick={() => void previewCredentialBundle()} disabled={busy || !credentialBundlePassphraseDraft.trim() || !credentialBundleImportDraft.trim()}>
+                預覽 Credential Bundle
               </button>
               <button className="secondary-button" type="button" onClick={() => void importCredentialBundle()} disabled={busy || !credentialBundlePassphraseDraft.trim() || !credentialBundleImportDraft.trim()}>
                 匯入 Credential Bundle
