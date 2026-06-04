@@ -35,7 +35,7 @@ These are issue drafts for the public OSS roadmap.
 ## Multi-target Orchestration
 
 - Label: `feature`, `roadmap`
-- Goal: unify safe dispatch across SSH terminals, remote desktop sessions, and local targets under a single control plane, with registry UI, pairing, gateway-managed host-key verification, gateway-managed SSH credential refs, allowlisted SSH/local-shell execution, gateway-managed SSH terminal session contracts with redacted transcripts, session summaries, and per-target timelines, gateway-managed remote-desktop observe/control session contracts with a gated remote-desktop client launch helper, session summaries, and per-target timelines, permission-gated control requests, and auditable dispatch records.
+- Goal: unify safe dispatch across SSH terminals, remote desktop sessions, and local targets under a single control plane, with registry UI, pairing, gateway-managed host-key verification, gateway-managed SSH credential refs, allowlisted SSH/local-shell execution, gateway-managed SSH terminal session contracts with redacted transcripts, session summaries, and per-target timelines, gateway-managed remote-desktop observe/control session contracts with a gated remote-desktop client launch helper, session summaries, and per-target timelines, a UI toggle between target timeline and global dispatch log, permission-gated control requests, and auditable dispatch records.
 
 ## Security Hardening
 

@@ -541,6 +541,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const [dispatchCommand, setDispatchCommand] = useState("git status");
   const [preview, setPreview] = useState<DispatchPreviewState>();
   const [execution, setExecution] = useState<TargetExecutionState>();
+  const [timelineViewMode, setTimelineViewMode] = useState<"target" | "global">("target");
   const [remoteDesktopSession, setRemoteDesktopSession] = useState<RemoteDesktopSessionState>();
   const [remoteDesktopBusy, setRemoteDesktopBusy] = useState(false);
   const remoteDesktopSessionRequestTokenRef = useRef(0);
@@ -571,6 +572,10 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     .split(/[\n,]/g)
     .map((item) => item.trim())
     .filter(Boolean).length;
+  const visibleDispatchRecords =
+    timelineViewMode === "target" && selectedTarget
+      ? dispatches.filter((record) => record.targetId === selectedTarget.id).slice(0, 6)
+      : dispatches.slice(0, 6);
 
   function clearSensitiveDraftState() {
     setSshPrivateKeyDraft("");
@@ -2128,7 +2133,23 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
             </section>
 
             <section className="adapter-list">
-              {dispatches.slice(0, 6).map((record) => (
+              <div className="panel-actions">
+                <button
+                  className={timelineViewMode === "target" ? "primary-button" : "secondary-button"}
+                  type="button"
+                  onClick={() => setTimelineViewMode("target")}
+                >
+                  target timeline
+                </button>
+                <button
+                  className={timelineViewMode === "global" ? "primary-button" : "secondary-button"}
+                  type="button"
+                  onClick={() => setTimelineViewMode("global")}
+                >
+                  global dispatch log
+                </button>
+              </div>
+              {visibleDispatchRecords.map((record) => (
                 <div key={record.id}>
                   <dt>
                     {record.targetName} · {record.category}
@@ -2139,7 +2160,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   {record.command ? <dd>command：{record.command}</dd> : null}
                 </div>
               ))}
-              {dispatches.length === 0 ? <div><dt>dispatch log</dt><dd>尚未有派發紀錄。</dd></div> : null}
+              {visibleDispatchRecords.length === 0 ? <div><dt>dispatch log</dt><dd>尚未有派發紀錄。</dd></div> : null}
             </section>
           </section>
         </section>
