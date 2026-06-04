@@ -109,7 +109,7 @@ export const gatewayAdapterMethods: GatewayAdapterMethod[] = [
   { name: "memory", method: "POST", path: "/memory/items", status: "mock", purpose: "建立與查詢本機記憶；後續接 durable store/vector store。" },
   { name: "targetsRegistry", method: "GET", path: "/targets", status: "mock", purpose: "讀取多電腦 target registry 與 dispatch log。" },
   { name: "targetsSave", method: "POST", path: "/targets", status: "mock", purpose: "儲存 target registry 與 default target 選擇。" },
-  { name: "targetsCredentialRefIssue", method: "POST", path: "/targets/credential-ref/issue", status: "partial", purpose: "將 SSH private key 發行成 gateway-managed credential ref，供安全 SSH dispatch 使用。" },
+  { name: "targetsCredentialRefIssue", method: "POST", path: "/targets/credential-ref/issue", status: "partial", purpose: "將 SSH private key 或遠端桌面登入 secret 發行成 gateway-managed credential ref，供安全 SSH / RDP dispatch 使用。" },
   { name: "targetsDispatchPreview", method: "POST", path: "/targets/dispatch-preview", status: "mock", purpose: "建立 target dispatch 預覽與 audit record。" },
   { name: "targetsDispatch", method: "POST", path: "/targets/dispatch", status: "mock", purpose: "儲存 target dispatch record 與 audit trail。" },
   { name: "targetsTimeline", method: "GET", path: "/targets/timeline", status: "partial", purpose: "讀取單一 target 的 session / dispatch timeline，讓控制面直接看到最近操作。" },
@@ -117,7 +117,7 @@ export const gatewayAdapterMethods: GatewayAdapterMethod[] = [
   { name: "targetsSshTerminalSessionRead", method: "GET", path: "/targets/ssh-terminal/session", status: "partial", purpose: "讀取 SSH terminal session、redacted transcript snapshot 與 session summary。" },
   { name: "targetsSshTerminalSession", method: "POST", path: "/targets/ssh-terminal/session", status: "partial", purpose: "建立 SSH terminal open / command / close contract，並維持 allowlisted command、redacted transcript、session summary 與審批安全邊界。" },
   { name: "targetsRemoteDesktopSessionRead", method: "GET", path: "/targets/remote-desktop/session", status: "partial", purpose: "讀取遠端桌面 session 快照、觀察摘要、session summary 與 native client launch 狀態。" },
-  { name: "targetsRemoteDesktopSession", method: "POST", path: "/targets/remote-desktop/session", status: "partial", purpose: "建立遠端桌面 observe / control / native launch session contract，控制請求會進入 permission queue，並保留 session summary。" },
+  { name: "targetsRemoteDesktopSession", method: "POST", path: "/targets/remote-desktop/session", status: "partial", purpose: "建立遠端桌面 observe / control / credential seed / native launch session contract，控制請求會進入 permission queue，並保留 session summary。" },
 ];
 
 export const defaultContextBudget: ContextBudget = {

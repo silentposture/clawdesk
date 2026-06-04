@@ -27,7 +27,7 @@ The control plane chooses a target and then chooses the safest adapter for the r
 
 - Pair before any remote dispatch.
 - Verify SSH host keys before shell dispatch, and persist them in the gateway-managed known_hosts file.
-- Issue SSH private keys as gateway-managed credential refs for secret-ref dispatch flows when ssh-agent is not used.
+- Issue SSH private keys and remote-desktop login secrets as gateway-managed credential refs for secret-ref dispatch flows when ssh-agent or platform-managed secrets are not used.
 - Send remote-desktop control requests through the permission queue before switching into control mode.
 - Require human approval for execute-safe actions.
 - Only allowlisted commands may flow through `execute_safe`.
@@ -40,7 +40,7 @@ The control plane chooses a target and then chooses the safest adapter for the r
 - Unit coverage: [`src/lib/targets.test.ts`](../src/lib/targets.test.ts)
 - Target registry UI: [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
 - Pairing, host-key verification, connect, disconnect, and refresh actions: [`src/lib/targets.ts`](../src/lib/targets.ts), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
-- Gateway-managed SSH credential ref issuance, allowlisted local-shell / SSH safe command execution, gateway-managed SSH terminal session contracts with redacted transcripts and audit-friendly summaries, and remote-desktop observe/control session contracts with permission-gated control requests plus a gated native client launch helper and session summaries through the gateway: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
+- Gateway-managed SSH credential ref issuance, allowlisted local-shell / SSH safe command execution, gateway-managed SSH terminal session contracts with redacted transcripts and audit-friendly summaries, and remote-desktop observe/control session contracts with permission-gated control requests plus a gated native client launch helper, credential-seed action, and session summaries through the gateway. Remote-desktop secret-ref credentials can be seeded into the local Windows client flow before launch: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
 - Mock gateway storage for registry, connection state, dispatch logs, per-target session timelines, and a toggleable target/global dispatch view in the UI; remote desktop control requests and permission results are audited into the same timeline: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
 - Existing approval and policy primitives: [`src/lib/security.ts`](../src/lib/security.ts), [`src/lib/permissions.ts`](../src/lib/permissions.ts), [`src/components/PermissionModal.tsx`](../src/components/PermissionModal.tsx)
 - Current gateway and desktop shell integration: [`src/lib/tauri.ts`](../src/lib/tauri.ts), [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/App.tsx`](../src/App.tsx)
@@ -83,8 +83,8 @@ flowchart TD
 
 ## Next implementation steps
 
-1. Add durable credential storage for SSH and remote-desktop connectors beyond the current gateway-managed secret-ref vault / ssh-agent / platform-managed defaults.
-2. Expand the native remote-desktop launch helper into a production transport and interactive session connector on top of the existing gateway contract.
+1. Expand the remote-desktop credential-seed flow into a production transport and interactive session connector on top of the existing gateway contract.
+2. Add durable credential storage for SSH and remote-desktop connectors beyond the current gateway-managed secret-ref vault / ssh-agent / platform-managed defaults where needed.
 3. Route dispatch decisions through the existing permission queue.
 4. Add richer audit timelines for each target.
 5. Introduce interactive SSH terminal sessions and production remote desktop transport once the safe contract is stable.
