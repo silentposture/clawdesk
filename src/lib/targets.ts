@@ -1,7 +1,7 @@
 export type TargetKind = "local-shell" | "ssh-terminal" | "remote-desktop" | "mock";
 export type TargetConnectionState = "offline" | "connecting" | "ready" | "degraded";
 export type TargetDispatchCategory = "observe" | "inspect" | "debug" | "execute_safe" | "request_approval";
-export type TargetConnectionAction = "pair" | "verify_host_key" | "connect" | "disconnect" | "refresh";
+export type TargetConnectionAction = "pair" | "verify_host_key" | "probe" | "connect" | "disconnect" | "refresh";
 export type TargetCredentialMode = "none" | "secret-ref" | "ssh-agent" | "platform-managed";
 export type TargetSessionMode = "observe" | "control";
 export type ShellCommandSafety = "allowlisted" | "needs-review" | "blocked";
@@ -25,6 +25,12 @@ export interface TargetConnectionProfile {
   knownHostFingerprint?: string;
   sessionMode: TargetSessionMode;
   note?: string;
+  lastProbeAt?: string;
+  lastProbeResult?: "reachable" | "unreachable" | "error";
+  lastProbeHost?: string;
+  lastProbePort?: number;
+  lastProbeLatencyMs?: number;
+  lastProbeError?: string;
 }
 
 export interface TargetProfile {
@@ -330,6 +336,18 @@ export function summarizeTargetConnectionProfile(target: TargetProfile): string 
   if (target.connection.credentialMode === "secret-ref" && target.connection.credentialRef) {
     parts.push(`ref ${maskTargetCredentialRef(target.connection.credentialRef)}`);
   }
+  if (target.connection.lastProbeResult) {
+    const probeLabel =
+      target.connection.lastProbeResult === "reachable"
+        ? "probe reachable"
+        : target.connection.lastProbeResult === "unreachable"
+          ? "probe unreachable"
+          : "probe error";
+    parts.push(probeLabel);
+    if (target.connection.lastProbeHost) {
+      parts.push(`${target.connection.lastProbeHost}${target.connection.lastProbePort ? `:${target.connection.lastProbePort}` : ""}`);
+    }
+  }
   return parts.filter(Boolean).join(" · ") || "未設定連線資訊";
 }
 
@@ -515,6 +533,28 @@ export function applyTargetConnectionAction(target: TargetProfile, action: Targe
           hostKeyVerified: true,
         }),
       ),
+    };
+  }
+
+  if (action === "probe") {
+    return {
+      allowed: true,
+      reason: "Connection probe requested.",
+      action,
+      target: {
+        ...baseTarget,
+        state: baseTarget.kind === "local-shell" || baseTarget.kind === "mock" ? "ready" : "connecting",
+        lastSeenAt: now,
+        connection: {
+          ...baseTarget.connection,
+          lastProbeAt: now,
+          lastProbeResult: "error",
+          lastProbeError: "Gateway probe required for a real reachability check.",
+          lastProbeHost: undefined,
+          lastProbePort: baseTarget.connection.port,
+          lastProbeLatencyMs: undefined,
+        },
+      },
     };
   }
 
