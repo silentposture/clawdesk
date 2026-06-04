@@ -92,6 +92,9 @@ interface TargetTimelineEntry {
   clientLaunchState?: string;
   clientLaunchCommand?: string;
   activeWindow?: string;
+  credentialSource?: string;
+  credentialSeedState?: string;
+  credentialTarget?: string;
 }
 
 interface SshTerminalTranscriptEntry {
@@ -143,6 +146,10 @@ interface RemoteDesktopSessionState {
   releasedAt?: string;
   permissionRequestId?: string;
   clientLaunchState?: "idle" | "dry-run" | "launched" | "failed";
+  credentialSource?: string;
+  credentialSeedState?: "idle" | "prepared" | "failed";
+  credentialSeedAt?: string;
+  credentialSeedError?: string;
   clientLaunchCommand?: string;
   clientLaunchAt?: string;
   clientLaunchPid?: number | null;
@@ -158,7 +165,7 @@ interface RemoteDesktopSessionState {
   }>;
 }
 
-type RemoteDesktopSessionAction = "observe_screen" | "request_control" | "release_control" | "refresh" | "launch_client";
+type RemoteDesktopSessionAction = "observe_screen" | "request_control" | "release_control" | "refresh" | "launch_client" | "seed_credentials";
 type SshTerminalSessionAction = "open_session" | "run_command" | "close_session" | "refresh";
 
 const initialRegistry = defaultTargetRegistry();
@@ -408,6 +415,10 @@ function createRemoteDesktopSessionPreview(target: TargetProfile, overrides: Par
     controlGrantedAt: overrides.controlGrantedAt,
     releasedAt: overrides.releasedAt,
     permissionRequestId: overrides.permissionRequestId,
+    credentialSource: overrides.credentialSource ?? target.connection.credentialMode,
+    credentialSeedState: overrides.credentialSeedState ?? "idle",
+    credentialSeedAt: overrides.credentialSeedAt,
+    credentialSeedError: overrides.credentialSeedError,
     clientLaunchState: overrides.clientLaunchState,
     clientLaunchCommand: overrides.clientLaunchCommand,
     clientLaunchAt: overrides.clientLaunchAt,
@@ -511,6 +522,10 @@ function normalizeRemoteDesktopSessionState(
     controlGrantedAt: session?.controlGrantedAt ?? base.controlGrantedAt,
     releasedAt: session?.releasedAt ?? base.releasedAt,
     permissionRequestId: permissionRequestId ?? session?.permissionRequestId ?? session?.controlRequestId ?? base.permissionRequestId,
+    credentialSource: session?.credentialSource ?? base.credentialSource,
+    credentialSeedState: session?.credentialSeedState ?? base.credentialSeedState,
+    credentialSeedAt: session?.credentialSeedAt ?? base.credentialSeedAt,
+    credentialSeedError: session?.credentialSeedError ?? base.credentialSeedError,
     clientLaunchState: session?.clientLaunchState ?? base.clientLaunchState,
     clientLaunchCommand: session?.clientLaunchCommand ?? base.clientLaunchCommand,
     clientLaunchAt: session?.clientLaunchAt ?? base.clientLaunchAt,
@@ -1044,32 +1059,33 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     }
   }
 
-  async function issueSshCredentialRef() {
+  async function issueTargetCredentialRef() {
     if (!gatewayBaseUrl) {
-      setError("需要 gateway 才能發行 SSH credential ref。");
+      setError("需要 gateway 才能發行 credential ref。");
       return;
     }
 
-    if (draft.kind !== "ssh-terminal") {
-      setError("只有 SSH target 才能發行 credential ref。");
+    if (draft.kind !== "ssh-terminal" && draft.kind !== "remote-desktop") {
+      setError("只有 SSH / 遠端桌面 target 才能發行 credential ref。");
       return;
     }
 
     const privateKey = sshPrivateKeyDraft.trim();
     if (!privateKey) {
-      setError("請先貼上 SSH private key。");
+      setError(draft.kind === "ssh-terminal" ? "請先貼上 SSH private key。" : "請先貼上遠端桌面登入 secret / password。");
       return;
     }
 
     setBusy(true);
     setError(undefined);
     try {
+      const credentialKind = draft.kind === "ssh-terminal" ? "ssh-private-key" : "remote-desktop-secret";
       const response = await fetch(`${gatewayBaseUrl}/targets/credential-ref/issue`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           targetId: draftTarget.id,
-          kind: "ssh-private-key",
+          kind: credentialKind,
           label: draft.displayName.trim() || defaultDisplayNameForKind(draft.kind),
           privateKey,
         }),
@@ -1081,10 +1097,10 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         error?: string;
       };
       if (!response.ok) {
-        throw new Error(payload.error || "SSH credential ref issuance failed");
+        throw new Error(payload.error || "credential ref issuance failed");
       }
       if (!payload.credentialRef) {
-        throw new Error("SSH credential ref was not returned by the gateway.");
+        throw new Error("credential ref was not returned by the gateway.");
       }
 
       setDraft((current) => ({
@@ -1093,10 +1109,12 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         credentialRef: payload.credentialRef ?? current.credentialRef,
       }));
       setSshPrivateKeyDraft("");
-      setMessage(`已發行 SSH credential ref ${payload.credentialRef}${payload.maskedSecret ? ` · ${payload.maskedSecret}` : ""}`);
+      setMessage(
+        `${draft.kind === "ssh-terminal" ? "已發行 SSH credential ref" : "已發行遠端桌面 credential ref"} ${payload.credentialRef}${payload.maskedSecret ? ` · ${payload.maskedSecret}` : ""}`,
+      );
       setError(undefined);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "SSH credential ref issuance failed");
+      setError(caught instanceof Error ? caught.message : "credential ref issuance failed");
     } finally {
       setBusy(false);
     }
@@ -1722,13 +1740,13 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 placeholder="例如 ssh-builder-secret"
               />
             </label>
-            {draft.kind === "ssh-terminal" ? (
+            {draft.kind === "ssh-terminal" || draft.kind === "remote-desktop" ? (
               <label>
-                <span>SSH private key</span>
+                <span>{draft.kind === "ssh-terminal" ? "SSH private key" : "Remote desktop credential secret"}</span>
                 <textarea
                   value={sshPrivateKeyDraft}
                   onChange={(event) => setSshPrivateKeyDraft(event.target.value)}
-                  placeholder="-----BEGIN OPENSSH PRIVATE KEY-----"
+                  placeholder={draft.kind === "ssh-terminal" ? "-----BEGIN OPENSSH PRIVATE KEY-----" : "RDP password / secret token"}
                 />
                 <small>只會發行成 gateway-managed credential ref，不會寫入 repo 或 debug bundle。</small>
               </label>
@@ -1740,8 +1758,8 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 onChange={(event) => setDraft((current) => ({ ...current, knownHostFingerprint: event.target.value }))}
                 placeholder="ssh-ed25519 AAAA..."
               />
-              {draft.kind === "ssh-terminal" ? <small>驗證時會寫入 gateway 管理的 known_hosts，不會顯示實際路徑。</small> : null}
-            </label>
+                {draft.kind === "ssh-terminal" ? <small>驗證時會寫入 gateway 管理的 known_hosts，不會顯示實際路徑。</small> : null}
+              </label>
             <label>
               <span>Session mode</span>
               <select value={draft.sessionMode} onChange={(event) => setDraft((current) => ({ ...current, sessionMode: event.target.value as TargetSessionMode }))}>
@@ -1797,6 +1815,9 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 </small>
                 <small>permission request：{remoteDesktopView?.permissionRequestId ?? "未送出"}</small>
                 <small>transport：{remoteDesktopView?.transport ?? "未設定"}</small>
+                <small>credential source：{remoteDesktopView?.credentialSource ?? "none"}</small>
+                <small>credential seed：{remoteDesktopView?.credentialSeedState ?? "idle"}</small>
+                {remoteDesktopView?.credentialSeedError ? <small>credential seed error：{remoteDesktopView.credentialSeedError}</small> : null}
                 <small>active window：{remoteDesktopView?.activeWindow ?? "未取得"}</small>
                 <small>
                   visible windows：{remoteDesktopView?.visibleWindows?.length ? remoteDesktopView.visibleWindows.length : 0}
@@ -1889,6 +1910,15 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   <button
                     className="secondary-button"
                     type="button"
+                    onClick={() => void mutateRemoteDesktopSession("seed_credentials")}
+                    disabled={busy || remoteDesktopBusy || remoteDesktopActionBlocked || draft.credentialMode !== "secret-ref" || !draft.credentialRef.trim()}
+                  >
+                    <Save size={16} />
+                    準備登入憑證
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
                     onClick={() => void mutateRemoteDesktopSession("refresh")}
                     disabled={busy || remoteDesktopBusy || remoteDesktopActionBlocked}
                   >
@@ -1945,10 +1975,10 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   </button>
                 </>
               ) : null}
-              {draft.kind === "ssh-terminal" ? (
-                <button className="secondary-button" type="button" onClick={() => void issueSshCredentialRef()} disabled={busy || !sshPrivateKeyDraft.trim()}>
+              {draft.kind === "ssh-terminal" || draft.kind === "remote-desktop" ? (
+                <button className="secondary-button" type="button" onClick={() => void issueTargetCredentialRef()} disabled={busy || !sshPrivateKeyDraft.trim()}>
                   <Send size={16} />
-                  發行 SSH credential ref
+                  {draft.kind === "ssh-terminal" ? "發行 SSH credential ref" : "發行 RDP credential ref"}
                 </button>
               ) : null}
               <button className="secondary-button" type="button" onClick={() => void runConnectionAction("pair")} disabled={busy}>
@@ -2117,6 +2147,9 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     {entry.command ? <dd>command：{entry.command}</dd> : null}
                     {entry.state ? <dd>state：{entry.state}</dd> : null}
                     {entry.transport ? <dd>transport：{entry.transport}</dd> : null}
+                    {entry.credentialSource ? <dd>credential source：{entry.credentialSource}</dd> : null}
+                    {entry.credentialSeedState ? <dd>credential seed：{entry.credentialSeedState}</dd> : null}
+                    {entry.credentialTarget ? <dd>credential target：{entry.credentialTarget}</dd> : null}
                     {entry.lastCommand ? <dd>last command：{entry.lastCommand}</dd> : null}
                     {typeof entry.lastExitCode === "number" ? <dd>last exit：{entry.lastExitCode}</dd> : null}
                     {entry.clientLaunchState ? <dd>client launch：{entry.clientLaunchState}</dd> : null}

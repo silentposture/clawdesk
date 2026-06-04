@@ -2279,6 +2279,8 @@ function buildTargetTimelineEntryFromRemoteDesktopSession(session) {
     state: session.state,
     transport: session.transport,
     source: "remote-desktop-session",
+    credentialSource: session.credentialSource,
+    credentialSeedState: session.credentialSeedState,
     clientLaunchState: session.clientLaunchState,
     clientLaunchCommand: session.clientLaunchCommand,
     activeWindow: session.activeWindow,
@@ -2326,6 +2328,9 @@ function buildTargetTimelineEntryFromAudit(event) {
           : "",
     state: typeof details.state === "string" ? details.state : undefined,
     transport: typeof details.transport === "string" ? details.transport : undefined,
+    credentialSource: typeof details.credentialSource === "string" ? details.credentialSource : undefined,
+    credentialSeedState: typeof details.credentialSeedState === "string" ? details.credentialSeedState : undefined,
+    credentialTarget: typeof details.credentialTarget === "string" ? details.credentialTarget : undefined,
     clientLaunchState: typeof details.clientLaunchState === "string" ? details.clientLaunchState : undefined,
     clientLaunchCommand: typeof details.clientLaunchCommand === "string" ? details.clientLaunchCommand : undefined,
     lastCommand: typeof details.command === "string" ? details.command : undefined,
@@ -2627,6 +2632,25 @@ function resolveTargetCredentialRefState(credentialRef) {
   return targetCredentialVault.get(targetCredentialRefStorageKey(normalizedRef));
 }
 
+async function resolveTargetCredentialSecretText(target) {
+  const credentialRef = target.connection?.credentialRef?.trim() ?? "";
+  if (target.connection?.credentialMode !== "secret-ref" || !credentialRef) {
+    return "";
+  }
+
+  const entry = resolveTargetCredentialRefState(credentialRef);
+  if (!entry) {
+    throw new Error("Credential ref is not registered in the gateway vault.");
+  }
+
+  const secretText = entry.privateKey ?? (entry.cipherText ? await decryptTargetCredentialSecret(entry.cipherText) : "");
+  if (!secretText.trim()) {
+    throw new Error("Credential ref does not contain decryptable secret material.");
+  }
+
+  return secretText.trim();
+}
+
 function extractTargetHost(target) {
   const endpoint = target.adapters?.[0]?.endpoint ?? "";
   if (!endpoint) return "";
@@ -2665,20 +2689,11 @@ async function ensureTargetKnownHostsFile(target) {
 }
 
 async function materializeTargetCredentialFile(target) {
-  const credentialRef = target.connection?.credentialRef?.trim() ?? "";
-  if (target.connection?.credentialMode !== "secret-ref" || !credentialRef) {
+  if (target.connection?.credentialMode !== "secret-ref" || !target.connection?.credentialRef?.trim()) {
     return null;
   }
 
-  const entry = resolveTargetCredentialRefState(credentialRef);
-  if (!entry) {
-    throw new Error("SSH credential ref is not registered in the gateway vault.");
-  }
-
-  const privateKey = entry.privateKey ?? (entry.cipherText ? await decryptTargetCredentialSecret(entry.cipherText) : "");
-  if (!privateKey.trim()) {
-    throw new Error("SSH credential ref does not contain decryptable key material.");
-  }
+  const privateKey = await resolveTargetCredentialSecretText(target);
 
   const tempDir = await fs.mkdtemp(path.join(os.tmpdir(), "clawdesk-ssh-key-"));
   const privateKeyPath = path.join(tempDir, "id_ed25519");
@@ -2690,12 +2705,69 @@ async function materializeTargetCredentialFile(target) {
   }
 
   return {
-    credentialRef,
-    kind: entry.kind,
+    credentialRef: target.connection.credentialRef.trim(),
+    kind: resolveTargetCredentialRefState(target.connection.credentialRef)?.kind ?? "ssh-private-key",
     privateKeyPath,
     cleanup: async () => {
       await fs.rm(tempDir, { recursive: true, force: true });
     },
+  };
+}
+
+async function seedRemoteDesktopCredentialState(target) {
+  const baseTarget = normalizeTargetProfileState(target);
+  if (baseTarget.kind !== "remote-desktop") {
+    return {
+      allowed: false,
+      reason: "This target is not a remote desktop target.",
+    };
+  }
+
+  if (process.platform !== "win32") {
+    return {
+      allowed: false,
+      reason: "Remote desktop credential seeding is currently supported on Windows only.",
+    };
+  }
+
+  if (baseTarget.connection?.credentialMode !== "secret-ref" || !baseTarget.connection?.credentialRef?.trim()) {
+    return {
+      allowed: false,
+      reason: "Select secret-ref credentials before seeding the remote desktop client.",
+    };
+  }
+
+  if (!baseTarget.connection.username) {
+    return {
+      allowed: false,
+      reason: "Connection username is required before seeding remote desktop credentials.",
+    };
+  }
+
+  const secretText = await resolveTargetCredentialSecretText(baseTarget);
+  const host = extractTargetHost(baseTarget) || baseTarget.adapters[0]?.endpoint || baseTarget.displayName;
+  const genericTarget = `TERMSRV/${host}`;
+  const seedResult = await spawnAndCollect("cmdkey", [
+    `/generic:${genericTarget}`,
+    `/user:${baseTarget.connection.username}`,
+    `/pass:${secretText}`,
+  ]);
+
+  if (!seedResult.ok || (typeof seedResult.exitCode === "number" && seedResult.exitCode !== 0)) {
+    return {
+      allowed: false,
+      reason: seedResult.error || seedResult.stderr || "Failed to seed remote desktop credentials.",
+      target: baseTarget,
+    };
+  }
+
+  return {
+    allowed: true,
+    reason: "Remote desktop credential seeded.",
+    target: baseTarget,
+    credentialSource: baseTarget.connection.credentialMode,
+    credentialSeedState: "prepared",
+    credentialTarget: genericTarget,
   };
 }
 
@@ -3150,10 +3222,15 @@ function buildRemoteDesktopSessionSummary(target, session) {
     session.clientLaunchState && session.clientLaunchState !== "idle"
       ? `client ${session.clientLaunchState}`
       : "client idle";
+  const credentialLabel =
+    session.credentialSource === "secret-ref"
+      ? `credential ${session.credentialSeedState === "prepared" ? "prepared" : session.credentialSeedState ?? "pending"}`
+      : `credential ${session.credentialSource ?? "none"}`;
   return [
     `${target.displayName} 遠端桌面 ${stateLabel}`,
     `視窗 ${visibleCount} 個`,
     `active ${activeWindow}`,
+    credentialLabel,
     launchLabel,
   ].join(" · ");
 }
@@ -3189,6 +3266,8 @@ function createRemoteDesktopSessionState(target, now = nowIso()) {
     transport: "gateway-remote-desktop-contract",
     state: "idle",
     mode: target.connection?.sessionMode ?? "observe",
+    credentialSource: target.connection?.credentialMode ?? "none",
+    credentialSeedState: "idle",
     activeWindow: visibleWindows[0],
     visibleWindows,
     screenSummary: `遠端桌面契約已準備好：${target.displayName}。`,
@@ -3225,6 +3304,8 @@ function refreshRemoteDesktopSessionState(target, session, now = nowIso()) {
     targetName: target.displayName,
     state: nextState,
     mode: nextMode,
+    credentialSource: session.credentialSource ?? target.connection?.credentialMode ?? "none",
+    credentialSeedState: session.credentialSeedState ?? "idle",
     activeWindow: session.activeWindow && nextState === "controlling" ? session.activeWindow : visibleWindows[0],
     visibleWindows,
     screenSummary: `Gateway 遠端桌面契約觀察：${target.displayName} · ${extractTargetHost(target) || target.endpoint}.`,
@@ -3256,6 +3337,11 @@ function buildRemoteDesktopLaunchSpec(target) {
     command: `xfreerdp /v:${endpoint}`,
     transport: "native-rdp-client",
   };
+}
+
+function buildRemoteDesktopCredentialTarget(target) {
+  const host = extractTargetHost(target) || target.adapters[0]?.endpoint || target.displayName;
+  return `TERMSRV/${host}`;
 }
 
 function spawnDetachedProcess(command, args, options = {}) {
@@ -3434,13 +3520,70 @@ async function launchRemoteDesktopClientState(target) {
   const currentSession = refreshRemoteDesktopSessionState(baseTarget, getRemoteDesktopSessionState(baseTarget), now);
   const launchSpec = buildRemoteDesktopLaunchSpec(baseTarget);
   const dryRun = process.env.CLAWDESK_DISABLE_NATIVE_RDP_LAUNCH === "1" || process.env.CLAWDESK_REMOTE_DESKTOP_DRY_RUN === "1";
+  const credentialSource = baseTarget.connection?.credentialMode ?? "none";
+  const credentialRef = baseTarget.connection?.credentialRef?.trim() ?? "";
+  const seedOnly = process.env.CLAWDESK_REMOTE_DESKTOP_SEED_ONLY === "1";
   const launchEntry = {
     launchedAt: now,
     transport: dryRun ? `${launchSpec.transport}-dry-run` : launchSpec.transport,
     command: launchSpec.command,
     mode: baseTarget.connection?.sessionMode ?? "observe",
     dryRun,
+    credentialSource,
+    credentialSeedState: currentSession.credentialSeedState ?? "idle",
   };
+
+  if (credentialSource === "secret-ref" && credentialRef && !dryRun) {
+    const seedResult = await seedRemoteDesktopCredentialState(baseTarget);
+    if (!seedResult.allowed) {
+      const failedSession = withRemoteDesktopSessionSummary(baseTarget, {
+        ...currentSession,
+        credentialSource,
+        credentialSeedState: "failed",
+        credentialSeedError: seedResult.reason,
+        lastUpdatedAt: now,
+        notes: [...currentSession.notes.slice(-4), `Remote desktop credential seed failed: ${seedResult.reason}`],
+      });
+      remoteDesktopSessions.set(remoteDesktopSessionStorageKey(baseTarget.id), failedSession);
+      return {
+        allowed: false,
+        reason: seedResult.reason,
+        target: baseTarget,
+        session: failedSession,
+        launch: launchEntry,
+      };
+    }
+
+    const seededSession = withRemoteDesktopSessionSummary(baseTarget, {
+      ...currentSession,
+      credentialSource,
+      credentialSeedState: "prepared",
+      credentialSeedAt: now,
+      credentialSeedError: undefined,
+      lastUpdatedAt: now,
+      notes: [...currentSession.notes.slice(-4), `Remote desktop credential seeded for ${buildRemoteDesktopCredentialTarget(baseTarget)}.`],
+    });
+    remoteDesktopSessions.set(remoteDesktopSessionStorageKey(baseTarget.id), seededSession);
+    audit("targets.remote-desktop.credential-seed", {
+      targetId: baseTarget.id,
+      targetName: baseTarget.displayName,
+      credentialSource,
+      credentialTarget: buildRemoteDesktopCredentialTarget(baseTarget),
+      state: "prepared",
+    });
+    if (seedOnly) {
+      return {
+        allowed: true,
+        reason: "Remote desktop credential seeded.",
+        target: markRemoteDesktopTargetActive(baseTarget, now),
+        session: seededSession,
+        launch: {
+          ...launchEntry,
+          credentialSeedState: "prepared",
+        },
+      };
+    }
+  }
 
   if (dryRun) {
     const nextSession = withRemoteDesktopSessionSummary(baseTarget, {
@@ -3453,6 +3596,8 @@ async function launchRemoteDesktopClientState(target) {
       clientLaunchAt: now,
       clientLaunchPid: null,
       clientLaunchError: undefined,
+      credentialSource,
+      credentialSeedState: currentSession.credentialSeedState ?? "idle",
       launchHistory: [...(Array.isArray(currentSession.launchHistory) ? currentSession.launchHistory : []).slice(-4), launchEntry],
       lastUpdatedAt: now,
       notes: [...currentSession.notes.slice(-4), `Remote desktop client launch dry-run recorded: ${launchSpec.command}`],
@@ -3476,6 +3621,8 @@ async function launchRemoteDesktopClientState(target) {
       clientLaunchAt: now,
       clientLaunchPid: null,
       clientLaunchError: execution.error,
+      credentialSource,
+      credentialSeedState: currentSession.credentialSeedState ?? "prepared",
       launchHistory: [...(Array.isArray(currentSession.launchHistory) ? currentSession.launchHistory : []).slice(-4), { ...launchEntry, error: execution.error }],
       lastUpdatedAt: now,
       notes: [...currentSession.notes.slice(-4), `Remote desktop client launch failed: ${execution.error}`],
@@ -3500,6 +3647,8 @@ async function launchRemoteDesktopClientState(target) {
     clientLaunchAt: now,
     clientLaunchPid: execution.pid ?? null,
     clientLaunchError: undefined,
+    credentialSource,
+    credentialSeedState: currentSession.credentialSeedState ?? "prepared",
     launchHistory: [...(Array.isArray(currentSession.launchHistory) ? currentSession.launchHistory : []).slice(-4), { ...launchEntry, pid: execution.pid ?? null }],
     lastUpdatedAt: now,
     notes: [...currentSession.notes.slice(-4), `Remote desktop client launched: ${launchSpec.command}`],
@@ -8430,12 +8579,16 @@ const server = http.createServer(async (req, res) => {
       const kind = typeof body.kind === "string" && body.kind.trim() ? body.kind.trim() : "ssh-private-key";
       const privateKey = typeof body.privateKey === "string" ? body.privateKey : typeof body.secret === "string" ? body.secret : "";
       const label = typeof body.label === "string" ? body.label : "";
-      if (!targetId || !target || target.kind !== "ssh-terminal") {
-        json(res, 400, { error: "SSH targetId is required" });
+      if (!targetId || !target || (target.kind !== "ssh-terminal" && target.kind !== "remote-desktop")) {
+        json(res, 400, { error: "SSH or remote-desktop targetId is required" });
         return;
       }
-      if (kind !== "ssh-private-key") {
+      if (target.kind === "ssh-terminal" && kind !== "ssh-private-key") {
         json(res, 400, { error: "Unsupported credential kind" });
+        return;
+      }
+      if (target.kind === "remote-desktop" && kind === "ssh-private-key") {
+        json(res, 400, { error: "Remote desktop credential kind is required" });
         return;
       }
       const payload = await issueTargetCredentialRefState({ targetId, label, kind, privateKey });
@@ -8652,6 +8805,32 @@ const server = http.createServer(async (req, res) => {
         result = observeRemoteDesktopSessionState(target);
       } else if (action === "request_control" || action === "request-approval") {
         result = requestRemoteDesktopControlState(target);
+      } else if (action === "seed_credentials" || action === "prepare_credentials") {
+        result = await seedRemoteDesktopCredentialState(target);
+        if (result.allowed && result.target) {
+          const currentSession = refreshRemoteDesktopSessionState(target, getRemoteDesktopSessionState(target), nowIso());
+          const seededSession = withRemoteDesktopSessionSummary(result.target, {
+            ...currentSession,
+            credentialSource: result.credentialSource ?? currentSession.credentialSource ?? "none",
+            credentialSeedState: result.credentialSeedState ?? "prepared",
+            credentialSeedAt: nowIso(),
+            credentialSeedError: undefined,
+            lastUpdatedAt: nowIso(),
+            notes: [...currentSession.notes.slice(-4), `Remote desktop credential seeded for ${result.credentialTarget ?? "TERMSRV"}.`],
+          });
+          remoteDesktopSessions.set(remoteDesktopSessionStorageKey(target.id), seededSession);
+          audit("targets.remote-desktop.credential-seed", {
+            targetId: target.id,
+            targetName: target.displayName,
+            credentialSource: result.credentialSource ?? target.connection?.credentialMode ?? "none",
+            credentialSeedState: result.credentialSeedState ?? "prepared",
+            credentialTarget: result.credentialTarget,
+          });
+          result = {
+            ...result,
+            session: seededSession,
+          };
+        }
       } else if (action === "release_control" || action === "disconnect") {
         result = releaseRemoteDesktopSessionState(target);
       } else if (action === "launch_client" || action === "launch" || action === "open_client") {
@@ -8675,6 +8854,8 @@ const server = http.createServer(async (req, res) => {
           clientLaunchState: result.session?.clientLaunchState,
           clientLaunchCommand: result.session?.clientLaunchCommand,
           clientLaunchPid: result.session?.clientLaunchPid,
+          credentialSource: result.session?.credentialSource,
+          credentialSeedState: result.session?.credentialSeedState,
         });
       } else {
         audit("targets.remote-desktop.session.rejected", {

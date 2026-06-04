@@ -66,6 +66,31 @@ describe("target orchestration contract", () => {
     expect(summary).toContain("…7890");
   });
 
+  it("accepts remote desktop secret-ref credential profiles for managed launch flows", () => {
+    const target = createTargetProfile({
+      id: "ops-rdp",
+      displayName: "Ops RDP",
+      kind: "remote-desktop",
+      endpoint: "rdp://ops.example",
+      paired: true,
+      state: "ready",
+      adapterOverrides: { authenticated: true },
+      connectionOverrides: {
+        username: "ops-user",
+        credentialMode: "secret-ref",
+        credentialRef: "rdp-secret-12345678",
+      },
+    });
+
+    const issues = targetConnectionReadinessIssues(target);
+    expect(issues).toHaveLength(0);
+
+    const summary = summarizeTargetConnectionProfile(target);
+    expect(summary).toContain("secret-ref");
+    expect(summary).toContain("ref rdp-se");
+    expect(summary).toContain("…5678");
+  });
+
   it("keeps remote default targets offline until paired", () => {
     const registry = defaultTargetRegistry();
     const sshTarget = registry.targets.find((target) => target.id === "builder-ssh");
