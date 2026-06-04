@@ -1348,6 +1348,32 @@ th {
   line-height: 1.4;
 }
 
+.target-readiness-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  min-height: 22px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+
+.target-readiness-badge.readiness-ready {
+  color: #0f6f5c;
+  background: #e8f6f1;
+}
+
+.target-readiness-badge.readiness-connect,
+.target-readiness-badge.readiness-probe,
+.target-readiness-badge.readiness-pair,
+.target-readiness-badge.readiness-verify_host_key {
+  color: #8d4e17;
+  background: #fff2e6;
+}
+
 .target-toggle {
   display: flex;
   align-items: center;
