@@ -81,6 +81,14 @@ interface CredentialBundlePreviewSummary {
   targetNames: string[];
   secretKinds: string[];
   secretLabels: string[];
+  addedTargetIds: string[];
+  addedTargetNames: string[];
+  updatedTargetIds: string[];
+  updatedTargetNames: string[];
+  unchangedTargetIds: string[];
+  secretTargetIds: string[];
+  overwriteCount: number;
+  importCount: number;
 }
 
 interface TargetTimelineEntry {
@@ -2075,6 +2083,11 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   <small>targetNames：{credentialBundlePreview.targetNames.join(", ") || "none"}</small>
                   <small>secretKinds：{credentialBundlePreview.secretKinds.join(", ") || "none"}</small>
                   <small>secretLabels：{credentialBundlePreview.secretLabels.join(", ") || "none"}</small>
+                  <small>新增 target：{credentialBundlePreview.addedTargetNames.join(", ") || "none"}</small>
+                  <small>更新 target：{credentialBundlePreview.updatedTargetNames.join(", ") || "none"}</small>
+                  <small>不變 target：{credentialBundlePreview.unchangedTargetIds.join(", ") || "none"}</small>
+                  <small>secret targets：{credentialBundlePreview.secretTargetIds.join(", ") || "none"}</small>
+                  <small>overwrite count：{credentialBundlePreview.overwriteCount}</small>
                 </section>
               ) : null}
             </section>

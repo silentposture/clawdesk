@@ -60,7 +60,7 @@
 SSH terminal sessions maintain a redacted transcript snapshot and session summary, and only allow allowlisted commands after pairing, credential-ref / known-host validation, and gateway-managed session open. Remote desktop sessions expose observe / control / release state and session summary under the same contract layer, plus a gated native client launch helper for the local RDP client.
 Remote desktop credential refs can be seeded into the local Windows credential flow before launch when the target uses `secret-ref` mode.
 The remote-desktop session endpoint also accepts a `seed_credentials` action so the control plane can prepare the client credential before the actual launch.
-`credential-bundle` 匯出 / 預覽 / 匯入端點會把 target registry 與 gateway-managed credential refs 以 passphrase-protected encrypted bundle 在機器間移轉，匯入後會重新發行本機 credential refs；preview 只回傳可審核的 target / secret 摘要，不會暴露明文 secret。
+`credential-bundle` 匯出 / 預覽 / 匯入端點會把 target registry 與 gateway-managed credential refs 以 passphrase-protected encrypted bundle 在機器間移轉，匯入後會重新發行本機 credential refs；preview 只回傳可審核的 target / secret 摘要與匯入影響，不會暴露明文 secret。
 
 - `GET /compat/settings`
 - `POST /compat/settings`
