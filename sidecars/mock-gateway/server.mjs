@@ -2426,6 +2426,126 @@ function targetConnectionReadinessIssuesState(target) {
   return issues;
 }
 
+function buildTargetConnectionReadinessReportState(target) {
+  const baseTarget = normalizeTargetProfileState(target);
+  const connection = baseTarget.connection ?? defaultTargetConnectionState(baseTarget.kind);
+  const checks = [];
+  const addCheck = (key, label, status, detail, required) => {
+    checks.push({ key, label, status, detail, required });
+  };
+
+  const isLocalLike = baseTarget.kind === "local-shell" || baseTarget.kind === "mock";
+  if (isLocalLike) {
+    addCheck(
+      "pair",
+      "Pairing",
+      baseTarget.paired ? "pass" : "warn",
+      baseTarget.paired ? "Local targets remain paired and ready." : "Local targets can be paired before dispatch.",
+      false,
+    );
+    addCheck("probe", "Probe", "pass", "Local targets do not require a network probe.", false);
+    return {
+      targetId: baseTarget.id,
+      targetName: baseTarget.displayName,
+      kind: baseTarget.kind,
+      state: baseTarget.state,
+      readyToConnect: true,
+      lastProbeResult: connection.lastProbeResult,
+      lastProbeAt: connection.lastProbeAt,
+      nextAction: baseTarget.paired ? "connect" : "pair",
+      checks,
+    };
+  }
+
+  addCheck(
+    "pair",
+    "Pairing",
+    baseTarget.paired ? "pass" : "fail",
+    baseTarget.paired ? "Target is paired." : "Target must be paired before it can connect.",
+    true,
+  );
+  addCheck(
+    "username",
+    "Username",
+    connection.username ? "pass" : "fail",
+    connection.username ? `Username: ${connection.username}` : "Connection username is required.",
+    true,
+  );
+  addCheck(
+    "credential-mode",
+    "Credential mode",
+    connection.credentialMode === "none" ? "fail" : "pass",
+    connection.credentialMode === "none" ? "Select a credential mode before connecting." : `Credential mode: ${connection.credentialMode}`,
+    true,
+  );
+  addCheck(
+    "credential-ref",
+    "Credential ref",
+    connection.credentialMode === "secret-ref" && !connection.credentialRef
+      ? "fail"
+      : connection.credentialMode === "secret-ref"
+        ? "pass"
+        : "warn",
+    connection.credentialMode === "secret-ref" && !connection.credentialRef
+      ? "Secret-ref mode requires a credential reference."
+      : connection.credentialMode === "secret-ref" && connection.credentialRef
+        ? `Credential ref: ${maskTargetCredentialRef(connection.credentialRef)}`
+        : "Credential ref not required for this credential mode.",
+    connection.credentialMode === "secret-ref",
+  );
+  if (baseTarget.kind === "ssh-terminal") {
+    addCheck(
+      "host-key",
+      "SSH host key",
+      connection.knownHostFingerprint ? "pass" : "fail",
+      connection.knownHostFingerprint ? "SSH host key recorded." : "SSH host key is required for host-key verification.",
+      true,
+    );
+  } else {
+    addCheck("host-key", "Host key", "warn", "Host-key verification is not required for this target kind.", false);
+  }
+
+  const probeStatus =
+    connection.lastProbeResult === "reachable"
+      ? "pass"
+      : connection.lastProbeResult === "unreachable" || connection.lastProbeResult === "error"
+        ? "fail"
+        : "warn";
+  addCheck(
+    "probe",
+    "Connectivity probe",
+    probeStatus,
+    connection.lastProbeResult === "reachable"
+      ? `Last probe succeeded${connection.lastProbeHost ? ` at ${connection.lastProbeHost}${connection.lastProbePort ? `:${connection.lastProbePort}` : ""}` : ""}.`
+      : connection.lastProbeResult
+        ? `Last probe reported ${connection.lastProbeResult}${connection.lastProbeError ? `: ${connection.lastProbeError}` : ""}.`
+        : "Run a probe before connect to confirm reachability.",
+    true,
+  );
+
+  const readyToConnect = checks.every((check) => check.status !== "fail");
+  let nextAction = "connect";
+  if (!baseTarget.paired) {
+    nextAction = "pair";
+  } else if (connection.lastProbeResult !== "reachable") {
+    nextAction = "probe";
+  } else if (baseTarget.kind === "ssh-terminal" && !connection.knownHostFingerprint) {
+    nextAction = "verify_host_key";
+  }
+
+  return {
+    targetId: baseTarget.id,
+    targetName: baseTarget.displayName,
+    kind: baseTarget.kind,
+    state: baseTarget.state,
+    readyToConnect,
+    lastProbeResult: connection.lastProbeResult,
+    lastProbeAt: connection.lastProbeAt,
+    nextAction,
+    checks,
+  };
+}
+
 function classifyShellCommandState(command) {
   const normalized = command.trim();
   if (!normalized) return "blocked";
@@ -9065,6 +9185,32 @@ const server = http.createServer(async (req, res) => {
     } catch {
       json(res, 400, { error: "Invalid JSON" });
     }
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/targets/connection-readiness") {
+    const targetId = typeof parsedUrl.searchParams.get("targetId") === "string" ? parsedUrl.searchParams.get("targetId").trim() : "";
+    if (!targetId) {
+      json(res, 400, { error: "targetId is required" });
+      return;
+    }
+    const target = targetRegistry.targets.find((entry) => entry.id === targetId);
+    if (!target) {
+      json(res, 404, { error: "target not found" });
+      return;
+    }
+    const report = buildTargetConnectionReadinessReportState(target);
+    audit("targets.connection.readiness", {
+      targetId,
+      targetName: target.displayName,
+      readyToConnect: report.readyToConnect,
+      nextAction: report.nextAction,
+      checkCount: report.checks.length,
+    });
+    json(res, 200, {
+      report,
+      target: cloneTargetRegistryState(targetRegistry).targets.find((entry) => entry.id === targetId),
+    });
     return;
   }
 

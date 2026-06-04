@@ -2,6 +2,7 @@ import { CircleAlert, CircleCheck, Plus, RefreshCw, Save, Send, Server, X } from
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   applyTargetConnectionAction,
+  buildTargetConnectionReadinessReport,
   cloneTargetRegistry,
   createTargetDispatchRecord,
   createTargetProfile,
@@ -11,8 +12,9 @@ import {
   summarizeTargetProfile,
   summarizeTargetConnectionProfile,
   summarizeTargetRegistry,
-  targetConnectionReadinessIssues,
   upsertTarget,
+  type TargetConnectionReadinessCheck,
+  type TargetConnectionReadinessReport,
   type TargetConnectionState,
   type TargetConnectionAction,
   type TargetCredentialMode,
@@ -76,6 +78,11 @@ interface TargetExecutionState {
   finishedAt: string;
   targetId: string;
   targetName: string;
+}
+
+interface TargetConnectionReadinessState {
+  report: TargetConnectionReadinessReport;
+  source: "gateway" | "local";
 }
 
 interface CredentialBundlePreviewSummary {
@@ -611,6 +618,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const [preview, setPreview] = useState<DispatchPreviewState>();
   const [execution, setExecution] = useState<TargetExecutionState>();
   const [timelineViewMode, setTimelineViewMode] = useState<"target" | "global">("target");
+  const [connectionReadinessReport, setConnectionReadinessReport] = useState<TargetConnectionReadinessState>();
   const [remoteDesktopSession, setRemoteDesktopSession] = useState<RemoteDesktopSessionState>();
   const [remoteDesktopBusy, setRemoteDesktopBusy] = useState(false);
   const remoteDesktopSessionRequestTokenRef = useRef(0);
@@ -633,7 +641,9 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const selectedTarget = useMemo(() => registry.targets.find((target) => target.id === selectedTargetId), [registry, selectedTargetId]);
   const draftTarget = useMemo(() => buildTargetFromDraft(draft), [draft]);
   const draftIsSaved = Boolean(selectedTarget && selectedTarget.id === draftTarget.id);
-  const connectionIssues = targetConnectionReadinessIssues(draftTarget);
+  const localConnectionReadinessReport = useMemo(() => buildTargetConnectionReadinessReport(draftTarget), [draftTarget]);
+  const connectionReadiness = connectionReadinessReport?.report ?? localConnectionReadinessReport;
+  const connectionIssues = connectionReadiness.checks.filter((check) => check.status === "fail").map((check) => check.detail);
   const remoteDesktopActionBlocked = draft.kind === "remote-desktop" && Boolean(gatewayBaseUrl) && !draftIsSaved;
   const remoteDesktopView = remoteDesktopSession ?? (draft.kind === "remote-desktop" ? createRemoteDesktopSessionPreview(draftTarget) : undefined);
   const remoteDesktopNotes = remoteDesktopView?.notes ?? [];
@@ -842,6 +852,36 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setTargetTimeline([]);
     }
   }
+
+  async function loadTargetConnectionReadiness(target?: TargetProfile) {
+    const nextTarget = target ?? selectedTarget ?? draftTarget;
+    if (!nextTarget) {
+      setConnectionReadinessReport(undefined);
+      return;
+    }
+
+    if (!gatewayBaseUrl || !draftIsSaved) {
+      setConnectionReadinessReport({ report: buildTargetConnectionReadinessReport(nextTarget), source: "local" });
+      return;
+    }
+
+    try {
+      const response = await fetch(`${gatewayBaseUrl}/targets/connection-readiness?targetId=${encodeURIComponent(nextTarget.id)}`);
+      if (!response.ok) throw new Error("bad response");
+      const payload = (await response.json()) as { report?: TargetConnectionReadinessReport };
+      if (payload.report) {
+        setConnectionReadinessReport({ report: payload.report, source: "gateway" });
+      } else {
+        setConnectionReadinessReport({ report: buildTargetConnectionReadinessReport(nextTarget), source: "local" });
+      }
+    } catch {
+      setConnectionReadinessReport({ report: buildTargetConnectionReadinessReport(nextTarget), source: "local" });
+    }
+  }
+
+  useEffect(() => {
+    void loadTargetConnectionReadiness(selectedTarget ?? draftTarget);
+  }, [draftTarget, draftIsSaved, gatewayBaseUrl, selectedTarget, selectedTargetId]);
 
   function selectExistingTarget(target: TargetProfile) {
     setSelectedTargetId(target.id);
@@ -2056,6 +2096,35 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               <div>
                 <strong>Probe error</strong>
                 <span>{draft.lastProbeError || "none"}</span>
+              </div>
+            </section>
+            <section className="connection-readiness-card">
+              <div className="panel-actions">
+                <button className="secondary-button" type="button" onClick={() => void loadTargetConnectionReadiness(selectedTarget ?? draftTarget)} disabled={busy}>
+                  <RefreshCw size={16} />
+                  重新整理 readiness
+                </button>
+                <small>source：{connectionReadinessReport?.source ?? "local"}</small>
+              </div>
+              <strong>Connection readiness</strong>
+              <p>
+                {connectionReadiness.readyToConnect
+                  ? "所有必要條件都已滿足，可以進入 connect。"
+                  : `下一步建議：${connectionReadiness.nextAction}`}
+              </p>
+              <small>ready to connect：{connectionReadiness.readyToConnect ? "yes" : "no"}</small>
+              <small>next action：{connectionReadiness.nextAction}</small>
+              <small>last probe：{connectionReadiness.lastProbeResult ?? "未探測"}</small>
+              <div className="connection-readiness-checks">
+                {connectionReadiness.checks.map((check) => (
+                  <article key={check.key} className={`connection-readiness-check readiness-${check.status}`}>
+                    <strong>{check.label}</strong>
+                    <p>{check.detail}</p>
+                    <small>
+                      {check.status} · {check.required ? "required" : "optional"}
+                    </small>
+                  </article>
+                ))}
               </div>
             </section>
             {connectionIssues.length > 0 ? (

@@ -44,6 +44,7 @@ export interface GatewayAdapterMethod {
   | "targetsCredentialBundlePreview"
   | "targetsCredentialBundleImport"
   | "targetsConnection"
+  | "targetsConnectionReadiness"
   | "targetsDispatchPreview"
   | "targetsDispatch"
   | "targetsTimeline"
@@ -118,6 +119,7 @@ export const gatewayAdapterMethods: GatewayAdapterMethod[] = [
   { name: "targetsCredentialBundlePreview", method: "POST", path: "/targets/credential-bundle/preview", status: "partial", purpose: "在匯入前預覽 passphrase-protected encrypted bundle 的 target / secret 摘要與來源資訊。" },
   { name: "targetsCredentialBundleImport", method: "POST", path: "/targets/credential-bundle/import", status: "partial", purpose: "匯入 passphrase-protected encrypted bundle，還原 target registry 與 gateway-managed credential refs。" },
   { name: "targetsConnection", method: "POST", path: "/targets/connection", status: "partial", purpose: "處理 target 的 pair / probe / verify_host_key / connect / disconnect / refresh 動作，並回寫連線可達性與驗證狀態。" },
+  { name: "targetsConnectionReadiness", method: "GET", path: "/targets/connection-readiness", status: "partial", purpose: "讀取 target 連線前檢查報告，顯示 pairing、credential、host key 與 probe readiness。"},
   { name: "targetsDispatchPreview", method: "POST", path: "/targets/dispatch-preview", status: "mock", purpose: "建立 target dispatch 預覽與 audit record。" },
   { name: "targetsDispatch", method: "POST", path: "/targets/dispatch", status: "mock", purpose: "儲存 target dispatch record 與 audit trail。" },
   { name: "targetsTimeline", method: "GET", path: "/targets/timeline", status: "partial", purpose: "讀取單一 target 的 session / dispatch timeline，讓控制面直接看到最近操作。" },
