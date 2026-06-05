@@ -101,6 +101,23 @@ function spawnPowerShellScript(scriptPath, args = []) {
   });
 }
 
+function spawnPowerShellCommand(command) {
+  return spawn("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-Command",
+    command,
+  ], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+}
+
 const port = await reservePort();
 const baseUrl = `http://127.0.0.1:${port}`;
 const gateway = spawnGateway(port);
@@ -134,6 +151,8 @@ try {
   if (manifest.runtimeInstallMode !== "service-friendly-launcher") throw new Error("manifest runtime install mode mismatch");
   if (!manifest.bundlePortable) throw new Error("manifest missing portable flag");
   if (manifest.installRootRelativePath !== `${manifest.targetId}-host-agent-install`) throw new Error("manifest install root relative path mismatch");
+  if (manifest.startupRegistryHive !== "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run") throw new Error("manifest startup registry hive mismatch");
+  if (manifest.startupRegistryValueName !== `ClawDeskHostAgent-${manifest.targetId}`) throw new Error("manifest startup registry value mismatch");
   if (path.isAbsolute(manifest.configPath) || manifest.configPath !== "host-agent.json") throw new Error("manifest config path should be relative");
   if (path.isAbsolute(manifest.lockPath) || manifest.lockPath !== "host-agent.lock") throw new Error("manifest lock path should be relative");
   if (path.isAbsolute(manifest.statusPath) || manifest.statusPath !== "host-agent-status.json") throw new Error("manifest status path should be relative");
@@ -146,7 +165,7 @@ try {
   if (!readme.includes("service-friendly handoff")) throw new Error("bundle readme missing service-friendly wording");
   if (!readme.includes("Install")) throw new Error("bundle readme missing install section");
   if (!readme.includes("Remove")) throw new Error("bundle readme missing remove section");
-  if (!readme.includes("Scheduled Task")) throw new Error("bundle readme missing scheduled task section");
+  if (!readme.includes("Startup Hook")) throw new Error("bundle readme missing startup hook section");
 
   const runtimeLauncherPath = path.join(bundleDir, "src", "bridge", "host-agent-launcher.mjs");
   const runtimeBridgePath = path.join(bundleDir, "src", "bridge", "host-bridge-agent.mjs");
@@ -163,29 +182,29 @@ try {
   if (!launchPs1.includes("host-agent-launcher.mjs")) throw new Error("launch ps1 missing runtime entry point");
 
   const installPs1 = await fs.readFile(path.join(bundleDir, "install-host-agent.ps1"), "utf8");
-  if (!installPs1.includes("copy-bundle-and-register-task")) throw new Error("install ps1 missing install mode");
+  if (!installPs1.includes("copy-bundle-and-register-startup")) throw new Error("install ps1 missing install mode");
   if (!installPs1.includes("InstallRoot")) throw new Error("install ps1 missing install root parameter");
   if (!installPs1.includes("Copy-Item")) throw new Error("install ps1 missing bundle copy");
-  if (!installPs1.includes("register-host-agent.ps1")) throw new Error("install ps1 missing register script");
+  if (!installPs1.includes("register-host-agent-startup.ps1")) throw new Error("install ps1 missing register script");
   if (!installPs1.includes("$Preview")) throw new Error("install ps1 missing preview flag");
 
   const removePs1 = await fs.readFile(path.join(bundleDir, "remove-host-agent.ps1"), "utf8");
-  if (!removePs1.includes("unregister-and-remove-install-root")) throw new Error("remove ps1 missing remove mode");
+  if (!removePs1.includes("unregister-startup-and-remove-install-root")) throw new Error("remove ps1 missing remove mode");
   if (!removePs1.includes("InstallRoot")) throw new Error("remove ps1 missing install root parameter");
   if (!removePs1.includes("Remove-Item")) throw new Error("remove ps1 missing install root cleanup");
-  if (!removePs1.includes("unregister-host-agent.ps1")) throw new Error("remove ps1 missing unregister script");
+  if (!removePs1.includes("unregister-host-agent-startup.ps1")) throw new Error("remove ps1 missing unregister script");
   if (!removePs1.includes("$Preview")) throw new Error("remove ps1 missing preview flag");
 
-  const registerPs1 = await fs.readFile(path.join(bundleDir, "register-host-agent.ps1"), "utf8");
-  if (!registerPs1.includes("Register-ScheduledTask")) throw new Error("register ps1 missing scheduled task registration");
-  if (!registerPs1.includes("-WindowStyle Hidden")) throw new Error("register ps1 missing hidden window policy");
-  if (!registerPs1.includes(manifest.taskName)) throw new Error("register ps1 missing task name");
-  if (!registerPs1.includes("Join-Path $PSScriptRoot \"launch-host-agent.ps1\"")) throw new Error("register ps1 missing bundle-relative launch script");
+  const registerPs1 = await fs.readFile(path.join(bundleDir, "register-host-agent-startup.ps1"), "utf8");
+  if (!registerPs1.includes("New-ItemProperty")) throw new Error("register startup ps1 missing registry write");
+  if (!registerPs1.includes("HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run")) throw new Error("register startup ps1 missing registry hive");
+  if (!registerPs1.includes(manifest.startupRegistryValueName)) throw new Error("register startup ps1 missing value name");
+  if (!registerPs1.includes("launch-host-agent.ps1")) throw new Error("register startup ps1 missing launch script");
 
-  const unregisterPs1 = await fs.readFile(path.join(bundleDir, "unregister-host-agent.ps1"), "utf8");
-  if (!unregisterPs1.includes("Unregister-ScheduledTask")) throw new Error("unregister ps1 missing scheduled task removal");
+  const unregisterPs1 = await fs.readFile(path.join(bundleDir, "unregister-host-agent-startup.ps1"), "utf8");
+  if (!unregisterPs1.includes("Remove-ItemProperty")) throw new Error("unregister startup ps1 missing registry removal");
 
-  const registerPreview = spawnPowerShellScript(path.join(bundleDir, "register-host-agent.ps1"), ["-Preview"]);
+  const registerPreview = spawnPowerShellScript(path.join(bundleDir, "register-host-agent-startup.ps1"), ["-Preview"]);
   let registerPreviewOutput = "";
   registerPreview.stdout.on("data", (chunk) => {
     registerPreviewOutput += chunk.toString();
@@ -198,9 +217,10 @@ try {
     throw new Error(`register preview exited with ${registerPreviewExit}\n${registerPreviewOutput}`);
   }
   const registerPreviewJson = JSON.parse(registerPreviewOutput.trim());
-  if (registerPreviewJson.TaskName !== manifest.taskName) throw new Error("register preview task name mismatch");
-  if (registerPreviewJson.HiddenWindow !== true) throw new Error("register preview hidden window mismatch");
-  if (!String(registerPreviewJson.Arguments || "").includes("launch-host-agent.ps1")) throw new Error("register preview arguments missing launch script");
+  if (registerPreviewJson.InstallMode !== "copy-bundle-and-register-startup") throw new Error("register preview install mode mismatch");
+  if (registerPreviewJson.StartupRegistryHive !== manifest.startupRegistryHive) throw new Error("register preview hive mismatch");
+  if (registerPreviewJson.StartupRegistryValueName !== manifest.startupRegistryValueName) throw new Error("register preview value mismatch");
+  if (!String(registerPreviewJson.Command || "").includes("launch-host-agent.ps1")) throw new Error("register preview command missing launch script");
 
   const installPreview = spawnPowerShellScript(path.join(bundleDir, "install-host-agent.ps1"), ["-Preview"]);
   let installPreviewOutput = "";
@@ -216,7 +236,7 @@ try {
   }
   const installPreviewJson = JSON.parse(installPreviewOutput.trim());
   if (installPreviewJson.TaskName !== manifest.taskName) throw new Error("install preview task name mismatch");
-  if (installPreviewJson.InstallMode !== "copy-bundle-and-register-task") throw new Error("install preview mode mismatch");
+  if (installPreviewJson.InstallMode !== "copy-bundle-and-register-startup") throw new Error("install preview mode mismatch");
   if (installPreviewJson.InstallRoot !== defaultInstallRoot) throw new Error("install preview install root mismatch");
 
   const removePreview = spawnPowerShellScript(path.join(bundleDir, "remove-host-agent.ps1"), ["-Preview"]);
@@ -233,10 +253,10 @@ try {
   }
   const removePreviewJson = JSON.parse(removePreviewOutput.trim());
   if (removePreviewJson.TaskName !== manifest.taskName) throw new Error("remove preview task name mismatch");
-  if (removePreviewJson.InstallMode !== "copy-bundle-and-register-task") throw new Error("remove preview mode mismatch");
+  if (removePreviewJson.InstallMode !== "copy-bundle-and-register-startup") throw new Error("remove preview mode mismatch");
   if (removePreviewJson.InstallRoot !== defaultInstallRoot) throw new Error("remove preview install root mismatch");
 
-  const unregisterPreview = spawnPowerShellScript(path.join(bundleDir, "unregister-host-agent.ps1"), ["-Preview"]);
+  const unregisterPreview = spawnPowerShellScript(path.join(bundleDir, "unregister-host-agent-startup.ps1"), ["-Preview"]);
   let unregisterPreviewOutput = "";
   unregisterPreview.stdout.on("data", (chunk) => {
     unregisterPreviewOutput += chunk.toString();
@@ -249,8 +269,10 @@ try {
     throw new Error(`unregister preview exited with ${unregisterPreviewExit}\n${unregisterPreviewOutput}`);
   }
   const unregisterPreviewJson = JSON.parse(unregisterPreviewOutput.trim());
-  if (unregisterPreviewJson.TaskName !== manifest.taskName) throw new Error("unregister preview task name mismatch");
-  if (unregisterPreviewJson.Action !== "Unregister-ScheduledTask") throw new Error("unregister preview action mismatch");
+  if (unregisterPreviewJson.InstallMode !== "copy-bundle-and-register-startup") throw new Error("unregister preview install mode mismatch");
+  if (unregisterPreviewJson.StartupRegistryHive !== manifest.startupRegistryHive) throw new Error("unregister preview hive mismatch");
+  if (unregisterPreviewJson.StartupRegistryValueName !== manifest.startupRegistryValueName) throw new Error("unregister preview value mismatch");
+  if (unregisterPreviewJson.Action !== "Remove-ItemProperty") throw new Error("unregister preview action mismatch");
 
   const uninstallPs1 = await fs.readFile(path.join(bundleDir, "uninstall-host-agent.ps1"), "utf8");
   if (!uninstallPs1.includes("Removed host agent config, lock, and status files.")) throw new Error("uninstall script missing cleanup message");
@@ -308,6 +330,22 @@ try {
   if (!target.connection?.hostBridge?.attestedAt) throw new Error("launcher attestation missing");
   if (!target.connection?.hostBridge?.lastSeenAt) throw new Error("launcher heartbeat missing");
 
+  const startupQuery = spawnPowerShellCommand(`try { $command = Get-ItemPropertyValue -Path '${manifest.startupRegistryHive}' -Name '${manifest.startupRegistryValueName}' -ErrorAction Stop; [pscustomobject]@{ exists = $true; command = [string]$command } | ConvertTo-Json -Depth 4 } catch { Write-Output '{"exists":false}' }`);
+  let startupQueryOutput = "";
+  startupQuery.stdout.on("data", (chunk) => {
+    startupQueryOutput += chunk.toString();
+  });
+  startupQuery.stderr.on("data", (chunk) => {
+    startupQueryOutput += chunk.toString();
+  });
+  const startupQueryExit = await new Promise((resolve) => startupQuery.on("close", resolve));
+  if (startupQueryExit !== 0) {
+    throw new Error(`startup query exited with ${startupQueryExit}\n${startupQueryOutput}`);
+  }
+  const startupQueryJson = JSON.parse(startupQueryOutput.trim());
+  if (startupQueryJson.exists === false) throw new Error("startup hook missing after install");
+  if (!String(startupQueryJson.command || "").includes("launch-host-agent.ps1")) throw new Error("startup hook command missing launch script");
+
   const removeProcess = spawnPowerShellScript(path.join(bundleDir, "remove-host-agent.ps1"), ["-InstallRoot", installRoot]);
   let removeRunOutput = "";
   removeProcess.stdout.on("data", (chunk) => {
@@ -321,6 +359,21 @@ try {
     throw new Error(`remove script exited with ${removeRunExit}\n${removeRunOutput}`);
   }
   if (await fs.stat(installRoot).then(() => true).catch(() => false)) throw new Error("install root still exists after remove");
+
+  const startupRemoveQuery = spawnPowerShellCommand(`try { $null = Get-ItemPropertyValue -Path '${manifest.startupRegistryHive}' -Name '${manifest.startupRegistryValueName}' -ErrorAction Stop; Write-Output '{"exists":true}' } catch { Write-Output '{"exists":false}' }`);
+  let startupRemoveQueryOutput = "";
+  startupRemoveQuery.stdout.on("data", (chunk) => {
+    startupRemoveQueryOutput += chunk.toString();
+  });
+  startupRemoveQuery.stderr.on("data", (chunk) => {
+    startupRemoveQueryOutput += chunk.toString();
+  });
+  const startupRemoveQueryExit = await new Promise((resolve) => startupRemoveQuery.on("close", resolve));
+  if (startupRemoveQueryExit !== 0) {
+    throw new Error(`startup remove query exited with ${startupRemoveQueryExit}\n${startupRemoveQueryOutput}`);
+  }
+  const startupRemoveQueryJson = JSON.parse(startupRemoveQueryOutput.trim());
+  if (startupRemoveQueryJson.exists !== false) throw new Error("startup hook still present after remove");
 
   console.log("PASS host agent install bundle writes launcher artifacts and preserves identity state.");
 } finally {
