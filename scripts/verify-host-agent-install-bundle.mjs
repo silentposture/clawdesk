@@ -9,6 +9,8 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "clawdesk-host-agent-install-"));
 const bundleDir = path.join(stateDir, "bundle");
 const installedDir = path.join(stateDir, "installed-bundle");
+const programDataRoot = process.env.ProgramData || "C:\\ProgramData";
+const defaultInstallRoot = path.join(programDataRoot, "ClawDesk", "HostAgents", "host-agent-install-demo");
 
 async function reservePort() {
   const server = net.createServer();
@@ -125,13 +127,13 @@ try {
     throw new Error(`prepare-host-agent-install-bundle exited with ${exitCode}\n${launcherOutput}`);
   }
 
-  await fs.cp(bundleDir, installedDir, { recursive: true });
-
-  const manifest = JSON.parse(await fs.readFile(path.join(installedDir, "host-agent-install.json"), "utf8"));
+  const sourceManifest = JSON.parse(await fs.readFile(path.join(bundleDir, "host-agent-install.json"), "utf8"));
+  const manifest = sourceManifest;
   if (manifest.runtimeEntryPoint !== "src/bridge/host-agent-launcher.mjs") throw new Error("manifest runtime entry point mismatch");
   if (manifest.runtimeBridgeEntryPoint !== "src/bridge/host-bridge-agent.mjs") throw new Error("manifest runtime bridge entry point mismatch");
   if (manifest.runtimeInstallMode !== "service-friendly-launcher") throw new Error("manifest runtime install mode mismatch");
   if (!manifest.bundlePortable) throw new Error("manifest missing portable flag");
+  if (manifest.installRootRelativePath !== `${manifest.targetId}-host-agent-install`) throw new Error("manifest install root relative path mismatch");
   if (path.isAbsolute(manifest.configPath) || manifest.configPath !== "host-agent.json") throw new Error("manifest config path should be relative");
   if (path.isAbsolute(manifest.lockPath) || manifest.lockPath !== "host-agent.lock") throw new Error("manifest lock path should be relative");
   if (path.isAbsolute(manifest.statusPath) || manifest.statusPath !== "host-agent-status.json") throw new Error("manifest status path should be relative");
@@ -139,45 +141,51 @@ try {
   if (!manifest.launcherCommand.includes("--status-file")) throw new Error("manifest launcher command missing status file");
   if (!manifest.taskName || !manifest.taskName.startsWith("ClawDeskHostAgent-")) throw new Error("manifest missing task name");
 
-  const readme = await fs.readFile(path.join(installedDir, "README.md"), "utf8");
+  const readme = await fs.readFile(path.join(bundleDir, "README.md"), "utf8");
   if (!readme.includes("Host Agent Install Bundle")) throw new Error("bundle readme missing title");
   if (!readme.includes("service-friendly handoff")) throw new Error("bundle readme missing service-friendly wording");
   if (!readme.includes("Install")) throw new Error("bundle readme missing install section");
   if (!readme.includes("Remove")) throw new Error("bundle readme missing remove section");
   if (!readme.includes("Scheduled Task")) throw new Error("bundle readme missing scheduled task section");
 
-  const runtimeLauncherPath = path.join(installedDir, "src", "bridge", "host-agent-launcher.mjs");
-  const runtimeBridgePath = path.join(installedDir, "src", "bridge", "host-bridge-agent.mjs");
+  const runtimeLauncherPath = path.join(bundleDir, "src", "bridge", "host-agent-launcher.mjs");
+  const runtimeBridgePath = path.join(bundleDir, "src", "bridge", "host-bridge-agent.mjs");
   if (!(await fs.stat(runtimeLauncherPath)).isFile()) throw new Error("bundle missing copied launcher runtime");
   if (!(await fs.stat(runtimeBridgePath)).isFile()) throw new Error("bundle missing copied bridge runtime");
 
-  const launchCmd = await fs.readFile(path.join(installedDir, "launch-host-agent.cmd"), "utf8");
+  const launchCmd = await fs.readFile(path.join(bundleDir, "launch-host-agent.cmd"), "utf8");
   if (!launchCmd.includes("host-agent-status.json")) throw new Error("launch cmd missing bundle-relative status file");
   if (!launchCmd.includes("pushd \"%~dp0\"")) throw new Error("launch cmd missing bundle root handoff");
 
-  const launchPs1 = await fs.readFile(path.join(installedDir, "launch-host-agent.ps1"), "utf8");
+  const launchPs1 = await fs.readFile(path.join(bundleDir, "launch-host-agent.ps1"), "utf8");
   if (!launchPs1.includes("Push-Location $bundleRoot")) throw new Error("launch ps1 missing bundle root handoff");
   if (!launchPs1.includes("Join-Path $bundleRoot")) throw new Error("launch ps1 missing bundle-relative paths");
   if (!launchPs1.includes("host-agent-launcher.mjs")) throw new Error("launch ps1 missing runtime entry point");
 
-  const installPs1 = await fs.readFile(path.join(installedDir, "install-host-agent.ps1"), "utf8");
+  const installPs1 = await fs.readFile(path.join(bundleDir, "install-host-agent.ps1"), "utf8");
+  if (!installPs1.includes("copy-bundle-and-register-task")) throw new Error("install ps1 missing install mode");
+  if (!installPs1.includes("InstallRoot")) throw new Error("install ps1 missing install root parameter");
+  if (!installPs1.includes("Copy-Item")) throw new Error("install ps1 missing bundle copy");
   if (!installPs1.includes("register-host-agent.ps1")) throw new Error("install ps1 missing register script");
-  if (!installPs1.includes("-Preview")) throw new Error("install ps1 missing preview flag");
+  if (!installPs1.includes("$Preview")) throw new Error("install ps1 missing preview flag");
 
-  const removePs1 = await fs.readFile(path.join(installedDir, "remove-host-agent.ps1"), "utf8");
+  const removePs1 = await fs.readFile(path.join(bundleDir, "remove-host-agent.ps1"), "utf8");
+  if (!removePs1.includes("unregister-and-remove-install-root")) throw new Error("remove ps1 missing remove mode");
+  if (!removePs1.includes("InstallRoot")) throw new Error("remove ps1 missing install root parameter");
+  if (!removePs1.includes("Remove-Item")) throw new Error("remove ps1 missing install root cleanup");
   if (!removePs1.includes("unregister-host-agent.ps1")) throw new Error("remove ps1 missing unregister script");
-  if (!removePs1.includes("-Preview")) throw new Error("remove ps1 missing preview flag");
+  if (!removePs1.includes("$Preview")) throw new Error("remove ps1 missing preview flag");
 
-  const registerPs1 = await fs.readFile(path.join(installedDir, "register-host-agent.ps1"), "utf8");
+  const registerPs1 = await fs.readFile(path.join(bundleDir, "register-host-agent.ps1"), "utf8");
   if (!registerPs1.includes("Register-ScheduledTask")) throw new Error("register ps1 missing scheduled task registration");
   if (!registerPs1.includes("-WindowStyle Hidden")) throw new Error("register ps1 missing hidden window policy");
   if (!registerPs1.includes(manifest.taskName)) throw new Error("register ps1 missing task name");
   if (!registerPs1.includes("Join-Path $PSScriptRoot \"launch-host-agent.ps1\"")) throw new Error("register ps1 missing bundle-relative launch script");
 
-  const unregisterPs1 = await fs.readFile(path.join(installedDir, "unregister-host-agent.ps1"), "utf8");
+  const unregisterPs1 = await fs.readFile(path.join(bundleDir, "unregister-host-agent.ps1"), "utf8");
   if (!unregisterPs1.includes("Unregister-ScheduledTask")) throw new Error("unregister ps1 missing scheduled task removal");
 
-  const registerPreview = spawnPowerShellScript(path.join(installedDir, "register-host-agent.ps1"), ["-Preview"]);
+  const registerPreview = spawnPowerShellScript(path.join(bundleDir, "register-host-agent.ps1"), ["-Preview"]);
   let registerPreviewOutput = "";
   registerPreview.stdout.on("data", (chunk) => {
     registerPreviewOutput += chunk.toString();
@@ -194,7 +202,7 @@ try {
   if (registerPreviewJson.HiddenWindow !== true) throw new Error("register preview hidden window mismatch");
   if (!String(registerPreviewJson.Arguments || "").includes("launch-host-agent.ps1")) throw new Error("register preview arguments missing launch script");
 
-  const installPreview = spawnPowerShellScript(path.join(installedDir, "install-host-agent.ps1"), ["-Preview"]);
+  const installPreview = spawnPowerShellScript(path.join(bundleDir, "install-host-agent.ps1"), ["-Preview"]);
   let installPreviewOutput = "";
   installPreview.stdout.on("data", (chunk) => {
     installPreviewOutput += chunk.toString();
@@ -208,8 +216,10 @@ try {
   }
   const installPreviewJson = JSON.parse(installPreviewOutput.trim());
   if (installPreviewJson.TaskName !== manifest.taskName) throw new Error("install preview task name mismatch");
+  if (installPreviewJson.InstallMode !== "copy-bundle-and-register-task") throw new Error("install preview mode mismatch");
+  if (installPreviewJson.InstallRoot !== defaultInstallRoot) throw new Error("install preview install root mismatch");
 
-  const removePreview = spawnPowerShellScript(path.join(installedDir, "remove-host-agent.ps1"), ["-Preview"]);
+  const removePreview = spawnPowerShellScript(path.join(bundleDir, "remove-host-agent.ps1"), ["-Preview"]);
   let removePreviewOutput = "";
   removePreview.stdout.on("data", (chunk) => {
     removePreviewOutput += chunk.toString();
@@ -223,8 +233,10 @@ try {
   }
   const removePreviewJson = JSON.parse(removePreviewOutput.trim());
   if (removePreviewJson.TaskName !== manifest.taskName) throw new Error("remove preview task name mismatch");
+  if (removePreviewJson.InstallMode !== "copy-bundle-and-register-task") throw new Error("remove preview mode mismatch");
+  if (removePreviewJson.InstallRoot !== defaultInstallRoot) throw new Error("remove preview install root mismatch");
 
-  const unregisterPreview = spawnPowerShellScript(path.join(installedDir, "unregister-host-agent.ps1"), ["-Preview"]);
+  const unregisterPreview = spawnPowerShellScript(path.join(bundleDir, "unregister-host-agent.ps1"), ["-Preview"]);
   let unregisterPreviewOutput = "";
   unregisterPreview.stdout.on("data", (chunk) => {
     unregisterPreviewOutput += chunk.toString();
@@ -240,10 +252,30 @@ try {
   if (unregisterPreviewJson.TaskName !== manifest.taskName) throw new Error("unregister preview task name mismatch");
   if (unregisterPreviewJson.Action !== "Unregister-ScheduledTask") throw new Error("unregister preview action mismatch");
 
-  const uninstallPs1 = await fs.readFile(path.join(installedDir, "uninstall-host-agent.ps1"), "utf8");
+  const uninstallPs1 = await fs.readFile(path.join(bundleDir, "uninstall-host-agent.ps1"), "utf8");
   if (!uninstallPs1.includes("Removed host agent config, lock, and status files.")) throw new Error("uninstall script missing cleanup message");
 
-  const launcherProcess = spawnPowerShellScript(path.join(installedDir, "launch-host-agent.ps1"), ["-MaxHeartbeats", "2"]);
+  const installRoot = path.join(stateDir, `${manifest.targetId}-host-agent-install`);
+  const installProcess = spawnPowerShellScript(path.join(bundleDir, "install-host-agent.ps1"), ["-InstallRoot", installRoot]);
+  let installRunOutput = "";
+  installProcess.stdout.on("data", (chunk) => {
+    installRunOutput += chunk.toString();
+  });
+  installProcess.stderr.on("data", (chunk) => {
+    installRunOutput += chunk.toString();
+  });
+  const installRunExit = await new Promise((resolve) => installProcess.on("close", resolve));
+  if (installRunExit !== 0) {
+    throw new Error(`install script exited with ${installRunExit}\n${installRunOutput}`);
+  }
+
+  const installedLaunch = path.join(installRoot, "launch-host-agent.ps1");
+  const installedManifest = JSON.parse(await fs.readFile(path.join(installRoot, "host-agent-install.json"), "utf8"));
+  if (installedManifest.targetId !== manifest.targetId) throw new Error("installed manifest target id mismatch");
+  if (installedManifest.bundlePortable !== true) throw new Error("installed manifest portability mismatch");
+  if (!(await fs.stat(installedLaunch)).isFile()) throw new Error("installed bundle missing launch script");
+
+  const launcherProcess = spawnPowerShellScript(installedLaunch, ["-MaxHeartbeats", "2"]);
   let launcherRunOutput = "";
   launcherProcess.stdout.on("data", (chunk) => {
     launcherRunOutput += chunk.toString();
@@ -256,16 +288,16 @@ try {
     throw new Error(`launcher from bundle exited with ${launcherExit}\n${launcherRunOutput}`);
   }
 
-  const statusPath = path.join(installedDir, manifest.statusPath);
+  const statusPath = path.join(installRoot, manifest.statusPath);
   const status = await waitForFile(statusPath);
   if (status.state !== "stopped") throw new Error(`unexpected launcher state: ${status.state}`);
   if (status.resultStatus !== "stopped") throw new Error(`unexpected launcher result status: ${status.resultStatus}`);
   if (!status.bridgeId) throw new Error("launcher did not persist bridge id");
-  if (!status.configPath || status.configPath !== path.join(installedDir, manifest.configPath)) throw new Error("launcher status did not persist config path");
+  if (!status.configPath || status.configPath !== path.join(installRoot, manifest.configPath)) throw new Error("launcher status did not persist config path");
 
-  const config = JSON.parse(await fs.readFile(path.join(installedDir, manifest.configPath), "utf8"));
+  const config = JSON.parse(await fs.readFile(path.join(installRoot, manifest.configPath), "utf8"));
   if (config.bridgeId !== status.bridgeId) throw new Error("config and status bridge id mismatch");
-  if (config.lockPath !== path.join(installedDir, manifest.lockPath)) throw new Error("config lock path mismatch");
+  if (config.lockPath !== path.join(installRoot, manifest.lockPath)) throw new Error("config lock path mismatch");
 
   const registry = await fetch(`${baseUrl}/targets`);
   const registryPayload = await registry.json();
@@ -275,6 +307,20 @@ try {
   if (target.connection?.hostBridge?.state !== "registered") throw new Error("launcher bridge was not registered");
   if (!target.connection?.hostBridge?.attestedAt) throw new Error("launcher attestation missing");
   if (!target.connection?.hostBridge?.lastSeenAt) throw new Error("launcher heartbeat missing");
+
+  const removeProcess = spawnPowerShellScript(path.join(bundleDir, "remove-host-agent.ps1"), ["-InstallRoot", installRoot]);
+  let removeRunOutput = "";
+  removeProcess.stdout.on("data", (chunk) => {
+    removeRunOutput += chunk.toString();
+  });
+  removeProcess.stderr.on("data", (chunk) => {
+    removeRunOutput += chunk.toString();
+  });
+  const removeRunExit = await new Promise((resolve) => removeProcess.on("close", resolve));
+  if (removeRunExit !== 0) {
+    throw new Error(`remove script exited with ${removeRunExit}\n${removeRunOutput}`);
+  }
+  if (await fs.stat(installRoot).then(() => true).catch(() => false)) throw new Error("install root still exists after remove");
 
   console.log("PASS host agent install bundle writes launcher artifacts and preserves identity state.");
 } finally {
