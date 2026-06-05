@@ -56,6 +56,9 @@ interface TargetDraftState {
   knownHostFingerprint: string;
   sessionMode: TargetSessionMode;
   note: string;
+  hostBridgeDeviceId: string;
+  hostBridgeInstallId: string;
+  hostBridgePlatform: string;
   lastProbeAt: string;
   lastProbeResult: "reachable" | "unreachable" | "error" | "";
   lastProbeHost: string;
@@ -318,6 +321,9 @@ function createDraft(kind: TargetKind = "ssh-terminal"): TargetDraftState {
     knownHostFingerprint: "",
     sessionMode: connection.sessionMode,
     note: "",
+    hostBridgeDeviceId: "",
+    hostBridgeInstallId: "",
+    hostBridgePlatform: "",
     lastProbeAt: "",
     lastProbeResult: "",
     lastProbeHost: "",
@@ -347,6 +353,9 @@ function draftFromTarget(target: TargetProfile): TargetDraftState {
     knownHostFingerprint: connection.knownHostFingerprint ?? "",
     sessionMode: connection.sessionMode,
     note: connection.note ?? "",
+    hostBridgeDeviceId: connection.hostBridge?.deviceId ?? "",
+    hostBridgeInstallId: connection.hostBridge?.installId ?? "",
+    hostBridgePlatform: connection.hostBridge?.platform ?? "",
     lastProbeAt: connection.lastProbeAt ?? "",
     lastProbeResult: connection.lastProbeResult ?? "",
     lastProbeHost: connection.lastProbeHost ?? "",
@@ -371,6 +380,7 @@ function buildTargetFromDraft(draft: TargetDraftState): TargetProfile {
   const parsedProbePort = Number.isFinite(probePortValue) ? probePortValue : undefined;
   const probeLatencyValue = draft.lastProbeLatencyMs.trim() ? Number.parseInt(draft.lastProbeLatencyMs, 10) : undefined;
   const parsedProbeLatency = Number.isFinite(probeLatencyValue) ? probeLatencyValue : undefined;
+  const defaultHostBridge = defaultTargetConnection(draft.kind).hostBridge ?? { state: "unregistered" as const };
   return createTargetProfile({
     id: draft.id.trim() || createDraftId(draft.kind),
     displayName: draft.displayName.trim() || defaultDisplayNameForKind(draft.kind),
@@ -387,6 +397,12 @@ function buildTargetFromDraft(draft: TargetDraftState): TargetProfile {
       knownHostFingerprint: draft.knownHostFingerprint.trim() || undefined,
       sessionMode: draft.sessionMode,
       note: draft.note.trim() || undefined,
+      hostBridge: {
+        ...defaultHostBridge,
+        deviceId: draft.hostBridgeDeviceId.trim() || undefined,
+        installId: draft.hostBridgeInstallId.trim() || undefined,
+        platform: draft.hostBridgePlatform.trim() || undefined,
+      },
       lastProbeAt: draft.lastProbeAt.trim() || undefined,
       lastProbeResult: draft.lastProbeResult || undefined,
       lastProbeHost: draft.lastProbeHost.trim() || undefined,
@@ -421,6 +437,8 @@ function readinessActionLabel(report: TargetConnectionReadinessReport): string {
   switch (report.nextAction) {
     case "enroll_host":
       return "Enroll host";
+    case "attest":
+      return "Attest";
     case "heartbeat":
       return "Heartbeat";
     case "pair":
@@ -1477,6 +1495,15 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         ? { pairingCode: pairingCodeDraft.trim() || undefined }
         : action === "enroll_host"
           ? { enrollmentCode: hostEnrollmentCodeDraft.trim() || undefined }
+          : action === "attest"
+            ? {
+                bridgeId: currentTarget.connection.hostBridge?.bridgeId || undefined,
+                hostName: currentTarget.connection.hostBridge?.hostName || undefined,
+                bridgeVersion: currentTarget.connection.hostBridge?.bridgeVersion || undefined,
+                deviceId: currentTarget.connection.hostBridge?.deviceId || draft.hostBridgeDeviceId.trim() || undefined,
+                installId: currentTarget.connection.hostBridge?.installId || draft.hostBridgeInstallId.trim() || undefined,
+                platform: currentTarget.connection.hostBridge?.platform || draft.hostBridgePlatform.trim() || undefined,
+              }
           : action === "heartbeat"
             ? {
                 bridgeId: currentTarget.connection.hostBridge?.bridgeId || undefined,
@@ -1503,6 +1530,9 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
           bridgeId?: string;
           hostName?: string;
           bridgeVersion?: string;
+          deviceId?: string;
+          installId?: string;
+          platform?: string;
         } = { targetId: currentTarget.id };
         let endpoint = `${gatewayBaseUrl}/targets/connection`;
         if (action === "pair") {
@@ -1511,6 +1541,14 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         } else if (action === "enroll_host") {
           requestBody.action = action;
           if (hostEnrollmentCodeDraft.trim()) requestBody.enrollmentCode = hostEnrollmentCodeDraft.trim();
+        } else if (action === "attest") {
+          endpoint = `${gatewayBaseUrl}/targets/host-bridge/attest`;
+          requestBody.bridgeId = currentTarget.connection.hostBridge?.bridgeId;
+          requestBody.hostName = currentTarget.connection.hostBridge?.hostName;
+          requestBody.bridgeVersion = currentTarget.connection.hostBridge?.bridgeVersion;
+          requestBody.deviceId = currentTarget.connection.hostBridge?.deviceId || draft.hostBridgeDeviceId.trim() || undefined;
+          requestBody.installId = currentTarget.connection.hostBridge?.installId || draft.hostBridgeInstallId.trim() || undefined;
+          requestBody.platform = currentTarget.connection.hostBridge?.platform || draft.hostBridgePlatform.trim() || undefined;
         } else if (action === "heartbeat") {
           endpoint = `${gatewayBaseUrl}/targets/host-bridge/heartbeat`;
           requestBody.bridgeId = currentTarget.connection.hostBridge?.bridgeId;
@@ -2702,6 +2740,9 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                       knownHostFingerprint: "",
                       sessionMode: nextConnection.sessionMode,
                       note: "",
+                      hostBridgeDeviceId: "",
+                      hostBridgeInstallId: "",
+                      hostBridgePlatform: "",
                     };
                   });
                   clearSensitiveDraftState();
@@ -2784,6 +2825,14 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   <button
                     className="secondary-button"
                     type="button"
+                    onClick={() => void runConnectionAction("attest")}
+                    disabled={busy || selectedTarget?.connection.hostBridge?.state !== "registered"}
+                  >
+                    {copy.targetRegistryHostBridgeAttestButton}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
                     onClick={() => void runConnectionAction("heartbeat")}
                     disabled={busy || selectedTarget?.connection.hostBridge?.state !== "registered"}
                   >
@@ -2819,6 +2868,46 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   {copy.targetRegistryHostBridgeVersion}：
                   {selectedTarget?.connection.hostBridge?.bridgeVersion ?? copy.targetRegistryFieldNa}
                 </small>
+                <small>
+                  {copy.targetRegistryHostBridgeDeviceId}：
+                  {selectedTarget?.connection.hostBridge?.deviceId ?? copy.targetRegistryFieldNa}
+                </small>
+                <small>
+                  {copy.targetRegistryHostBridgeInstallId}：
+                  {selectedTarget?.connection.hostBridge?.installId ?? copy.targetRegistryFieldNa}
+                </small>
+                <small>
+                  {copy.targetRegistryHostBridgePlatform}：
+                  {selectedTarget?.connection.hostBridge?.platform ?? copy.targetRegistryFieldNa}
+                </small>
+                <small>
+                  attestedAt：
+                  {selectedTarget?.connection.hostBridge?.attestedAt ?? copy.targetRegistryFieldNa}
+                </small>
+                <label>
+                  <span>{copy.targetRegistryHostBridgeDeviceId}</span>
+                  <input
+                    value={draft.hostBridgeDeviceId}
+                    onChange={(event) => setDraft((current) => ({ ...current, hostBridgeDeviceId: event.target.value }))}
+                    placeholder={copy.targetRegistryHostBridgeDeviceIdPlaceholder}
+                  />
+                </label>
+                <label>
+                  <span>{copy.targetRegistryHostBridgeInstallId}</span>
+                  <input
+                    value={draft.hostBridgeInstallId}
+                    onChange={(event) => setDraft((current) => ({ ...current, hostBridgeInstallId: event.target.value }))}
+                    placeholder={copy.targetRegistryHostBridgeInstallIdPlaceholder}
+                  />
+                </label>
+                <label>
+                  <span>{copy.targetRegistryHostBridgePlatform}</span>
+                  <input
+                    value={draft.hostBridgePlatform}
+                    onChange={(event) => setDraft((current) => ({ ...current, hostBridgePlatform: event.target.value }))}
+                    placeholder={copy.targetRegistryHostBridgePlatformPlaceholder}
+                  />
+                </label>
               </section>
             ) : null}
             {draft.kind !== "local-shell" && draft.kind !== "mock" ? (

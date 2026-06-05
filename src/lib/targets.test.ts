@@ -90,6 +90,10 @@ describe("target orchestration contract", () => {
           bridgeId: "ops-rdp-bridge",
           hostName: "Ops Host Bridge",
           bridgeVersion: "1.0.0-test",
+          deviceId: "ops-rdp-device",
+          installId: "ops-rdp-install",
+          platform: "windows-11",
+          attestedAt: "2026-06-05T11:55:00.000Z",
         },
       },
     });
@@ -145,6 +149,10 @@ describe("target orchestration contract", () => {
             bridgeId: "ops-vm-bridge",
             hostName: "Ops Host Bridge",
             bridgeVersion: "1.0.0-test",
+            deviceId: "ops-vm-device",
+            installId: "ops-vm-install",
+            platform: "windows-11",
+            attestedAt: "2026-06-05T11:55:00.000Z",
           },
         },
       }),
@@ -165,6 +173,10 @@ describe("target orchestration contract", () => {
             bridgeId: "builder-ssh-bridge",
             hostName: "SSH Host Bridge",
             bridgeVersion: "1.0.0-test",
+            deviceId: "builder-ssh-device",
+            installId: "builder-ssh-install",
+            platform: "windows-11",
+            attestedAt: "2026-06-05T11:55:00.000Z",
           },
         },
       }),
@@ -323,6 +335,10 @@ describe("target orchestration contract", () => {
           bridgeId: "builder-ssh-bridge",
           hostName: "SSH Host Bridge",
           bridgeVersion: "1.0.0-test",
+          deviceId: "builder-ssh-device",
+          installId: "builder-ssh-install",
+          platform: "windows-11",
+          attestedAt: "2026-06-05T11:55:00.000Z",
         },
       },
     });
@@ -364,6 +380,10 @@ describe("target orchestration contract", () => {
           bridgeId: "builder-ssh-bridge",
           hostName: "SSH Host Bridge",
           bridgeVersion: "1.0.0-test",
+          deviceId: "builder-ssh-device",
+          installId: "builder-ssh-install",
+          platform: "windows-11",
+          attestedAt: "2026-06-05T11:55:00.000Z",
         },
       },
     });
@@ -405,6 +425,10 @@ describe("target orchestration contract", () => {
           bridgeId: "builder-ssh-bridge",
           hostName: "SSH Host Bridge",
           bridgeVersion: "1.0.0-test",
+          deviceId: "builder-ssh-device",
+          installId: "builder-ssh-install",
+          platform: "windows-11",
+          attestedAt: "2026-06-05T11:55:00.000Z",
         },
       },
     });
@@ -459,10 +483,24 @@ describe("target orchestration contract", () => {
     expect(enrolled.target.connection.hostBridge?.hostName).toBe("Ops Host Bridge");
     expect(enrolled.target.connection.hostBridge?.bridgeVersion).toBe("1.0.0-test");
 
-    const readiness = buildTargetConnectionReadinessReport(enrolled.target);
+    const attested = applyTargetConnectionAction(enrolled.target, "attest", {
+      bridgeId: enrolled.target.connection.hostBridge?.bridgeId,
+      hostName: "Ops Host Bridge",
+      bridgeVersion: "1.0.0-test",
+      deviceId: "ops-vm-device",
+      installId: "ops-vm-install",
+      platform: "windows-11",
+    });
+
+    expect(attested.allowed).toBe(true);
+    expect(attested.target.connection.hostBridge?.attestedAt).toBeDefined();
+    expect(attested.target.connection.hostBridge?.deviceId).toBe("ops-vm-device");
+    expect(attested.target.connection.hostBridge?.installId).toBe("ops-vm-install");
+
+    const readiness = buildTargetConnectionReadinessReport(attested.target);
     expect(readiness.readyToConnect).toBe(true);
     expect(readiness.nextAction).toBe("connect");
-    expect(targetConnectionReadinessIssues(enrolled.target)).toHaveLength(0);
+    expect(targetConnectionReadinessIssues(attested.target)).toHaveLength(0);
   });
 
   it("requests a heartbeat when a remote host bridge goes stale", () => {
@@ -482,6 +520,10 @@ describe("target orchestration contract", () => {
           bridgeId: "ops-vm-bridge",
           hostName: "Ops Host Bridge",
           bridgeVersion: "1.0.0-test",
+          deviceId: "ops-vm-device",
+          installId: "ops-vm-install",
+          platform: "windows-11",
+          attestedAt: staleAt,
           registeredAt: staleAt,
           lastSeenAt: staleAt,
         },
@@ -526,6 +568,10 @@ describe("target orchestration contract", () => {
           bridgeId: "builder-ssh-bridge",
           hostName: "SSH Host Bridge",
           bridgeVersion: "1.0.0-test",
+          deviceId: "builder-ssh-device",
+          installId: "builder-ssh-install",
+          platform: "windows-11",
+          attestedAt: "2026-06-05T11:55:00.000Z",
         },
       },
     });
@@ -552,6 +598,10 @@ describe("target orchestration contract", () => {
           bridgeId: "builder-ssh-bridge",
           hostName: "SSH Host Bridge",
           bridgeVersion: "1.0.0-test",
+          deviceId: "builder-ssh-device",
+          installId: "builder-ssh-install",
+          platform: "windows-11",
+          attestedAt: "2026-06-05T11:55:00.000Z",
         },
       },
     });

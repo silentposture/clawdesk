@@ -1,7 +1,7 @@
 export type TargetKind = "local-shell" | "ssh-terminal" | "remote-desktop" | "mock";
 export type TargetConnectionState = "offline" | "connecting" | "ready" | "degraded";
 export type TargetDispatchCategory = "observe" | "inspect" | "debug" | "execute_safe" | "request_approval";
-export type TargetConnectionAction = "enroll_host" | "heartbeat" | "pair" | "verify_host_key" | "probe" | "connect" | "disconnect" | "refresh";
+export type TargetConnectionAction = "enroll_host" | "attest" | "heartbeat" | "pair" | "verify_host_key" | "probe" | "connect" | "disconnect" | "refresh";
 export type TargetCredentialMode = "none" | "secret-ref" | "ssh-agent" | "platform-managed";
 export type TargetSessionMode = "observe" | "control";
 export type ShellCommandSafety = "allowlisted" | "needs-review" | "blocked";
@@ -39,9 +39,14 @@ export interface TargetHostBridgeProfile {
   bridgeId?: string;
   hostName?: string;
   bridgeVersion?: string;
+  deviceId?: string;
+  installId?: string;
+  platform?: string;
   registeredAt?: string;
+  attestedAt?: string;
   lastSeenAt?: string;
   lastError?: string;
+  lastAttestationError?: string;
 }
 
 export interface TargetProfile {
@@ -128,6 +133,7 @@ export interface TargetConnectionReadinessReport {
   lastProbeAt?: string;
   nextAction:
     | "enroll_host"
+    | "attest"
     | "heartbeat"
     | "pair"
     | "probe"
@@ -201,6 +207,18 @@ function getHostBridgeStalenessState(hostBridge?: TargetHostBridgeProfile): "fre
   return Date.now() - seenAt > HOST_BRIDGE_STALE_AFTER_MS ? "stale" : "fresh";
 }
 
+function getHostBridgeAttestationState(hostBridge?: TargetHostBridgeProfile): "fresh" | "missing" {
+  if (!hostBridge || hostBridge.state !== "registered") {
+    return "missing";
+  }
+
+  if (!hostBridge.attestedAt || !hostBridge.deviceId || !hostBridge.installId) {
+    return "missing";
+  }
+
+  return "fresh";
+}
+
 export function defaultTargetConnection(kind: TargetKind): TargetConnectionProfile {
   if (kind === "local-shell" || kind === "mock") {
     return {
@@ -211,6 +229,7 @@ export function defaultTargetConnection(kind: TargetKind): TargetConnectionProfi
         bridgeId: `${kind}-bridge`,
         hostName: kind === "local-shell" ? "Local Host" : "Mock Host",
         bridgeVersion: "local",
+        attestedAt: new Date().toISOString(),
       },
     };
   }
@@ -513,6 +532,12 @@ export function summarizeTargetConnectionProfile(target: TargetProfile): string 
   if (target.connection.port) parts.push(`port ${target.connection.port}`);
   if (target.connection.hostBridge?.state) {
     parts.push(`bridge ${target.connection.hostBridge.state}`);
+    if (target.connection.hostBridge.deviceId) {
+      parts.push(`device ${target.connection.hostBridge.deviceId}`);
+    }
+    if (target.connection.hostBridge.attestedAt) {
+      parts.push("attested");
+    }
   }
   if (target.connection.credentialMode === "secret-ref" && target.connection.credentialRef) {
     parts.push(`ref ${maskTargetCredentialRef(target.connection.credentialRef)}`);
@@ -553,6 +578,7 @@ export function buildTargetConnectionReadinessReport(target: TargetProfile): Tar
   const isLocalLike = target.kind === "local-shell" || target.kind === "mock";
   const isRemote = target.kind === "ssh-terminal" || target.kind === "remote-desktop";
   const hostBridgeStaleness = getHostBridgeStalenessState(connection.hostBridge);
+  const hostBridgeAttestation = getHostBridgeAttestationState(connection.hostBridge);
 
   if (isLocalLike) {
     checks.push({
@@ -572,6 +598,13 @@ export function buildTargetConnectionReadinessReport(target: TargetProfile): Tar
       label: "Pairing",
       status: target.paired ? "pass" : "warn",
       detail: target.paired ? "Local targets remain paired and ready." : "Local targets can be paired before dispatch.",
+      required: false,
+    });
+    checks.push({
+      key: "attestation",
+      label: "Host attestation",
+      status: connection.hostBridge?.state === "registered" ? "pass" : "warn",
+      detail: connection.hostBridge?.state === "registered" ? "Local host bridge attestation is already present." : "Local targets ship with the host bridge already present.",
       required: false,
     });
     checks.push({
@@ -616,6 +649,17 @@ export function buildTargetConnectionReadinessReport(target: TargetProfile): Tar
       : connection.hostBridge?.state === "registered"
         ? "Enroll the host, then complete pairing before connect."
         : "Target must be paired after host enrollment before it can connect.",
+    required: true,
+  });
+
+  checks.push({
+    key: "attestation",
+    label: "Host attestation",
+    status: hostBridgeAttestation === "fresh" ? "pass" : "fail",
+    detail:
+      hostBridgeAttestation === "fresh"
+        ? `Host bridge attested${connection.hostBridge?.deviceId ? ` from device ${connection.hostBridge.deviceId}` : ""}${connection.hostBridge?.installId ? ` / install ${connection.hostBridge.installId}` : ""}.`
+        : "Host bridge attestation is required before connect.",
     required: true,
   });
 
@@ -699,6 +743,8 @@ export function buildTargetConnectionReadinessReport(target: TargetProfile): Tar
   let nextAction: TargetConnectionReadinessReport["nextAction"] = "connect";
   if (connection.hostBridge?.state !== "registered") {
     nextAction = "enroll_host";
+  } else if (hostBridgeAttestation === "missing") {
+    nextAction = "attest";
   } else if (hostBridgeStaleness === "stale") {
     nextAction = "heartbeat";
   } else if (!target.paired) {
@@ -746,7 +792,16 @@ function updatePrimaryAdapter(target: TargetProfile, updater: (adapter: TargetAd
 export function applyTargetConnectionAction(
   target: TargetProfile,
   action: TargetConnectionAction,
-  options: { pairingCode?: string; enrollmentCode?: string; bridgeId?: string; hostName?: string; bridgeVersion?: string } = {},
+  options: {
+    pairingCode?: string;
+    enrollmentCode?: string;
+    bridgeId?: string;
+    hostName?: string;
+    bridgeVersion?: string;
+    deviceId?: string;
+    installId?: string;
+    platform?: string;
+  } = {},
 ): TargetConnectionResult {
   const now = new Date().toISOString();
   const baseTarget = cloneTargetProfile(target);
@@ -804,9 +859,14 @@ export function applyTargetConnectionAction(
               bridgeId: baseTarget.connection.hostBridge?.bridgeId ?? `${baseTarget.id}-bridge`,
               hostName: options.hostName?.trim() || baseTarget.displayName,
               bridgeVersion: options.bridgeVersion?.trim() || baseTarget.connection.hostBridge?.bridgeVersion || "local",
+              deviceId: baseTarget.connection.hostBridge?.deviceId ?? `${baseTarget.id}-device`,
+              installId: baseTarget.connection.hostBridge?.installId ?? `${baseTarget.id}-install`,
+              platform: baseTarget.connection.hostBridge?.platform ?? "local",
               registeredAt: baseTarget.connection.hostBridge?.registeredAt ?? now,
+              attestedAt: baseTarget.connection.hostBridge?.attestedAt ?? now,
               lastSeenAt: now,
               lastError: undefined,
+              lastAttestationError: baseTarget.connection.hostBridge?.lastAttestationError,
             },
           },
         },
@@ -833,16 +893,21 @@ export function applyTargetConnectionAction(
           paired: true,
           state: "connecting",
           lastSeenAt: now,
-          connection: {
-            ...baseTarget.connection,
-            hostBridge: {
-              state: "registered",
-              bridgeId: baseTarget.connection.hostBridge?.bridgeId ?? `${baseTarget.id}-bridge`,
-              hostName: options.hostName?.trim() || baseTarget.displayName,
-              bridgeVersion: options.bridgeVersion?.trim() || baseTarget.connection.hostBridge?.bridgeVersion || "1.0.0",
-              registeredAt: baseTarget.connection.hostBridge?.registeredAt ?? now,
-              lastSeenAt: now,
-              lastError: undefined,
+            connection: {
+              ...baseTarget.connection,
+              hostBridge: {
+                state: "registered",
+                bridgeId: baseTarget.connection.hostBridge?.bridgeId ?? `${baseTarget.id}-bridge`,
+                hostName: options.hostName?.trim() || baseTarget.displayName,
+                bridgeVersion: options.bridgeVersion?.trim() || baseTarget.connection.hostBridge?.bridgeVersion || "1.0.0",
+                deviceId: baseTarget.connection.hostBridge?.deviceId ?? `${baseTarget.id}-device`,
+                installId: baseTarget.connection.hostBridge?.installId ?? `${baseTarget.id}-install`,
+                platform: baseTarget.connection.hostBridge?.platform ?? "unknown",
+                registeredAt: baseTarget.connection.hostBridge?.registeredAt ?? now,
+                attestedAt: baseTarget.connection.hostBridge?.attestedAt,
+                lastSeenAt: now,
+                lastError: undefined,
+                lastAttestationError: baseTarget.connection.hostBridge?.lastAttestationError,
             },
           },
         },
@@ -850,6 +915,63 @@ export function applyTargetConnectionAction(
           ...current,
           authenticated: true,
           hostKeyVerified: baseTarget.kind === "ssh-terminal" ? false : current.hostKeyVerified,
+        }),
+      ),
+    };
+  }
+
+  if (action === "attest") {
+    if (baseTarget.connection.hostBridge?.state !== "registered") {
+      return {
+        allowed: false,
+        reason: "Enroll the host bridge before attesting its identity.",
+        action,
+        target: baseTarget,
+      };
+    }
+
+    const bridgeId = typeof options.bridgeId === "string" ? options.bridgeId.trim() : "";
+    if (bridgeId && baseTarget.connection.hostBridge.bridgeId && bridgeId !== baseTarget.connection.hostBridge.bridgeId) {
+      return {
+        allowed: false,
+        reason: "The host bridge identity does not match this target.",
+        action,
+        target: baseTarget,
+      };
+    }
+
+    return {
+      allowed: true,
+      reason: "The host bridge identity was attested.",
+      action,
+      target: updatePrimaryAdapter(
+        {
+          ...baseTarget,
+          state: baseTarget.state === "offline" ? "connecting" : baseTarget.state,
+          lastSeenAt: now,
+          connection: {
+            ...baseTarget.connection,
+            hostBridge: {
+              ...baseTarget.connection.hostBridge,
+              state: "registered",
+              bridgeId: baseTarget.connection.hostBridge.bridgeId ?? `${baseTarget.id}-bridge`,
+              hostName: options.hostName?.trim() || baseTarget.connection.hostBridge.hostName || baseTarget.displayName,
+              bridgeVersion: options.bridgeVersion?.trim() || baseTarget.connection.hostBridge.bridgeVersion || "1.0.0",
+              deviceId: options.deviceId?.trim() || baseTarget.connection.hostBridge.deviceId || `${baseTarget.id}-device`,
+              installId: options.installId?.trim() || baseTarget.connection.hostBridge.installId || `${baseTarget.id}-install`,
+              platform: options.platform?.trim() || baseTarget.connection.hostBridge.platform || "unknown",
+              registeredAt: baseTarget.connection.hostBridge.registeredAt ?? now,
+              attestedAt: now,
+              lastSeenAt: now,
+              lastError: undefined,
+              lastAttestationError: undefined,
+            },
+          },
+        },
+        (current) => ({
+          ...current,
+          authenticated: true,
+          hostKeyVerified: current.hostKeyVerified,
         }),
       ),
     };
@@ -893,8 +1015,10 @@ export function applyTargetConnectionAction(
               hostName: options.hostName?.trim() || baseTarget.connection.hostBridge.hostName || baseTarget.displayName,
               bridgeVersion: options.bridgeVersion?.trim() || baseTarget.connection.hostBridge.bridgeVersion || "1.0.0",
               registeredAt: baseTarget.connection.hostBridge.registeredAt ?? now,
+              attestedAt: baseTarget.connection.hostBridge.attestedAt,
               lastSeenAt: now,
               lastError: undefined,
+              lastAttestationError: baseTarget.connection.hostBridge.lastAttestationError,
             },
           },
         },
