@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "clawdesk-rdp-lifecycle-"));
+const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "clawdesk-host-enrollment-"));
 const stateFile = path.join(stateDir, "state.json");
 async function reservePort() {
   const server = net.createServer();
@@ -26,6 +26,10 @@ let gatewayOutput = "";
 const listener = net.createServer();
 await new Promise((resolve) => listener.listen(probePort, "127.0.0.1", resolve));
 
+async function cleanupTempFiles() {
+  await fs.rm(stateDir, { recursive: true, force: true });
+}
+
 function spawnGateway() {
   const child = spawn(process.execPath, ["sidecars/mock-gateway/server.mjs"], {
     cwd: process.cwd(),
@@ -34,8 +38,6 @@ function spawnGateway() {
       CLAWDESK_MOCK_PORT: String(port),
       OPENCLAW_MOCK_PORT: String(port),
       CLAWDESK_MOCK_STATE_FILE: stateFile,
-      CLAWDESK_REMOTE_DESKTOP_CLIENT_EXECUTABLE: process.execPath,
-      CLAWDESK_REMOTE_DESKTOP_CLIENT_ARGS_JSON: JSON.stringify(["-e", "setInterval(() => {}, 100000)"]),
       NODE_ENV: "test",
       NODE_OPTIONS: "--max-old-space-size=128",
     },
@@ -111,27 +113,27 @@ try {
   if (health.name !== "clawdesk-mock-gateway") throw new Error("unexpected health identity");
 
   const registry = {
-    defaultTargetId: "rdp-test",
+    defaultTargetId: "rdp-host",
     targetGroups: [],
     targets: [
       {
-        id: "rdp-test",
-        displayName: "RDP Test",
+        id: "rdp-host",
+        displayName: "RDP Host",
         kind: "remote-desktop",
-        state: "ready",
-        paired: true,
-        trustedWorkspaces: ["~/ClawDesk Projects/桌面 GUI"],
+        state: "offline",
+        paired: false,
+        trustedWorkspaces: ["~/ClawDesk Projects/RDP"],
         connection: {
           username: "ops-user",
           port: probePort,
           credentialMode: "platform-managed",
-          sessionMode: "control",
+          sessionMode: "observe",
         },
         adapters: [
           {
             kind: "remote-desktop",
             endpoint: `rdp://127.0.0.1:${probePort}`,
-            authenticated: true,
+            authenticated: false,
             hostKeyVerified: false,
             supportsTerminal: false,
             supportsScreen: true,
@@ -146,102 +148,65 @@ try {
   const save = await postJson("/targets", { registry });
   if (!save.response.ok) throw new Error(`target registry save failed: ${save.response.status}`);
 
-  await waitForStateFile();
-
-  const hostEnrollmentTicket = await postJson("/targets/host-enrollment-ticket", {
-    targetId: "rdp-test",
-    targetName: "RDP Test",
+  const ticket = await postJson("/targets/host-enrollment-ticket", {
+    targetId: "rdp-host",
+    targetName: "RDP Host",
     kind: "remote-desktop",
-    hostName: "RDP Host Bridge",
+    hostName: "Ops Host Bridge",
     bridgeVersion: "1.0.0-test",
     expiresInMinutes: 15,
   });
-  if (!hostEnrollmentTicket.response.ok || !hostEnrollmentTicket.payload.allowed || !hostEnrollmentTicket.payload.ticket?.code) {
-    throw new Error(`host enrollment ticket issuance failed: ${hostEnrollmentTicket.payload.reason || hostEnrollmentTicket.response.status}`);
+  if (!ticket.response.ok || !ticket.payload.allowed || !ticket.payload.ticket?.code) {
+    throw new Error(`host enrollment ticket issuance failed: ${ticket.payload.reason || ticket.response.status}`);
   }
 
-  const hostEnroll = await postJson("/targets/host-enrollment", {
-    targetId: "rdp-test",
-    enrollmentCode: hostEnrollmentTicket.payload.ticket.code,
-    hostName: "RDP Host Bridge",
+  const enroll = await postJson("/targets/host-enrollment", {
+    targetId: "rdp-host",
+    enrollmentCode: ticket.payload.ticket.code,
+    hostName: "Ops Host Bridge",
     bridgeVersion: "1.0.0-test",
   });
-  if (!hostEnroll.response.ok || !hostEnroll.payload.allowed) throw new Error(`host enrollment failed: ${hostEnroll.payload.reason || hostEnroll.response.status}`);
-  if (hostEnroll.payload.target?.connection?.hostBridge?.state !== "registered") throw new Error("host enrollment did not register host bridge");
+  if (!enroll.response.ok || !enroll.payload.allowed) throw new Error(`host enrollment failed: ${enroll.payload.reason || enroll.response.status}`);
+  if (!enroll.payload.target?.paired) throw new Error("host enrollment did not mark target as paired");
+  if (enroll.payload.target?.connection?.hostBridge?.state !== "registered") throw new Error("host enrollment did not register host bridge");
 
   await waitForStateFile();
 
-  const probe = await postJson("/targets/connection", { targetId: "rdp-test", action: "probe" });
+  const probe = await postJson("/targets/connection", { targetId: "rdp-host", action: "probe" });
   if (!probe.response.ok || !probe.payload.allowed) throw new Error(`probe failed: ${probe.payload.reason || probe.response.status}`);
   if (probe.payload.target?.connection?.lastProbeResult !== "reachable") throw new Error("probe did not mark target reachable");
 
-  const readiness = await getJson("/targets/connection-readiness?targetId=rdp-test");
-  if (!readiness.response.ok || !readiness.payload.report?.readyToConnect) throw new Error("target should be ready after probe");
+  const readiness = await getJson("/targets/connection-readiness?targetId=rdp-host");
+  if (!readiness.response.ok || !readiness.payload.report?.readyToConnect) throw new Error("target should be ready after host enrollment and probe");
   if (readiness.payload.report.nextAction !== "connect") throw new Error(`unexpected next action: ${readiness.payload.report.nextAction}`);
-
-  const launch = await postJson("/targets/remote-desktop/session", { targetId: "rdp-test", action: "launch_client" });
-  if (!launch.response.ok || !launch.payload.allowed) throw new Error(`launch failed: ${launch.payload.reason || launch.response.status}`);
-  const pid = launch.payload.session?.clientLaunchPid ?? launch.payload.launch?.pid;
-  if (typeof pid !== "number" || pid <= 0) throw new Error("launch did not return a pid");
-  try {
-    process.kill(pid, 0);
-  } catch {
-    throw new Error("launched client pid is not alive");
-  }
-
-  const disconnect = await postJson("/targets/remote-desktop/session", { targetId: "rdp-test", action: "disconnect" });
-  if (!disconnect.response.ok || !disconnect.payload.allowed) throw new Error(`disconnect failed: ${disconnect.payload.reason || disconnect.response.status}`);
-  if (disconnect.payload.session?.clientLaunchState !== "idle") throw new Error(`disconnect did not reset launch state: ${disconnect.payload.session?.clientLaunchState}`);
-
-  let terminated = false;
-  for (let i = 0; i < 20; i += 1) {
-    try {
-      process.kill(pid, 0);
-      await delay(100);
-    } catch {
-      terminated = true;
-      break;
-    }
-  }
-  if (!terminated) throw new Error("disconnect did not terminate the launched client process");
-
-  const reconnect = await postJson("/targets/remote-desktop/session", { targetId: "rdp-test", action: "reconnect" });
-  if (!reconnect.response.ok || !reconnect.payload.allowed) throw new Error(`reconnect failed: ${reconnect.payload.reason || reconnect.response.status}`);
-  const reconnectPid = reconnect.payload.session?.clientLaunchPid ?? reconnect.payload.launch?.pid;
-  if (typeof reconnectPid !== "number" || reconnectPid <= 0) throw new Error("reconnect did not return a pid");
-  if (reconnectPid === pid) throw new Error("reconnect reused the terminated pid");
-  try {
-    process.kill(reconnectPid, 0);
-  } catch {
-    throw new Error("reconnect pid is not alive");
-  }
-
-  const reconnectDisconnect = await postJson("/targets/remote-desktop/session", { targetId: "rdp-test", action: "disconnect" });
-  if (!reconnectDisconnect.response.ok || !reconnectDisconnect.payload.allowed) {
-    throw new Error(`reconnect disconnect failed: ${reconnectDisconnect.payload.reason || reconnectDisconnect.response.status}`);
-  }
-  let reconnectTerminated = false;
-  for (let i = 0; i < 20; i += 1) {
-    try {
-      process.kill(reconnectPid, 0);
-      await delay(100);
-    } catch {
-      reconnectTerminated = true;
-      break;
-    }
-  }
-  if (!reconnectTerminated) throw new Error("reconnect disconnect did not terminate the relaunched client process");
+  const hostBridgeCheck = readiness.payload.report.checks.find((check) => check.key === "host-bridge");
+  if (!hostBridgeCheck || hostBridgeCheck.status !== "pass") throw new Error("host bridge readiness check did not pass");
 
   const audit = await getJson("/backend/audit?limit=50");
   if (!audit.response.ok) throw new Error("audit endpoint failed");
   const actions = audit.payload.events.map((event) => event.action);
-  if (!actions.includes("targets.remote-desktop.client-disconnect")) throw new Error("missing disconnect audit event");
-  if (!actions.includes("targets.remote-desktop.client-reconnect")) throw new Error("missing reconnect audit event");
+  if (!actions.includes("targets.host-enrollment-ticket.issued")) throw new Error("missing host enrollment ticket issue audit event");
+  if (!actions.includes("targets.host-enrollment-ticket.redeemed")) throw new Error("missing host enrollment ticket redeem audit event");
+  if (!actions.includes("targets.host-enrollment")) throw new Error("missing host enrollment audit event");
 
-  console.log("PASS remote desktop launch, disconnect, and reconnect lifecycle is managed by the gateway.");
+  await waitForStateFile();
+
+  await stop(gateway);
+  const restartedGateway = spawnGateway();
+  try {
+    await waitForHealth();
+    const registryAfterRestart = await getJson("/targets");
+    const targetAfterRestart = registryAfterRestart.payload.registry?.targets?.find((entry) => entry.id === "rdp-host");
+    if (!targetAfterRestart) throw new Error("target disappeared after restart");
+    if (targetAfterRestart.connection?.hostBridge?.state !== "registered") throw new Error("host bridge state did not persist after restart");
+    if (!targetAfterRestart.paired) throw new Error("paired state did not persist after restart");
+    console.log("PASS host enrollment code issuance, redemption, and persistence are managed by the gateway.");
+  } finally {
+    await stop(restartedGateway);
+  }
 } finally {
   listener.close();
-  await stop(gateway);
+  await cleanupTempFiles();
   if (gatewayOutput.trim()) {
     console.log("=== gateway output ===");
     console.log(gatewayOutput.trimEnd());

@@ -1,7 +1,7 @@
 export type TargetKind = "local-shell" | "ssh-terminal" | "remote-desktop" | "mock";
 export type TargetConnectionState = "offline" | "connecting" | "ready" | "degraded";
 export type TargetDispatchCategory = "observe" | "inspect" | "debug" | "execute_safe" | "request_approval";
-export type TargetConnectionAction = "pair" | "verify_host_key" | "probe" | "connect" | "disconnect" | "refresh";
+export type TargetConnectionAction = "enroll_host" | "pair" | "verify_host_key" | "probe" | "connect" | "disconnect" | "refresh";
 export type TargetCredentialMode = "none" | "secret-ref" | "ssh-agent" | "platform-managed";
 export type TargetSessionMode = "observe" | "control";
 export type ShellCommandSafety = "allowlisted" | "needs-review" | "blocked";
@@ -25,12 +25,23 @@ export interface TargetConnectionProfile {
   knownHostFingerprint?: string;
   sessionMode: TargetSessionMode;
   note?: string;
+  hostBridge?: TargetHostBridgeProfile;
   lastProbeAt?: string;
   lastProbeResult?: "reachable" | "unreachable" | "error";
   lastProbeHost?: string;
   lastProbePort?: number;
   lastProbeLatencyMs?: number;
   lastProbeError?: string;
+}
+
+export interface TargetHostBridgeProfile {
+  state: "unregistered" | "registered" | "stale";
+  bridgeId?: string;
+  hostName?: string;
+  bridgeVersion?: string;
+  registeredAt?: string;
+  lastSeenAt?: string;
+  lastError?: string;
 }
 
 export interface TargetProfile {
@@ -116,6 +127,7 @@ export interface TargetConnectionReadinessReport {
   lastProbeResult?: TargetConnectionProfile["lastProbeResult"];
   lastProbeAt?: string;
   nextAction:
+    | "enroll_host"
     | "pair"
     | "probe"
     | "verify_host_key"
@@ -174,6 +186,12 @@ export function defaultTargetConnection(kind: TargetKind): TargetConnectionProfi
     return {
       credentialMode: "platform-managed",
       sessionMode: "control",
+      hostBridge: {
+        state: "registered",
+        bridgeId: `${kind}-bridge`,
+        hostName: kind === "local-shell" ? "Local Host" : "Mock Host",
+        bridgeVersion: "local",
+      },
     };
   }
 
@@ -182,6 +200,9 @@ export function defaultTargetConnection(kind: TargetKind): TargetConnectionProfi
       credentialMode: "none",
       sessionMode: "control",
       port: 22,
+      hostBridge: {
+        state: "unregistered",
+      },
     };
   }
 
@@ -189,6 +210,9 @@ export function defaultTargetConnection(kind: TargetKind): TargetConnectionProfi
     credentialMode: "none",
     sessionMode: "observe",
     port: 3389,
+    hostBridge: {
+      state: "unregistered",
+    },
   };
 }
 
@@ -467,6 +491,9 @@ export function summarizeTargetConnectionProfile(target: TargetProfile): string 
   const parts: string[] = [target.connection.credentialMode, target.connection.sessionMode];
   if (target.connection.username) parts.push(target.connection.username);
   if (target.connection.port) parts.push(`port ${target.connection.port}`);
+  if (target.connection.hostBridge?.state) {
+    parts.push(`bridge ${target.connection.hostBridge.state}`);
+  }
   if (target.connection.credentialMode === "secret-ref" && target.connection.credentialRef) {
     parts.push(`ref ${maskTargetCredentialRef(target.connection.credentialRef)}`);
   }
@@ -508,6 +535,16 @@ export function buildTargetConnectionReadinessReport(target: TargetProfile): Tar
 
   if (isLocalLike) {
     checks.push({
+      key: "host-bridge",
+      label: "Host bridge",
+      status: connection.hostBridge?.state === "registered" ? "pass" : "warn",
+      detail:
+        connection.hostBridge?.state === "registered"
+          ? `Host bridge registered${connection.hostBridge.hostName ? ` for ${connection.hostBridge.hostName}` : ""}.`
+          : "Local targets ship with the host bridge already present.",
+      required: false,
+    });
+    checks.push({
       key: "pair",
       label: "Pairing",
       status: target.paired ? "pass" : "warn",
@@ -535,10 +572,25 @@ export function buildTargetConnectionReadinessReport(target: TargetProfile): Tar
   }
 
   checks.push({
+    key: "host-bridge",
+    label: "Host bridge",
+    status: connection.hostBridge?.state === "registered" ? "pass" : "fail",
+    detail:
+      connection.hostBridge?.state === "registered"
+        ? `Host bridge registered${connection.hostBridge.hostName ? ` for ${connection.hostBridge.hostName}` : ""}${connection.hostBridge.bridgeVersion ? ` (${connection.hostBridge.bridgeVersion})` : ""}.`
+        : "Install and enroll the ClawDesk host bridge before pairing this target.",
+    required: true,
+  });
+
+  checks.push({
     key: "pair",
     label: "Pairing",
-    status: target.paired ? "pass" : "fail",
-    detail: target.paired ? "Target is paired." : "Target must be paired before it can connect.",
+    status: target.paired ? "pass" : connection.hostBridge?.state === "registered" ? "warn" : "fail",
+    detail: target.paired
+      ? "Target is paired."
+      : connection.hostBridge?.state === "registered"
+        ? "Enroll the host, then complete pairing before connect."
+        : "Target must be paired after host enrollment before it can connect.",
     required: true,
   });
 
@@ -620,7 +672,9 @@ export function buildTargetConnectionReadinessReport(target: TargetProfile): Tar
 
   const issues = checks.filter((check) => check.status === "fail").map((check) => check.detail);
   let nextAction: TargetConnectionReadinessReport["nextAction"] = "connect";
-  if (!target.paired) {
+  if (connection.hostBridge?.state !== "registered") {
+    nextAction = "enroll_host";
+  } else if (!target.paired) {
     nextAction = "pair";
   } else if (connection.lastProbeResult !== "reachable") {
     nextAction = "probe";
@@ -662,7 +716,11 @@ function updatePrimaryAdapter(target: TargetProfile, updater: (adapter: TargetAd
   };
 }
 
-export function applyTargetConnectionAction(target: TargetProfile, action: TargetConnectionAction): TargetConnectionResult {
+export function applyTargetConnectionAction(
+  target: TargetProfile,
+  action: TargetConnectionAction,
+  options: { pairingCode?: string; enrollmentCode?: string; hostName?: string; bridgeVersion?: string } = {},
+): TargetConnectionResult {
   const now = new Date().toISOString();
   const baseTarget = cloneTargetProfile(target);
   const adapter = baseTarget.adapters[0];
@@ -698,6 +756,75 @@ export function applyTargetConnectionAction(target: TargetProfile, action: Targe
         ...baseTarget,
         lastSeenAt: now,
       },
+    };
+  }
+
+  if (action === "enroll_host") {
+    if (baseTarget.kind === "local-shell" || baseTarget.kind === "mock") {
+      return {
+        allowed: true,
+        reason: "Local targets already include the host bridge.",
+        action,
+        target: {
+          ...baseTarget,
+          paired: true,
+          state: "ready",
+          lastSeenAt: now,
+          connection: {
+            ...baseTarget.connection,
+            hostBridge: {
+              state: "registered",
+              bridgeId: baseTarget.connection.hostBridge?.bridgeId ?? `${baseTarget.id}-bridge`,
+              hostName: options.hostName?.trim() || baseTarget.displayName,
+              bridgeVersion: options.bridgeVersion?.trim() || baseTarget.connection.hostBridge?.bridgeVersion || "local",
+              registeredAt: baseTarget.connection.hostBridge?.registeredAt ?? now,
+              lastSeenAt: now,
+              lastError: undefined,
+            },
+          },
+        },
+      };
+    }
+
+    const enrollmentCode = typeof options.enrollmentCode === "string" ? options.enrollmentCode.trim() : "";
+    if (!enrollmentCode) {
+      return {
+        allowed: false,
+        reason: "A host enrollment code is required.",
+        action,
+        target: baseTarget,
+      };
+    }
+
+    return {
+      allowed: true,
+      reason: "The host bridge was enrolled in the local preview.",
+      action,
+      target: updatePrimaryAdapter(
+        {
+          ...baseTarget,
+          paired: true,
+          state: "connecting",
+          lastSeenAt: now,
+          connection: {
+            ...baseTarget.connection,
+            hostBridge: {
+              state: "registered",
+              bridgeId: baseTarget.connection.hostBridge?.bridgeId ?? `${baseTarget.id}-bridge`,
+              hostName: options.hostName?.trim() || baseTarget.displayName,
+              bridgeVersion: options.bridgeVersion?.trim() || baseTarget.connection.hostBridge?.bridgeVersion || "1.0.0",
+              registeredAt: baseTarget.connection.hostBridge?.registeredAt ?? now,
+              lastSeenAt: now,
+              lastError: undefined,
+            },
+          },
+        },
+        (current) => ({
+          ...current,
+          authenticated: true,
+          hostKeyVerified: baseTarget.kind === "ssh-terminal" ? false : current.hostKeyVerified,
+        }),
+      ),
     };
   }
 

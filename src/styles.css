@@ -1454,6 +1454,7 @@ th {
 .target-readiness-badge.readiness-connect,
 .target-readiness-badge.readiness-probe,
 .target-readiness-badge.readiness-pair,
+.target-readiness-badge.readiness-enroll_host,
 .target-readiness-badge.readiness-verify_host_key {
   color: #8d4e17;
   background: #fff2e6;
