@@ -421,6 +421,8 @@ function readinessActionLabel(report: TargetConnectionReadinessReport): string {
   switch (report.nextAction) {
     case "enroll_host":
       return "Enroll host";
+    case "heartbeat":
+      return "Heartbeat";
     case "pair":
       return "Pair";
     case "probe":
@@ -1475,6 +1477,12 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         ? { pairingCode: pairingCodeDraft.trim() || undefined }
         : action === "enroll_host"
           ? { enrollmentCode: hostEnrollmentCodeDraft.trim() || undefined }
+          : action === "heartbeat"
+            ? {
+                bridgeId: currentTarget.connection.hostBridge?.bridgeId || undefined,
+                hostName: currentTarget.connection.hostBridge?.hostName || undefined,
+                bridgeVersion: currentTarget.connection.hostBridge?.bridgeVersion || undefined,
+              }
           : {};
     const result = applyTargetConnectionAction(currentTarget, action, actionOptions);
     if (!result.allowed) {
@@ -1489,14 +1497,30 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       try {
         const requestBody: {
           targetId: string;
-          action: TargetConnectionAction;
+          action?: TargetConnectionAction;
           pairingCode?: string;
           enrollmentCode?: string;
-        } = { targetId: currentTarget.id, action };
-        if (action === "pair" && pairingCodeDraft.trim()) requestBody.pairingCode = pairingCodeDraft.trim();
-        if (action === "enroll_host" && hostEnrollmentCodeDraft.trim()) requestBody.enrollmentCode = hostEnrollmentCodeDraft.trim();
+          bridgeId?: string;
+          hostName?: string;
+          bridgeVersion?: string;
+        } = { targetId: currentTarget.id };
+        let endpoint = `${gatewayBaseUrl}/targets/connection`;
+        if (action === "pair") {
+          requestBody.action = action;
+          if (pairingCodeDraft.trim()) requestBody.pairingCode = pairingCodeDraft.trim();
+        } else if (action === "enroll_host") {
+          requestBody.action = action;
+          if (hostEnrollmentCodeDraft.trim()) requestBody.enrollmentCode = hostEnrollmentCodeDraft.trim();
+        } else if (action === "heartbeat") {
+          endpoint = `${gatewayBaseUrl}/targets/host-bridge/heartbeat`;
+          requestBody.bridgeId = currentTarget.connection.hostBridge?.bridgeId;
+          requestBody.hostName = currentTarget.connection.hostBridge?.hostName;
+          requestBody.bridgeVersion = currentTarget.connection.hostBridge?.bridgeVersion;
+        } else {
+          requestBody.action = action;
+        }
 
-        const response = await fetch(`${gatewayBaseUrl}/targets/connection`, {
+        const response = await fetch(endpoint, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(requestBody),
@@ -2756,6 +2780,14 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 <div className="panel-actions">
                   <button className="secondary-button" type="button" onClick={() => void issueTargetHostEnrollmentCode()} disabled={busy}>
                     {copy.targetRegistryHostEnrollmentCodeIssueButton}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void runConnectionAction("heartbeat")}
+                    disabled={busy || selectedTarget?.connection.hostBridge?.state !== "registered"}
+                  >
+                    {copy.targetRegistryHostBridgeHeartbeatButton}
                   </button>
                   <button
                     className="primary-button"
