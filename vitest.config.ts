@@ -1,10 +1,13 @@
-import { defineConfig } from "vitest/config";
-import react from "@vitejs/plugin-react";
+import { defineConfig, mergeConfig } from "vitest/config";
+import viteConfig from "./vite.config";
 
-export default defineConfig({
-  plugins: [react()],
-  test: {
-    environment: "node",
-    globals: true,
-  },
-});
+export default mergeConfig(
+  viteConfig,
+  defineConfig({
+    test: {
+      maxWorkers: 1,
+      isolate: false,
+      fileParallelism: false,
+    },
+  }),
+);

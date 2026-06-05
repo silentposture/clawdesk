@@ -430,6 +430,10 @@ let targetRegistry = cloneTargetRegistryState(defaultTargetRegistry);
 let targetDispatches = [];
 const remoteDesktopSessions = new Map();
 const sshTerminalSessions = new Map();
+const sshTerminalInteractiveRuntimes = new Map();
+const sshExecutable = (process.env.CLAWDESK_SSH_EXECUTABLE || (process.platform === "win32" ? "ssh.exe" : "ssh")).trim();
+const sshRemoteShellCommand = (process.env.CLAWDESK_SSH_REMOTE_SHELL_COMMAND || "sh -s").trim();
+const sshSessionCommandTimeoutMs = Number(process.env.CLAWDESK_SSH_SESSION_COMMAND_TIMEOUT_MS ?? 60_000);
 // SSH credential vault uses an in-memory index plus a local encrypted file for durable storage.
 const targetCredentialVault = new Map();
 let targetCredentialVaultSaveTimer;
@@ -4226,6 +4230,443 @@ function cloneSshTerminalSessionState(session) {
   };
 }
 
+function sshTerminalRuntimeKey(targetId) {
+  return sshTerminalSessionStorageKey(targetId);
+}
+
+function getSshTerminalRuntime(targetId) {
+  return sshTerminalInteractiveRuntimes.get(sshTerminalRuntimeKey(targetId));
+}
+
+function clearSshTerminalRuntime(targetId) {
+  sshTerminalInteractiveRuntimes.delete(sshTerminalRuntimeKey(targetId));
+}
+
+function splitCommandLineArgs(commandLine) {
+  return commandLine
+    .split(/\s+/g)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function buildSshTerminalCommandFrame(command, token) {
+  return [
+    `printf '__CLAWDESK_BEGIN__${token}\\n'`,
+    command,
+    "status=$?",
+    `printf '__CLAWDESK_STATUS__${token}:%s\\n' "$status"`,
+    `printf '__CLAWDESK_END__${token}\\n'`,
+  ].join("\n");
+}
+
+function createSshTerminalRuntimeState(target, child, credentialMaterial) {
+  return {
+    targetId: target.id,
+    child,
+    credentialMaterial,
+    stdoutBuffer: "",
+    stderrBuffer: "",
+    pendingCommand: null,
+    startedAt: nowIso(),
+    lastActivityAt: nowIso(),
+    closed: false,
+  };
+}
+
+async function disposeSshTerminalRuntime(targetId, runtime, reason = "disposed") {
+  if (!runtime) return;
+  runtime.closed = true;
+  runtime.pendingCommand = null;
+  try {
+    if (runtime.child && !runtime.child.killed && runtime.child.exitCode === null && runtime.child.signalCode === null) {
+      runtime.child.stdin?.write("exit\n");
+      runtime.child.stdin?.end();
+      await new Promise((resolve) => {
+        const timer = setTimeout(() => {
+          try {
+            runtime.child.kill("SIGKILL");
+          } catch {
+            // ignore
+          }
+          resolve();
+        }, 2500);
+        runtime.child.once("close", () => {
+          clearTimeout(timer);
+          resolve();
+        });
+      });
+    }
+  } catch {
+    // ignore
+  }
+  try {
+    await runtime.credentialMaterial?.cleanup?.();
+  } catch {
+    // ignore
+  }
+  clearSshTerminalRuntime(targetId);
+  return reason;
+}
+
+function resolveSshTerminalCommandResult(runtime, pending) {
+  const stdout = runtime.stdoutBuffer;
+  const stderr = runtime.stderrBuffer;
+  const beginMarker = `__CLAWDESK_BEGIN__${pending.token}`;
+  const statusPrefix = `__CLAWDESK_STATUS__${pending.token}:`;
+  const endMarker = `__CLAWDESK_END__${pending.token}`;
+  const beginIndex = stdout.indexOf(beginMarker);
+  const statusIndex = stdout.indexOf(statusPrefix);
+  const endIndex = stdout.indexOf(endMarker);
+
+  if (beginIndex < 0 || statusIndex < 0 || endIndex < 0 || statusIndex < beginIndex) {
+    return null;
+  }
+
+  const beginLineEnd = stdout.indexOf("\n", beginIndex);
+  const statusLineEnd = stdout.indexOf("\n", statusIndex);
+  const outputStart = beginLineEnd >= 0 ? beginLineEnd + 1 : beginIndex + beginMarker.length;
+  const outputEnd = statusIndex;
+  const stdoutText = stdout.slice(outputStart, outputEnd).replace(/\r?\n$/, "");
+  const statusText = statusLineEnd >= 0 ? stdout.slice(statusIndex + statusPrefix.length, statusLineEnd) : stdout.slice(statusIndex + statusPrefix.length, endIndex);
+  const exitCode = Number.parseInt(statusText.trim(), 10);
+
+  return {
+    stdout: stdoutText,
+    stderr,
+    exitCode: Number.isFinite(exitCode) ? exitCode : null,
+  };
+}
+
+async function openSshTerminalRuntime(target) {
+  const baseTarget = normalizeTargetProfileState(target);
+  const key = sshTerminalRuntimeKey(baseTarget.id);
+  const existing = sshTerminalInteractiveRuntimes.get(key);
+  if (existing && existing.child && existing.child.exitCode === null && existing.child.signalCode === null && !existing.closed) {
+    return { allowed: true, runtime: existing };
+  }
+
+  if (existing) {
+    await disposeSshTerminalRuntime(baseTarget.id, existing, "replaced");
+  }
+
+  const host = extractTargetHost(baseTarget);
+  const remoteTarget = `${baseTarget.connection.username}@${host}`;
+  const knownHostsPath = await ensureTargetKnownHostsFile(baseTarget);
+  const credentialMaterial = await materializeTargetCredentialFile(baseTarget);
+  const remoteShellArgs = splitCommandLineArgs(sshRemoteShellCommand);
+  const sshArgs = [
+    "-o",
+    "BatchMode=yes",
+    "-o",
+    "StrictHostKeyChecking=yes",
+    "-o",
+    `UserKnownHostsFile=${knownHostsPath}`,
+    "-o",
+    `GlobalKnownHostsFile=${process.platform === "win32" ? "NUL" : "/dev/null"}`,
+    "-o",
+    "ConnectTimeout=10",
+  ];
+
+  if (credentialMaterial) {
+    sshArgs.push("-o", "IdentitiesOnly=yes", "-i", credentialMaterial.privateKeyPath);
+  }
+
+  sshArgs.push("-p", String(baseTarget.connection.port ?? 22), remoteTarget, ...remoteShellArgs);
+
+  const child = spawn(sshExecutable, sshArgs, {
+    cwd: homeDir,
+    env: process.env,
+    shell: false,
+    windowsHide: true,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+
+  const runtime = createSshTerminalRuntimeState(baseTarget, child, credentialMaterial);
+  sshTerminalInteractiveRuntimes.set(key, runtime);
+
+  child.stdout?.on("data", (chunk) => {
+    runtime.stdoutBuffer += chunk.toString("utf8");
+    runtime.lastActivityAt = nowIso();
+    const pending = runtime.pendingCommand;
+    if (!pending) return;
+    const resolved = resolveSshTerminalCommandResult(runtime, pending);
+    if (!resolved) return;
+    pending.resolve(resolved);
+  });
+
+  child.stderr?.on("data", (chunk) => {
+    runtime.stderrBuffer += chunk.toString("utf8");
+    runtime.lastActivityAt = nowIso();
+    const pending = runtime.pendingCommand;
+    if (!pending) return;
+    const resolved = resolveSshTerminalCommandResult(runtime, pending);
+    if (!resolved) return;
+    pending.resolve(resolved);
+  });
+
+  child.on("error", async (error) => {
+    runtime.closed = true;
+    const pending = runtime.pendingCommand;
+    if (pending) {
+      pending.reject(error instanceof Error ? error.message : String(error));
+      runtime.pendingCommand = null;
+    }
+    await disposeSshTerminalRuntime(baseTarget.id, runtime, "spawn-error");
+  });
+
+  child.on("close", async () => {
+    runtime.closed = true;
+    const pending = runtime.pendingCommand;
+    if (pending) {
+      pending.reject("The SSH shell session closed before the command completed.");
+      runtime.pendingCommand = null;
+    }
+    await disposeSshTerminalRuntime(baseTarget.id, runtime, "closed");
+  });
+
+  await new Promise((resolve, reject) => {
+    child.once("spawn", resolve);
+    child.once("error", reject);
+  }).catch(async (error) => {
+    await disposeSshTerminalRuntime(baseTarget.id, runtime, "spawn-error");
+    throw error;
+  });
+
+  return { allowed: true, runtime };
+}
+
+async function closeSshTerminalRuntime(targetId) {
+  const runtime = getSshTerminalRuntime(targetId);
+  if (!runtime) return;
+  runtime.closed = true;
+  const pending = runtime.pendingCommand;
+  if (pending) {
+    pending.reject("The SSH shell session was closed before the command completed.");
+    runtime.pendingCommand = null;
+  }
+  try {
+    runtime.child.stdin?.write("exit\n");
+    runtime.child.stdin?.end();
+  } catch {
+    // ignore
+  }
+  await disposeSshTerminalRuntime(targetId, runtime, "closed");
+}
+
+async function runSshTerminalInteractiveCommand(target, command) {
+  const baseTarget = normalizeTargetProfileState(target);
+  const key = sshTerminalRuntimeKey(baseTarget.id);
+  const runtime = getSshTerminalRuntime(baseTarget.id);
+  if (!runtime || runtime.closed || !runtime.child || runtime.child.exitCode !== null || runtime.child.signalCode !== null) {
+    return { allowed: false, reason: "Open the SSH terminal session before sending commands.", target: baseTarget };
+  }
+
+  if (runtime.pendingCommand) {
+    return { allowed: false, reason: "A previous SSH terminal command is still running.", target: baseTarget };
+  }
+
+  const normalizedCommand = typeof command === "string" ? command.trim() : "";
+  if (!normalizedCommand) {
+    return { allowed: false, reason: "A command is required.", target: baseTarget };
+  }
+
+  const now = nowIso();
+  const currentSession = refreshSshTerminalSessionView(baseTarget, getSshTerminalSessionState(baseTarget), now);
+  if (currentSession.state !== "connected") {
+    return {
+      allowed: false,
+      reason: "Open the SSH terminal session before sending commands.",
+      target: baseTarget,
+      session: currentSession,
+    };
+  }
+
+  const commandSafety = classifyShellCommandState(normalizedCommand);
+  if (commandSafety === "blocked") {
+    return {
+      allowed: false,
+      reason: "The requested command is blocked by the safe-dispatch policy.",
+      target: baseTarget,
+    };
+  }
+
+  if (commandSafety === "needs-review") {
+    return {
+      allowed: false,
+      reason: "The requested command needs human review before execution.",
+      target: baseTarget,
+    };
+  }
+
+  const token = crypto.randomUUID().slice(0, 12);
+  const commandFrame = buildSshTerminalCommandFrame(normalizedCommand, token);
+  runtime.stdoutBuffer = "";
+  runtime.stderrBuffer = "";
+
+  const executionPromise = new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => {
+      runtime.pendingCommand = null;
+      try {
+        runtime.child.kill("SIGKILL");
+      } catch {
+        // ignore
+      }
+      reject(new Error(`SSH terminal command timed out after ${sshSessionCommandTimeoutMs}ms.`));
+    }, sshSessionCommandTimeoutMs);
+
+    runtime.pendingCommand = {
+      token,
+      command: normalizedCommand,
+      stdoutStart: 0,
+      stderrStart: 0,
+      resolve: (result) => {
+        clearTimeout(timeout);
+        runtime.pendingCommand = null;
+        resolve(result);
+      },
+      reject: (reason) => {
+        clearTimeout(timeout);
+        runtime.pendingCommand = null;
+        reject(reason);
+      },
+    };
+
+    try {
+      runtime.child.stdin.write(`${commandFrame}\n`);
+      runtime.lastActivityAt = nowIso();
+    } catch (error) {
+      clearTimeout(timeout);
+      runtime.pendingCommand = null;
+      reject(error);
+    }
+  });
+
+  let result;
+  try {
+    result = await executionPromise;
+  } catch (error) {
+    const failedSession = {
+      ...getSshTerminalSessionState(baseTarget),
+      lastUpdatedAt: now,
+      notes: [
+        ...getSshTerminalSessionState(baseTarget).notes.slice(-4),
+        `SSH terminal command failed: ${redactDiagnosticText(error instanceof Error ? error.message : String(error))}`,
+      ],
+      transcript: [
+        ...getSshTerminalSessionState(baseTarget).transcript.slice(-12),
+        {
+          id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+          role: "command",
+          text: redactDiagnosticText(normalizedCommand),
+          createdAt: now,
+        },
+        {
+          id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+          role: "error",
+          text: redactDiagnosticText(error instanceof Error ? error.message : String(error)),
+          createdAt: now,
+        },
+      ],
+    };
+    failedSession.sessionSummary = buildSshTerminalSessionSummary(baseTarget, failedSession);
+    sshTerminalSessions.set(key, failedSession);
+    return {
+      allowed: false,
+      reason: error instanceof Error ? error.message : String(error),
+      target: baseTarget,
+      session: failedSession,
+    };
+  }
+
+  const sessionTranscript = [
+    ...currentSession.transcript.slice(-12),
+    {
+      id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+      role: "command",
+      text: redactDiagnosticText(normalizedCommand),
+      createdAt: now,
+    },
+    {
+      id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+      role: "output",
+      text: redactDiagnosticText(result.stdout || "(no stdout)"),
+      createdAt: now,
+    },
+  ];
+  if (result.stderr) {
+    sessionTranscript.push({
+      id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+      role: "error",
+      text: redactDiagnosticText(result.stderr),
+      createdAt: now,
+    });
+  }
+  const nextSession = {
+    ...currentSession,
+    state: "connected",
+    transport: "gateway-ssh-terminal-shell-stream",
+    lastCommand: redactDiagnosticText(normalizedCommand),
+    lastCommandAt: now,
+    lastExitCode: result.exitCode,
+    lastUpdatedAt: now,
+    notes: [
+      ...currentSession.notes.slice(-4),
+      result.exitCode === 0
+        ? `Command completed successfully: ${redactDiagnosticText(normalizedCommand)}`
+        : `Command completed with exit ${result.exitCode}: ${redactDiagnosticText(normalizedCommand)}`,
+    ],
+    transcript: sessionTranscript,
+  };
+  nextSession.sessionSummary = buildSshTerminalSessionSummary(baseTarget, nextSession);
+  sshTerminalSessions.set(key, nextSession);
+  const dispatchRecord = {
+    id: `dispatch-${crypto.randomUUID().slice(0, 8)}`,
+    targetId: baseTarget.id,
+    targetName: baseTarget.displayName,
+    category: "execute_safe",
+    summary: `SSH terminal session command: ${redactDiagnosticText(normalizedCommand)}`,
+    command: redactDiagnosticText(normalizedCommand),
+    decision: {
+      allowed: true,
+      requiresApproval: true,
+      reason: "Allowlisted SSH terminal command executed through the gateway-managed session contract.",
+      adapterKind: "ssh-terminal",
+      commandSafety,
+    },
+    createdAt: now,
+  };
+  targetDispatches.unshift(dispatchRecord);
+  targetDispatches = targetDispatches.slice(0, 200);
+  audit("targets.ssh-terminal.session.command", {
+    targetId: baseTarget.id,
+    command: redactDiagnosticText(normalizedCommand),
+    exitCode: result.exitCode,
+  });
+  scheduleStateSave();
+  return {
+    allowed: true,
+    reason: result.exitCode === 0 ? "SSH command executed successfully." : "SSH command finished with a non-zero exit code.",
+    target: {
+      ...baseTarget,
+      lastSeenAt: now,
+    },
+    session: nextSession,
+    execution: {
+      mode: "ssh-terminal-session",
+      credentialSource: baseTarget.connection.credentialMode,
+      command: normalizedCommand,
+      stdout: result.stdout,
+      stderr: result.stderr,
+      exitCode: result.exitCode,
+      startedAt: now,
+      finishedAt: nowIso(),
+      targetId: baseTarget.id,
+      targetName: baseTarget.displayName,
+    },
+    record: dispatchRecord,
+  };
+}
+
 function createSshTerminalPrompt(target) {
   const host = extractTargetHost(target) || target.adapters[0]?.endpoint || target.displayName;
   const user = target.connection?.username?.trim() || "ssh";
@@ -4297,20 +4738,41 @@ function getSshTerminalSessionState(target) {
 
 function refreshSshTerminalSessionState(target, session, now = nowIso()) {
   const prompt = createSshTerminalPrompt(target);
-  return {
+  const runtime = getSshTerminalRuntime(target.id);
+  const runtimeAlive = Boolean(runtime && !runtime.closed && runtime.child && runtime.child.exitCode === null && runtime.child.signalCode === null);
+  const refreshed = {
     ...session,
     endpoint: target.adapters[0]?.endpoint ?? target.endpoint,
     targetName: target.displayName,
     mode: target.connection?.sessionMode ?? session.mode ?? "control",
+    transport: runtimeAlive ? "gateway-ssh-terminal-shell-stream" : session.transport,
     prompt,
     currentDirectory: session.currentDirectory ?? "~",
     sessionSummary: buildSshTerminalSessionSummary(target, session),
     lastUpdatedAt: now,
     notes: [...session.notes.slice(-4), `Session snapshot refreshed at ${now}.`],
   };
+  if (session.state === "connected" && !runtimeAlive) {
+    return {
+      ...refreshed,
+      state: "closed",
+      transport: "gateway-ssh-terminal-shell-stream",
+      notes: [...refreshed.notes.slice(-4), "SSH terminal runtime no longer active."],
+      transcript: [
+        ...refreshed.transcript.slice(-12),
+        {
+          id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+          role: "system",
+          text: "Interactive SSH shell is no longer active.",
+          createdAt: now,
+        },
+      ],
+    };
+  }
+  return refreshed;
 }
 
-function openSshTerminalSessionState(target) {
+async function openSshTerminalSessionState(target) {
   const baseTarget = normalizeTargetProfileState(target);
   if (baseTarget.kind !== "ssh-terminal") {
     return { allowed: false, reason: "This target is not an SSH terminal target.", target: baseTarget };
@@ -4321,20 +4783,26 @@ function openSshTerminalSessionState(target) {
     return { allowed: false, reason: readinessIssues[0], target: baseTarget };
   }
 
+  const runtimeResult = await openSshTerminalRuntime(baseTarget);
+  if (!runtimeResult.allowed) {
+    return runtimeResult;
+  }
+
   const now = nowIso();
-  const currentSession = refreshSshTerminalSessionState(baseTarget, getSshTerminalSessionState(baseTarget), now);
+  const currentSession = refreshSshTerminalSessionView(baseTarget, getSshTerminalSessionState(baseTarget), now);
   const nextSession = {
     ...currentSession,
     state: "connected",
+    transport: "gateway-ssh-terminal-shell-stream",
     lastObservedAt: now,
     lastUpdatedAt: now,
-    notes: [...currentSession.notes.slice(-4), "SSH terminal session opened."],
+    notes: [...currentSession.notes.slice(-4), "SSH terminal shell stream opened."],
     transcript: [
       ...currentSession.transcript.slice(-12),
       {
         id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
         role: "system",
-        text: "Session opened.",
+        text: "Shell stream opened.",
         createdAt: now,
       },
     ],
@@ -4343,7 +4811,7 @@ function openSshTerminalSessionState(target) {
   sshTerminalSessions.set(sshTerminalSessionStorageKey(baseTarget.id), nextSession);
   return {
     allowed: true,
-    reason: "SSH terminal session opened.",
+    reason: "SSH terminal shell stream opened.",
     target: {
       ...baseTarget,
       lastSeenAt: now,
@@ -4352,17 +4820,19 @@ function openSshTerminalSessionState(target) {
   };
 }
 
-function closeSshTerminalSessionState(target) {
+async function closeSshTerminalSessionState(target) {
   const baseTarget = normalizeTargetProfileState(target);
   if (baseTarget.kind !== "ssh-terminal") {
     return { allowed: false, reason: "This target is not an SSH terminal target.", target: baseTarget };
   }
 
   const now = nowIso();
+  await closeSshTerminalRuntime(baseTarget.id);
   const currentSession = getSshTerminalSessionState(baseTarget);
   const nextSession = {
     ...currentSession,
     state: "closed",
+    transport: "gateway-ssh-terminal-shell-stream",
     lastUpdatedAt: now,
     notes: [...currentSession.notes.slice(-4), "SSH terminal session closed."],
     transcript: [
@@ -4370,7 +4840,7 @@ function closeSshTerminalSessionState(target) {
       {
         id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
         role: "system",
-        text: "Session closed.",
+        text: "Shell stream closed.",
         createdAt: now,
       },
     ],
@@ -4395,203 +4865,7 @@ function refreshSshTerminalSessionView(target, session, now = nowIso()) {
 }
 
 async function runSshTerminalSessionCommandState(target, command) {
-  const baseTarget = normalizeTargetProfileState(target);
-  if (baseTarget.kind !== "ssh-terminal") {
-    return { allowed: false, reason: "This target is not an SSH terminal target.", target: baseTarget };
-  }
-
-  const normalizedCommand = typeof command === "string" ? command.trim() : "";
-  if (!normalizedCommand) {
-    return { allowed: false, reason: "A command is required.", target: baseTarget };
-  }
-
-  const readinessIssues = targetConnectionReadinessIssuesState(baseTarget);
-  if (readinessIssues.length > 0) {
-    return { allowed: false, reason: readinessIssues[0], target: baseTarget };
-  }
-
-  const sessionKey = sshTerminalSessionStorageKey(baseTarget.id);
-  const now = nowIso();
-  const currentSession = refreshSshTerminalSessionView(baseTarget, getSshTerminalSessionState(baseTarget), now);
-  if (currentSession.state !== "connected") {
-    return {
-      allowed: false,
-      reason: "Open the SSH terminal session before sending commands.",
-      target: baseTarget,
-      session: currentSession,
-    };
-  }
-
-  const commandSafety = classifyShellCommandState(normalizedCommand);
-  if (commandSafety === "blocked") {
-    const blockedSession = {
-      ...currentSession,
-      lastUpdatedAt: now,
-      notes: [...currentSession.notes.slice(-4), `Blocked command rejected: ${redactDiagnosticText(normalizedCommand)}`],
-      transcript: [
-        ...currentSession.transcript.slice(-12),
-        {
-          id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
-          role: "command",
-          text: redactDiagnosticText(normalizedCommand),
-          createdAt: now,
-        },
-        {
-          id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
-          role: "error",
-          text: "The requested command is blocked by the safe-dispatch policy.",
-          createdAt: now,
-        },
-      ],
-    };
-    blockedSession.sessionSummary = buildSshTerminalSessionSummary(baseTarget, blockedSession);
-    sshTerminalSessions.set(sessionKey, blockedSession);
-    return {
-      allowed: false,
-      reason: "The requested command is blocked by the safe-dispatch policy.",
-      target: baseTarget,
-      session: blockedSession,
-    };
-  }
-
-  if (commandSafety === "needs-review") {
-    const reviewSession = {
-      ...currentSession,
-      lastUpdatedAt: now,
-      notes: [...currentSession.notes.slice(-4), `Review-required command queued for manual approval: ${redactDiagnosticText(normalizedCommand)}`],
-      transcript: [
-        ...currentSession.transcript.slice(-12),
-        {
-          id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
-          role: "command",
-          text: redactDiagnosticText(normalizedCommand),
-          createdAt: now,
-        },
-        {
-          id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
-          role: "error",
-          text: "The requested command needs human review before execution.",
-          createdAt: now,
-        },
-      ],
-    };
-    reviewSession.sessionSummary = buildSshTerminalSessionSummary(baseTarget, reviewSession);
-    sshTerminalSessions.set(sessionKey, reviewSession);
-    return {
-      allowed: false,
-      reason: "The requested command needs human review before execution.",
-      target: baseTarget,
-      session: reviewSession,
-    };
-  }
-
-  const execution = await executeTargetCommandState(baseTarget, normalizedCommand);
-  if (!execution.allowed || !execution.execution) {
-    const failedSession = {
-      ...currentSession,
-      lastUpdatedAt: now,
-      notes: [...currentSession.notes.slice(-4), `Command execution rejected: ${redactDiagnosticText(execution.reason ?? normalizedCommand)}`],
-      transcript: [
-        ...currentSession.transcript.slice(-12),
-        {
-          id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
-          role: "command",
-          text: redactDiagnosticText(normalizedCommand),
-          createdAt: now,
-        },
-        {
-          id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
-          role: "error",
-          text: redactDiagnosticText(execution.reason ?? "SSH command execution failed."),
-          createdAt: now,
-        },
-      ],
-    };
-    failedSession.sessionSummary = buildSshTerminalSessionSummary(baseTarget, failedSession);
-    sshTerminalSessions.set(sessionKey, failedSession);
-    return {
-      allowed: false,
-      reason: execution.reason ?? "SSH command execution failed.",
-      target: execution.target ?? baseTarget,
-      session: failedSession,
-    };
-  }
-
-  const sessionTranscript = [
-    ...currentSession.transcript.slice(-12),
-    {
-      id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
-      role: "command",
-      text: redactDiagnosticText(normalizedCommand),
-      createdAt: now,
-    },
-    {
-      id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
-      role: "output",
-      text: redactDiagnosticText(execution.execution.stdout || "(no stdout)"),
-      createdAt: now,
-    },
-  ];
-  if (execution.execution.stderr) {
-    sessionTranscript.push({
-      id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
-      role: "error",
-      text: redactDiagnosticText(execution.execution.stderr),
-      createdAt: now,
-    });
-  }
-  const nextSession = {
-    ...currentSession,
-    state: "connected",
-    lastCommand: redactDiagnosticText(normalizedCommand),
-    lastCommandAt: now,
-    lastExitCode: execution.execution.exitCode,
-    lastUpdatedAt: now,
-    notes: [
-      ...currentSession.notes.slice(-4),
-      execution.execution.exitCode === 0
-        ? `Command completed successfully: ${redactDiagnosticText(normalizedCommand)}`
-        : `Command completed with exit ${execution.execution.exitCode}: ${redactDiagnosticText(normalizedCommand)}`,
-    ],
-    transcript: sessionTranscript,
-  };
-  nextSession.sessionSummary = buildSshTerminalSessionSummary(baseTarget, nextSession);
-  sshTerminalSessions.set(sessionKey, nextSession);
-  const dispatchRecord = {
-    id: `dispatch-${crypto.randomUUID().slice(0, 8)}`,
-    targetId: baseTarget.id,
-    targetName: baseTarget.displayName,
-    category: "execute_safe",
-    summary: `SSH terminal session command: ${redactDiagnosticText(normalizedCommand)}`,
-    command: redactDiagnosticText(normalizedCommand),
-    decision: {
-      allowed: true,
-      requiresApproval: true,
-      reason: "Allowlisted SSH terminal command executed through the gateway-managed session contract.",
-      adapterKind: "ssh-terminal",
-      commandSafety,
-    },
-    createdAt: now,
-  };
-  targetDispatches.unshift(dispatchRecord);
-  targetDispatches = targetDispatches.slice(0, 200);
-  audit("targets.ssh-terminal.session.command", {
-    targetId: baseTarget.id,
-    command: redactDiagnosticText(normalizedCommand),
-    exitCode: execution.execution.exitCode,
-  });
-  scheduleStateSave();
-  return {
-    allowed: true,
-    reason: execution.reason ?? "SSH command executed successfully.",
-    target: execution.target ?? {
-      ...baseTarget,
-      lastSeenAt: now,
-    },
-    session: nextSession,
-    execution: execution.execution,
-    record: dispatchRecord,
-  };
+  return runSshTerminalInteractiveCommand(target, command);
 }
 
 function audit(action, details = {}) {
@@ -9000,7 +9274,7 @@ const server = http.createServer(async (req, res) => {
         return;
       }
 
-      const execution = await executeTargetCommandState(target, command);
+  const execution = await runSshTerminalInteractiveCommand(target, command);
       if (!execution.allowed) {
         audit("targets.execute.rejected", {
           targetId,
@@ -9414,11 +9688,11 @@ const server = http.createServer(async (req, res) => {
 
       let result;
       if (action === "open_session" || action === "open" || action === "connect") {
-        result = openSshTerminalSessionState(target);
+        result = await openSshTerminalSessionState(target);
       } else if (action === "run_command" || action === "send_command" || action === "execute") {
         result = await runSshTerminalSessionCommandState(target, command);
       } else if (action === "close_session" || action === "close" || action === "disconnect") {
-        result = closeSshTerminalSessionState(target);
+        result = await closeSshTerminalSessionState(target);
       } else if (action === "refresh" || action === "observe") {
         const now = nowIso();
         const session = refreshSshTerminalSessionView(target, getSshTerminalSessionState(target), now);
