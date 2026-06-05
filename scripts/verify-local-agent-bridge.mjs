@@ -57,6 +57,10 @@ async function stop(child) {
   await Promise.race([once(child, "exit"), new Promise((resolve) => setTimeout(resolve, 2000))]);
 }
 
+async function sleep(ms) {
+  await new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 const port = await reservePort();
 const baseUrl = `http://127.0.0.1:${port}`;
 const gateway = spawnGateway(port);
@@ -84,6 +88,11 @@ try {
     "remote-desktop",
     "--host-name",
     "Local Host Bridge",
+    "--daemon",
+    "--heartbeat-interval-ms",
+    "250",
+    "--max-heartbeats",
+    "3",
   ], {
     cwd: process.cwd(),
     env: {
@@ -104,8 +113,9 @@ try {
   if (exitCode !== 0) {
     throw new Error(`bridge agent exited with code ${exitCode}\n${bridgeOutput}`);
   }
-  if (!bridgeOutput.includes("local-agent-bridge result")) {
-    throw new Error("bridge output did not include the expected result heading");
+
+  if (!bridgeOutput.includes("local-agent-bridge daemon")) {
+    throw new Error("bridge output did not include the expected daemon heading");
   }
 
   const audit = await fetch(`${baseUrl}/backend/audit?limit=50`);
@@ -117,6 +127,8 @@ try {
   if (!actions.includes("targets.host-enrollment")) throw new Error("missing host enrollment audit event");
   if (!actions.includes("targets.host-bridge.attest")) throw new Error("missing host bridge attestation audit event");
   if (!actions.includes("targets.host-bridge.heartbeat")) throw new Error("missing host bridge heartbeat audit event");
+  const heartbeatEvents = auditPayload.events.filter((event) => event.action === "targets.host-bridge.heartbeat");
+  if (heartbeatEvents.length < 2) throw new Error("expected the daemon bridge to emit more than one heartbeat");
 
   const registry = await fetch(`${baseUrl}/targets`);
   const registryPayload = await registry.json();

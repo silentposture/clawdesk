@@ -13,4 +13,4 @@ Responsibilities:
 
 Example implementation:
 
-- [`examples/local-agent-bridge/bridge-agent.mjs`](../../examples/local-agent-bridge/bridge-agent.mjs) seeds a target, redeems a host enrollment code, records attestation, and sends heartbeat updates against the mock gateway.
+- [`examples/local-agent-bridge/bridge-agent.mjs`](../../examples/local-agent-bridge/bridge-agent.mjs) seeds a target, redeems a host enrollment code, records attestation, and can either send a bounded heartbeat smoke or run as a long-lived daemon against the mock gateway.
