@@ -170,6 +170,8 @@ try {
   const readme = await fs.readFile(path.join(bundleDir, "README.md"), "utf8");
   if (!readme.includes("Host Agent Install Bundle")) throw new Error("bundle readme missing title");
   if (!readme.includes("service-friendly handoff")) throw new Error("bundle readme missing service-friendly wording");
+  if (!readme.includes("Install")) throw new Error("bundle readme missing install section");
+  if (!readme.includes("Remove")) throw new Error("bundle readme missing remove section");
   if (!readme.includes("Scheduled Task")) throw new Error("bundle readme missing scheduled task section");
 
   const launchCmd = await fs.readFile(path.join(bundleDir, "launch-host-agent.cmd"), "utf8");
@@ -177,6 +179,14 @@ try {
 
   const launchPs1 = await fs.readFile(path.join(bundleDir, "launch-host-agent.ps1"), "utf8");
   if (!launchPs1.includes("CLAWDESK_HOST_AGENT_STATUS_FILE")) throw new Error("launch ps1 missing status env");
+
+  const installPs1 = await fs.readFile(path.join(bundleDir, "install-host-agent.ps1"), "utf8");
+  if (!installPs1.includes("register-host-agent.ps1")) throw new Error("install ps1 missing register script");
+  if (!installPs1.includes("-Preview")) throw new Error("install ps1 missing preview flag");
+
+  const removePs1 = await fs.readFile(path.join(bundleDir, "remove-host-agent.ps1"), "utf8");
+  if (!removePs1.includes("unregister-host-agent.ps1")) throw new Error("remove ps1 missing unregister script");
+  if (!removePs1.includes("-Preview")) throw new Error("remove ps1 missing preview flag");
 
   const registerPs1 = await fs.readFile(path.join(bundleDir, "register-host-agent.ps1"), "utf8");
   if (!registerPs1.includes("Register-ScheduledTask")) throw new Error("register ps1 missing scheduled task registration");
@@ -202,6 +212,36 @@ try {
   if (registerPreviewJson.TaskName !== manifest.taskName) throw new Error("register preview task name mismatch");
   if (registerPreviewJson.HiddenWindow !== true) throw new Error("register preview hidden window mismatch");
   if (!String(registerPreviewJson.Arguments || "").includes("launch-host-agent.ps1")) throw new Error("register preview arguments missing launch script");
+
+  const installPreview = spawnPowerShellScript(path.join(bundleDir, "install-host-agent.ps1"), ["-Preview"]);
+  let installPreviewOutput = "";
+  installPreview.stdout.on("data", (chunk) => {
+    installPreviewOutput += chunk.toString();
+  });
+  installPreview.stderr.on("data", (chunk) => {
+    installPreviewOutput += chunk.toString();
+  });
+  const installPreviewExit = await new Promise((resolve) => installPreview.on("close", resolve));
+  if (installPreviewExit !== 0) {
+    throw new Error(`install preview exited with ${installPreviewExit}\n${installPreviewOutput}`);
+  }
+  const installPreviewJson = JSON.parse(installPreviewOutput.trim());
+  if (installPreviewJson.TaskName !== manifest.taskName) throw new Error("install preview task name mismatch");
+
+  const removePreview = spawnPowerShellScript(path.join(bundleDir, "remove-host-agent.ps1"), ["-Preview"]);
+  let removePreviewOutput = "";
+  removePreview.stdout.on("data", (chunk) => {
+    removePreviewOutput += chunk.toString();
+  });
+  removePreview.stderr.on("data", (chunk) => {
+    removePreviewOutput += chunk.toString();
+  });
+  const removePreviewExit = await new Promise((resolve) => removePreview.on("close", resolve));
+  if (removePreviewExit !== 0) {
+    throw new Error(`remove preview exited with ${removePreviewExit}\n${removePreviewOutput}`);
+  }
+  const removePreviewJson = JSON.parse(removePreviewOutput.trim());
+  if (removePreviewJson.TaskName !== manifest.taskName) throw new Error("remove preview task name mismatch");
 
   const unregisterPreview = spawnPowerShellScript(path.join(bundleDir, "unregister-host-agent.ps1"), ["-Preview"]);
   let unregisterPreviewOutput = "";
