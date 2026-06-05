@@ -127,6 +127,7 @@ async function prepareHostAgentInstallBundle(argv) {
   const configRelativePath = "host-agent.json";
   const lockRelativePath = "host-agent.lock";
   const statusRelativePath = "host-agent-status.json";
+  const installRootRelativePath = `${targetId}-host-agent-install`;
 
   const configPath = configRelativePath;
   const lockPath = lockRelativePath;
@@ -172,6 +173,7 @@ async function prepareHostAgentInstallBundle(argv) {
     runtimeBridgeEntryPoint: runtimeBridgeRelativePath,
     runtimeInstallMode: "service-friendly-launcher",
     bundlePortable: true,
+    installRootRelativePath,
     files: [
       runtimeLauncherRelativePath,
       runtimeBridgeRelativePath,
@@ -289,23 +291,56 @@ try {
 `;
 
   const installPs1 = `param(
-  [switch]$Preview
+  [switch]$Preview,
+  [string]$InstallRoot = ""
 )
 $ErrorActionPreference = "Stop"
-$scriptPath = Join-Path $PSScriptRoot "register-host-agent.ps1"
-$arguments = @()
-if ($Preview) { $arguments += "-Preview" }
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath @arguments
+$sourceRoot = $PSScriptRoot
+$defaultInstallRoot = Join-Path $env:ProgramData "ClawDesk\\HostAgents\\${targetId}"
+$resolvedInstallRoot = if ([string]::IsNullOrWhiteSpace($InstallRoot)) { $defaultInstallRoot } else { [System.IO.Path]::GetFullPath($InstallRoot) }
+$installDefinition = [pscustomobject]@{
+  SourceRoot = $sourceRoot
+  InstallRoot = $resolvedInstallRoot
+  InstallMode = "copy-bundle-and-register-task"
+  TaskName = "${manifest.taskName}"
+  RuntimeEntryPoint = "${runtimeLauncherRelativePath}"
+  RuntimeBridgeEntryPoint = "${runtimeBridgeRelativePath}"
+  BundlePortable = $true
+}
+if ($Preview) {
+  $installDefinition | ConvertTo-Json -Depth 4
+  return
+}
+New-Item -ItemType Directory -Path $resolvedInstallRoot -Force | Out-Null
+Copy-Item -Path (Join-Path $sourceRoot "*") -Destination $resolvedInstallRoot -Recurse -Force
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $resolvedInstallRoot "register-host-agent.ps1")
+Write-Host ("Installed host agent bundle to: {0}" -f $resolvedInstallRoot)
 `;
 
   const removePs1 = `param(
-  [switch]$Preview
+  [switch]$Preview,
+  [string]$InstallRoot = ""
 )
 $ErrorActionPreference = "Stop"
-$scriptPath = Join-Path $PSScriptRoot "unregister-host-agent.ps1"
-$arguments = @()
-if ($Preview) { $arguments += "-Preview" }
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath @arguments
+$sourceRoot = $PSScriptRoot
+$defaultInstallRoot = Join-Path $env:ProgramData "ClawDesk\\HostAgents\\${targetId}"
+$resolvedInstallRoot = if ([string]::IsNullOrWhiteSpace($InstallRoot)) { $defaultInstallRoot } else { [System.IO.Path]::GetFullPath($InstallRoot) }
+$removeDefinition = [pscustomobject]@{
+  SourceRoot = $sourceRoot
+  InstallRoot = $resolvedInstallRoot
+  InstallMode = "copy-bundle-and-register-task"
+  TaskName = "${manifest.taskName}"
+  Action = "unregister-and-remove-install-root"
+}
+if ($Preview) {
+  $removeDefinition | ConvertTo-Json -Depth 4
+  return
+}
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $resolvedInstallRoot "unregister-host-agent.ps1")
+if (Test-Path $resolvedInstallRoot) {
+  Remove-Item -LiteralPath $resolvedInstallRoot -Recurse -Force
+}
+Write-Host ("Removed host agent install root: {0}" -f $resolvedInstallRoot)
 `;
 
   const registerPs1 = `param(
