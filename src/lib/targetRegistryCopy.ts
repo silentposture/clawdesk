@@ -365,6 +365,7 @@ export const targetRegistryCopy = {
   fieldRemoteDesktopObserveButton: "觀察",
   fieldRemoteDesktopRequestControlButton: "請求控制",
   fieldRemoteDesktopReleaseButton: "釋放控制",
+  fieldRemoteDesktopDisconnectButton: "中止並斷線",
   fieldRemoteDesktopRefreshButton: "重新整理",
   fieldRemoteDesktopLaunchState: "launch",
   fieldRemoteDesktopLaunchHistory: "launch history",

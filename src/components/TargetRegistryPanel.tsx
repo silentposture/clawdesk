@@ -231,7 +231,7 @@ interface RemoteDesktopSessionState {
   }>;
 }
 
-type RemoteDesktopSessionAction = "observe_screen" | "request_control" | "release_control" | "refresh" | "launch_client" | "seed_credentials";
+type RemoteDesktopSessionAction = "observe_screen" | "request_control" | "release_control" | "disconnect" | "refresh" | "launch_client" | "seed_credentials";
 type SshTerminalSessionAction = "open_session" | "run_command" | "close_session" | "refresh";
 
 const initialRegistry = defaultTargetRegistry();
@@ -2217,7 +2217,20 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               releasedAt: now,
               lastUpdatedAt: now,
               notes: [...currentSession.notes.slice(-4), "Control released in local preview."],
-            })
+              })
+          : action === "disconnect"
+            ? createRemoteDesktopSessionPreview(currentTarget, {
+                ...currentSession,
+                state: "released",
+                mode: "observe",
+                controlRequestId: undefined,
+                releasedAt: now,
+                clientLaunchState: currentSession.clientLaunchState === "dry-run" || currentSession.clientLaunchState === "launched" ? "idle" : currentSession.clientLaunchState,
+                clientLaunchPid: null,
+                clientLaunchError: undefined,
+                lastUpdatedAt: now,
+                notes: [...currentSession.notes.slice(-4), "Remote desktop client disconnected in local preview."],
+              })
           : action === "launch_client"
             ? createRemoteDesktopSessionPreview(currentTarget, {
                 ...currentSession,
@@ -2940,6 +2953,14 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     disabled={busy || remoteDesktopBusy || remoteDesktopActionBlocked}
                   >
                     {copy.fieldRemoteDesktopReleaseButton}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void mutateRemoteDesktopSession("disconnect")}
+                    disabled={busy || remoteDesktopBusy || remoteDesktopActionBlocked}
+                  >
+                    {copy.fieldRemoteDesktopDisconnectButton}
                   </button>
                   <button
                     className="secondary-button"
