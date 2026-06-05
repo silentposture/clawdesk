@@ -1169,6 +1169,30 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     }
   }
 
+  function downloadTargetAuditReport(target?: TargetProfile) {
+    const nextTarget = target ?? selectedTarget ?? draftTarget;
+    if (!nextTarget) {
+      setError(copy.targetRegistryTargetListAuditReportCopyFailed);
+      return;
+    }
+
+    const text = targetAuditReport || buildLocalTargetAuditReportText(nextTarget, connectionReadinessReport?.report ?? buildTargetConnectionReadinessReport(nextTarget), targetTimeline);
+    const safeTargetId = nextTarget.id.replace(/[^a-zA-Z0-9_-]+/g, "-");
+    const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${safeTargetId}-audit-report.md`;
+    anchor.rel = "noopener";
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+    setMessage(copy.targetRegistryTargetListAuditReportDownloaded);
+    setError(undefined);
+  }
+
   useEffect(() => {
     void loadTargetConnectionReadiness(selectedTarget ?? draftTarget);
   }, [draftTarget, draftIsSaved, gatewayBaseUrl, selectedTarget, selectedTargetId]);
@@ -3102,6 +3126,13 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   onClick={() => void copyTargetAuditReport(selectedTarget ?? draftTarget)}
                 >
                   {copy.targetRegistryFieldAuditReportCopyButton}
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => downloadTargetAuditReport(selectedTarget ?? draftTarget)}
+                >
+                  {copy.targetRegistryFieldAuditReportDownloadButton}
                 </button>
               </div>
               <div>
