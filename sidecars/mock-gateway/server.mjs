@@ -2534,6 +2534,79 @@ function formatTargetAuditReportText(report) {
   return lines.join("\n");
 }
 
+function formatTargetSessionExportText(target, session) {
+  const lines = [];
+  lines.push(`# Target Session Export`);
+  lines.push(`generatedAt: ${nowIso()}`);
+  lines.push(`targetId: ${target.id}`);
+  lines.push(`displayName: ${target.displayName}`);
+  lines.push(`kind: ${target.kind}`);
+  lines.push(`endpoint: ${target.adapters[0]?.endpoint ?? target.endpoint ?? target.displayName}`);
+  lines.push(`state: ${target.state}`);
+  lines.push(`paired: ${target.paired ? "yes" : "no"}`);
+  lines.push(`summary: ${summarizeTargetProfile(target)}`);
+  lines.push(``);
+
+  if (target.kind === "ssh-terminal") {
+    lines.push(`## SSH Session`);
+    lines.push(`sessionId: ${session.sessionId}`);
+    lines.push(`state: ${session.state}`);
+    lines.push(`mode: ${session.mode}`);
+    lines.push(`transport: ${session.transport}`);
+    lines.push(`sessionSummary: ${redactDiagnosticText(String(session.sessionSummary ?? ""))}`);
+    lines.push(`prompt: ${redactDiagnosticText(String(session.prompt ?? ""))}`);
+    lines.push(`currentDirectory: ${redactDiagnosticText(String(session.currentDirectory ?? ""))}`);
+    lines.push(`lastCommand: ${redactDiagnosticText(String(session.lastCommand ?? ""))}`);
+    lines.push(`lastExitCode: ${typeof session.lastExitCode === "number" ? session.lastExitCode : "n/a"}`);
+    lines.push(``);
+    lines.push(`### Transcript`);
+    const transcript = Array.isArray(session.transcript) ? session.transcript.slice(-20) : [];
+    if (!transcript.length) {
+      lines.push(`- no transcript entries`);
+    } else {
+      for (const entry of transcript) {
+        lines.push(`- ${entry.createdAt} | ${entry.role} | ${redactDiagnosticText(String(entry.text ?? ""))}`);
+      }
+    }
+  }
+
+  if (target.kind === "remote-desktop") {
+    lines.push(`## Remote Desktop Session`);
+    lines.push(`sessionId: ${session.sessionId}`);
+    lines.push(`state: ${session.state}`);
+    lines.push(`mode: ${session.mode}`);
+    lines.push(`transport: ${session.transport}`);
+    lines.push(`sessionSummary: ${redactDiagnosticText(String(session.sessionSummary ?? ""))}`);
+    lines.push(`credentialSource: ${session.credentialSource ?? "none"}`);
+    lines.push(`credentialSeedState: ${session.credentialSeedState ?? "idle"}`);
+    lines.push(`activeWindow: ${redactDiagnosticText(String(session.activeWindow ?? ""))}`);
+    lines.push(`clientLaunchState: ${session.clientLaunchState ?? "idle"}`);
+    lines.push(`clientLaunchCommand: ${redactDiagnosticText(String(session.clientLaunchCommand ?? ""))}`);
+    lines.push(`clientLaunchPid: ${typeof session.clientLaunchPid === "number" ? session.clientLaunchPid : "n/a"}`);
+    lines.push(``);
+    lines.push(`### Launch History`);
+    const launchHistory = Array.isArray(session.launchHistory) ? session.launchHistory.slice(-10) : [];
+    if (!launchHistory.length) {
+      lines.push(`- no launch history`);
+    } else {
+      for (const entry of launchHistory) {
+        const fields = [
+          entry.launchedAt ?? "",
+          entry.transport ?? "unknown",
+          redactDiagnosticText(String(entry.command ?? "")),
+        ];
+        if (typeof entry.dryRun === "boolean") fields.push(`dryRun=${entry.dryRun ? "yes" : "no"}`);
+        if (entry.mode) fields.push(`mode=${entry.mode}`);
+        if (typeof entry.pid === "number") fields.push(`pid=${entry.pid}`);
+        if (entry.error) fields.push(`error=${redactDiagnosticText(String(entry.error))}`);
+        lines.push(`- ${fields.filter(Boolean).join(" | ")}`);
+      }
+    }
+  }
+
+  return lines.join("\n");
+}
+
 function buildTargetAuditReportState(targetId, limit = 12) {
   const normalizedTargetId = typeof targetId === "string" ? targetId.trim() : "";
   if (!normalizedTargetId) {
@@ -2573,6 +2646,22 @@ function buildTargetAuditReportState(targetId, limit = 12) {
     ...report,
     text: formatTargetAuditReportText(report),
   };
+}
+
+function buildTargetSessionExportState(targetId, limit = 20) {
+  const normalizedTargetId = typeof targetId === "string" ? targetId.trim() : "";
+  if (!normalizedTargetId) {
+    return { targetId: "", text: "", session: undefined };
+  }
+
+  const target = targetRegistry.targets.find((entry) => entry.id === normalizedTargetId);
+  if (!target || (target.kind !== "ssh-terminal" && target.kind !== "remote-desktop")) {
+    return { targetId: normalizedTargetId, text: "", session: undefined };
+  }
+
+  const session = target.kind === "ssh-terminal" ? getSshTerminalSessionState(target) : getRemoteDesktopSessionState(target);
+  const text = formatTargetSessionExportText(target, session);
+  return { targetId: target.id, session, text };
 }
 
 function targetConnectionReadinessIssuesState(target) {
@@ -9827,6 +9916,36 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "GET" && pathname === "/targets/ssh-terminal/session-export") {
+    const targetId = typeof parsedUrl.searchParams.get("targetId") === "string" ? parsedUrl.searchParams.get("targetId").trim() : "";
+    if (!targetId) {
+      json(res, 400, { error: "targetId is required" });
+      return;
+    }
+    const target = targetRegistry.targets.find((entry) => entry.id === targetId);
+    if (!target) {
+      json(res, 404, { error: "target not found" });
+      return;
+    }
+    if (target.kind !== "ssh-terminal") {
+      json(res, 400, { error: "target is not an SSH terminal target" });
+      return;
+    }
+    const session = getSshTerminalSessionState(target);
+    const text = formatTargetSessionExportText(target, session);
+    audit("targets.ssh-terminal.session.export", {
+      targetId,
+      kind: target.kind,
+      entryCount: Array.isArray(session.transcript) ? session.transcript.length : 0,
+    });
+    json(res, 200, {
+      target: cloneTargetRegistryState(targetRegistry).targets.find((entry) => entry.id === targetId),
+      session,
+      text,
+    });
+    return;
+  }
+
   if (req.method === "POST" && pathname === "/targets/ssh-terminal/session") {
     try {
       const body = await readJson(req);
@@ -9931,6 +10050,36 @@ const server = http.createServer(async (req, res) => {
     json(res, 200, {
       session: getRemoteDesktopSessionState(target),
       target: cloneTargetRegistryState(targetRegistry).targets.find((entry) => entry.id === targetId),
+    });
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/targets/remote-desktop/session-export") {
+    const targetId = typeof parsedUrl.searchParams.get("targetId") === "string" ? parsedUrl.searchParams.get("targetId").trim() : "";
+    if (!targetId) {
+      json(res, 400, { error: "targetId is required" });
+      return;
+    }
+    const target = targetRegistry.targets.find((entry) => entry.id === targetId);
+    if (!target) {
+      json(res, 404, { error: "target not found" });
+      return;
+    }
+    if (target.kind !== "remote-desktop") {
+      json(res, 400, { error: "target is not a remote desktop target" });
+      return;
+    }
+    const session = getRemoteDesktopSessionState(target);
+    const text = formatTargetSessionExportText(target, session);
+    audit("targets.remote-desktop.session.export", {
+      targetId,
+      kind: target.kind,
+      entryCount: Array.isArray(session.launchHistory) ? session.launchHistory.length : 0,
+    });
+    json(res, 200, {
+      target: cloneTargetRegistryState(targetRegistry).targets.find((entry) => entry.id === targetId),
+      session,
+      text,
     });
     return;
   }
