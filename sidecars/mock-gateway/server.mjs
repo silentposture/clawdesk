@@ -2437,7 +2437,87 @@ function buildTargetTimelineState(targetId, limit = 6) {
     entries: entries
       .filter((entry) => entry && typeof entry === "object")
       .sort((left, right) => String(right.createdAt ?? "").localeCompare(String(left.createdAt ?? "")))
-      .slice(0, Math.max(1, Math.min(Number(limit) || 6, 20))),
+    .slice(0, Math.max(1, Math.min(Number(limit) || 6, 20))),
+  };
+}
+
+function formatTargetAuditReportText(report) {
+  const lines = [];
+  lines.push(`# Target Audit Report`);
+  lines.push(`generatedAt: ${report.generatedAt}`);
+  lines.push(`targetId: ${report.targetId}`);
+  lines.push(`kind: ${report.kind}`);
+  lines.push(`state: ${report.state}`);
+  lines.push(`paired: ${report.paired ? "yes" : "no"}`);
+  lines.push(`readyToConnect: ${report.readiness.readyToConnect ? "yes" : "no"}`);
+  lines.push(`nextAction: ${report.readiness.nextAction}`);
+  lines.push(`summary: ${report.summary}`);
+  lines.push(``);
+  lines.push(`## Readiness Checks`);
+  for (const check of report.readiness.checks) {
+    const safeDetail = redactDiagnosticText(String(check.detail ?? ""));
+    lines.push(`- ${check.key} | ${check.label} | ${check.status} | ${safeDetail}`);
+  }
+  lines.push(``);
+  lines.push(`## Timeline`);
+  if (!report.timeline.length) {
+    lines.push(`- no timeline entries`);
+  } else {
+    for (const entry of report.timeline) {
+      const fields = [
+        entry.createdAt,
+        entry.eventType,
+        entry.kind,
+        entry.source,
+        redactDiagnosticText(entry.summary),
+      ];
+      if (entry.category) fields.push(`category=${entry.category}`);
+      if (typeof entry.allowed === "boolean") fields.push(`allowed=${entry.allowed ? "yes" : "no"}`);
+      if (entry.decision) fields.push(`decision=${redactDiagnosticText(String(entry.decision))}`);
+      if (entry.state) fields.push(`state=${entry.state}`);
+      if (entry.transport) fields.push(`transport=${entry.transport}`);
+      if (entry.lastProbeResult) fields.push(`probe=${entry.lastProbeResult}`);
+      if (typeof entry.lastExitCode === "number") fields.push(`exit=${entry.lastExitCode}`);
+      if (entry.clientLaunchState) fields.push(`launch=${entry.clientLaunchState}`);
+      if (entry.credentialSource) fields.push(`credentialSource=${entry.credentialSource}`);
+      if (entry.credentialSeedState) fields.push(`credentialSeed=${entry.credentialSeedState}`);
+      lines.push(`- ${fields.filter(Boolean).join(" | ")}`);
+    }
+  }
+  return lines.join("\n");
+}
+
+function buildTargetAuditReportState(targetId, limit = 12) {
+  const normalizedTargetId = typeof targetId === "string" ? targetId.trim() : "";
+  if (!normalizedTargetId) {
+    return { targetId: "", entries: [], text: "" };
+  }
+
+  const target = targetRegistry.targets.find((entry) => entry.id === normalizedTargetId);
+  if (!target) {
+    return { targetId: normalizedTargetId, entries: [], text: "" };
+  }
+
+  const readiness = buildTargetConnectionReadinessReportState(target);
+  const timeline = buildTargetTimelineState(normalizedTargetId, limit);
+  const report = {
+    version: 1,
+    generatedAt: nowIso(),
+    targetId: target.id,
+    kind: target.kind,
+    state: target.state,
+    paired: Boolean(target.paired),
+    readiness,
+    summary: summarizeTargetProfile(target),
+    timeline: timeline.entries.map((entry) => ({
+      ...entry,
+      summary: redactDiagnosticText(String(entry.summary ?? "")),
+    })),
+  };
+
+  return {
+    ...report,
+    text: formatTargetAuditReportText(report),
   };
 }
 
@@ -9182,6 +9262,33 @@ const server = http.createServer(async (req, res) => {
     }
     json(res, 200, {
       ...timeline,
+      registry: cloneTargetRegistryState(targetRegistry),
+    });
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/targets/audit-report") {
+    const targetId = typeof parsedUrl.searchParams.get("targetId") === "string" ? parsedUrl.searchParams.get("targetId").trim() : "";
+    if (!targetId) {
+      json(res, 400, { error: "targetId is required" });
+      return;
+    }
+    const limit = Math.max(1, Math.min(20, Number(parsedUrl.searchParams.get("limit") ?? 12)));
+    const target = targetRegistry.targets.find((entry) => entry.id === targetId);
+    if (!target) {
+      json(res, 404, { error: "target not found" });
+      return;
+    }
+    const report = buildTargetAuditReportState(targetId, limit);
+    audit("targets.audit.report", {
+      targetId,
+      kind: target.kind,
+      entryCount: report.timeline.length,
+      readinessReady: report.readiness.readyToConnect,
+      nextAction: report.readiness.nextAction,
+    });
+    json(res, 200, {
+      ...report,
       registry: cloneTargetRegistryState(targetRegistry),
     });
     return;
