@@ -231,7 +231,7 @@ interface RemoteDesktopSessionState {
   }>;
 }
 
-type RemoteDesktopSessionAction = "observe_screen" | "request_control" | "release_control" | "disconnect" | "refresh" | "launch_client" | "seed_credentials";
+type RemoteDesktopSessionAction = "observe_screen" | "request_control" | "release_control" | "disconnect" | "refresh" | "launch_client" | "reconnect" | "seed_credentials";
 type SshTerminalSessionAction = "open_session" | "run_command" | "close_session" | "refresh";
 
 const initialRegistry = defaultTargetRegistry();
@@ -2231,13 +2231,13 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 lastUpdatedAt: now,
                 notes: [...currentSession.notes.slice(-4), "Remote desktop client disconnected in local preview."],
               })
-          : action === "launch_client"
+          : action === "launch_client" || action === "reconnect"
             ? createRemoteDesktopSessionPreview(currentTarget, {
                 ...currentSession,
                 state: currentTarget.connection.sessionMode === "control" ? "controlling" : "observing",
                 mode: currentTarget.connection.sessionMode,
                 transport: "local-native-rdp-preview",
-                clientLaunchState: "dry-run",
+                clientLaunchState: action === "reconnect" ? "launched" : "dry-run",
                 clientLaunchCommand: defaultRemoteDesktopLaunchCommand(currentTarget),
                 clientLaunchAt: now,
                 clientLaunchPid: null,
@@ -2249,11 +2249,16 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                     transport: "local-native-rdp-preview",
                     command: defaultRemoteDesktopLaunchCommand(currentTarget),
                     mode: currentTarget.connection.sessionMode,
-                    dryRun: true,
+                    dryRun: action !== "reconnect",
                   },
                 ],
                 lastUpdatedAt: now,
-                notes: [...currentSession.notes.slice(-4), "Native RDP client launch recorded in local preview."],
+                notes: [
+                  ...currentSession.notes.slice(-4),
+                  action === "reconnect"
+                    ? "Native RDP client reconnect recorded in local preview."
+                    : "Native RDP client launch recorded in local preview.",
+                ],
               })
           : createRemoteDesktopSessionPreview(currentTarget, {
               ...currentSession,
@@ -2988,6 +2993,14 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   >
                     <Send size={16} />
                     {copy.fieldRemoteDesktopLaunchButton}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void mutateRemoteDesktopSession("reconnect")}
+                    disabled={busy || remoteDesktopBusy || remoteDesktopActionBlocked}
+                  >
+                    {copy.fieldRemoteDesktopReconnectButton}
                   </button>
                 </>
               ) : null}

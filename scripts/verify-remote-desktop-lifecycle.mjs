@@ -152,12 +152,40 @@ try {
   }
   if (!terminated) throw new Error("disconnect did not terminate the launched client process");
 
+  const reconnect = await postJson("/targets/remote-desktop/session", { targetId: "rdp-test", action: "reconnect" });
+  if (!reconnect.response.ok || !reconnect.payload.allowed) throw new Error(`reconnect failed: ${reconnect.payload.reason || reconnect.response.status}`);
+  const reconnectPid = reconnect.payload.session?.clientLaunchPid ?? reconnect.payload.launch?.pid;
+  if (typeof reconnectPid !== "number" || reconnectPid <= 0) throw new Error("reconnect did not return a pid");
+  if (reconnectPid === pid) throw new Error("reconnect reused the terminated pid");
+  try {
+    process.kill(reconnectPid, 0);
+  } catch {
+    throw new Error("reconnect pid is not alive");
+  }
+
+  const reconnectDisconnect = await postJson("/targets/remote-desktop/session", { targetId: "rdp-test", action: "disconnect" });
+  if (!reconnectDisconnect.response.ok || !reconnectDisconnect.payload.allowed) {
+    throw new Error(`reconnect disconnect failed: ${reconnectDisconnect.payload.reason || reconnectDisconnect.response.status}`);
+  }
+  let reconnectTerminated = false;
+  for (let i = 0; i < 20; i += 1) {
+    try {
+      process.kill(reconnectPid, 0);
+      await delay(100);
+    } catch {
+      reconnectTerminated = true;
+      break;
+    }
+  }
+  if (!reconnectTerminated) throw new Error("reconnect disconnect did not terminate the relaunched client process");
+
   const audit = await getJson("/backend/audit?limit=50");
   if (!audit.response.ok) throw new Error("audit endpoint failed");
   const actions = audit.payload.events.map((event) => event.action);
   if (!actions.includes("targets.remote-desktop.client-disconnect")) throw new Error("missing disconnect audit event");
+  if (!actions.includes("targets.remote-desktop.client-reconnect")) throw new Error("missing reconnect audit event");
 
-  console.log("PASS remote desktop launch and disconnect lifecycle is managed by the gateway.");
+  console.log("PASS remote desktop launch, disconnect, and reconnect lifecycle is managed by the gateway.");
 } finally {
   listener.close();
   await stop(gateway);
