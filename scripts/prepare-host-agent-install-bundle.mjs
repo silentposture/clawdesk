@@ -128,6 +128,8 @@ async function prepareHostAgentInstallBundle(argv) {
   const lockRelativePath = "host-agent.lock";
   const statusRelativePath = "host-agent-status.json";
   const installRootRelativePath = `${targetId}-host-agent-install`;
+  const startupRegistryHive = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+  const startupRegistryValueName = `ClawDeskHostAgent-${targetId}`;
 
   const configPath = configRelativePath;
   const lockPath = lockRelativePath;
@@ -174,6 +176,8 @@ async function prepareHostAgentInstallBundle(argv) {
     runtimeInstallMode: "service-friendly-launcher",
     bundlePortable: true,
     installRootRelativePath,
+    startupRegistryHive,
+    startupRegistryValueName,
     files: [
       runtimeLauncherRelativePath,
       runtimeBridgeRelativePath,
@@ -238,13 +242,13 @@ The bundle includes a local copy of the reusable host bridge runtime so the inst
 
 The launcher writes a lifecycle status file so a future Windows service or startup hook can supervise the runtime without changing the bridge contract.
 
-## Scheduled Task
+## Startup Hook
 
 \`\`\`powershell
-register-host-agent.ps1
+register-host-agent-startup.ps1
 \`\`\`
 
-This creates a hidden logon task that launches the same runtime through the launcher entrypoint.
+This creates a hidden per-user startup hook that launches the same runtime through the launcher entrypoint when the user session starts.
 `;
 
   const launchCmd = `@echo off
@@ -301,11 +305,13 @@ $resolvedInstallRoot = if ([string]::IsNullOrWhiteSpace($InstallRoot)) { $defaul
 $installDefinition = [pscustomobject]@{
   SourceRoot = $sourceRoot
   InstallRoot = $resolvedInstallRoot
-  InstallMode = "copy-bundle-and-register-task"
+  InstallMode = "copy-bundle-and-register-startup"
   TaskName = "${manifest.taskName}"
   RuntimeEntryPoint = "${runtimeLauncherRelativePath}"
   RuntimeBridgeEntryPoint = "${runtimeBridgeRelativePath}"
   BundlePortable = $true
+  StartupRegistryHive = "${startupRegistryHive}"
+  StartupRegistryValueName = "${startupRegistryValueName}"
 }
 if ($Preview) {
   $installDefinition | ConvertTo-Json -Depth 4
@@ -313,7 +319,7 @@ if ($Preview) {
 }
 New-Item -ItemType Directory -Path $resolvedInstallRoot -Force | Out-Null
 Copy-Item -Path (Join-Path $sourceRoot "*") -Destination $resolvedInstallRoot -Recurse -Force
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $resolvedInstallRoot "register-host-agent.ps1")
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $resolvedInstallRoot "register-host-agent-startup.ps1")
 Write-Host ("Installed host agent bundle to: {0}" -f $resolvedInstallRoot)
 `;
 
@@ -328,70 +334,69 @@ $resolvedInstallRoot = if ([string]::IsNullOrWhiteSpace($InstallRoot)) { $defaul
 $removeDefinition = [pscustomobject]@{
   SourceRoot = $sourceRoot
   InstallRoot = $resolvedInstallRoot
-  InstallMode = "copy-bundle-and-register-task"
+  InstallMode = "copy-bundle-and-register-startup"
   TaskName = "${manifest.taskName}"
-  Action = "unregister-and-remove-install-root"
+  Action = "unregister-startup-and-remove-install-root"
+  StartupRegistryHive = "${startupRegistryHive}"
+  StartupRegistryValueName = "${startupRegistryValueName}"
 }
 if ($Preview) {
   $removeDefinition | ConvertTo-Json -Depth 4
   return
 }
-& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $resolvedInstallRoot "unregister-host-agent.ps1")
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File (Join-Path $resolvedInstallRoot "unregister-host-agent-startup.ps1")
 if (Test-Path $resolvedInstallRoot) {
   Remove-Item -LiteralPath $resolvedInstallRoot -Recurse -Force
 }
 Write-Host ("Removed host agent install root: {0}" -f $resolvedInstallRoot)
 `;
 
-  const registerPs1 = `param(
+  const registerStartupPs1 = `param(
   [switch]$Preview
 )
 $ErrorActionPreference = "Stop"
-$taskName = "${manifest.taskName}"
-$powershell = ${shellQuote("powershell.exe")}
+$startupKey = "${startupRegistryHive}"
+$valueName = "${startupRegistryValueName}"
 $launchScript = Join-Path $PSScriptRoot "launch-host-agent.ps1"
-$statusFile = Join-Path $PSScriptRoot "${statusRelativePath}"
-$registerDefinition = [pscustomobject]@{
-  TaskName = $taskName
-  Execute = $powershell
-  Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $launchScript"
-  Trigger = "AtLogOn"
-  RunLevel = "LeastPrivilege"
-  HiddenWindow = $true
+$command = 'powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + $launchScript + '"'
+$startupDefinition = [pscustomobject]@{
+  InstallMode = "copy-bundle-and-register-startup"
+  StartupRegistryHive = $startupKey
+  StartupRegistryValueName = $valueName
+  Command = $command
 }
 
 if ($Preview) {
-  $registerDefinition | ConvertTo-Json -Depth 4
+  $startupDefinition | ConvertTo-Json -Depth 4
   return
 }
 
-$action = New-ScheduledTaskAction -Execute $powershell -Argument ("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File {0}" -f $launchScript)
-$trigger = New-ScheduledTaskTrigger -AtLogOn
-$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel LeastPrivilege
-$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
-
-Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "ClawDesk host agent launcher"
-Write-Host ("Registered scheduled task: {0}" -f $taskName)
+$null = New-Item -Path $startupKey -Force
+New-ItemProperty -Path $startupKey -Name $valueName -Value $command -PropertyType String -Force | Out-Null
+Write-Host ("Registered startup hook: {0} -> {1}" -f $valueName, $command)
 `;
 
-  const unregisterPs1 = `param(
+  const unregisterStartupPs1 = `param(
   [switch]$Preview
 )
 $ErrorActionPreference = "Stop"
-$taskName = "${manifest.taskName}"
-$unregisterDefinition = [pscustomobject]@{
-  TaskName = $taskName
-  Action = "Unregister-ScheduledTask"
+$startupKey = "${startupRegistryHive}"
+$valueName = "${startupRegistryValueName}"
+$startupDefinition = [pscustomobject]@{
+  InstallMode = "copy-bundle-and-register-startup"
+  StartupRegistryHive = $startupKey
+  StartupRegistryValueName = $valueName
+  Action = "Remove-ItemProperty"
 }
 if ($Preview) {
-  $unregisterDefinition | ConvertTo-Json -Depth 4
+  $startupDefinition | ConvertTo-Json -Depth 4
   return
 }
-if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
-  Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-  Write-Host ("Unregistered scheduled task: {0}" -f $taskName)
+if (Get-ItemProperty -Path $startupKey -Name $valueName -ErrorAction SilentlyContinue) {
+  Remove-ItemProperty -Path $startupKey -Name $valueName -ErrorAction SilentlyContinue
+  Write-Host ("Removed startup hook: {0}" -f $valueName)
 } else {
-  Write-Host ("Scheduled task not found: {0}" -f $taskName)
+  Write-Host ("Startup hook not found: {0}" -f $valueName)
 }
 `;
 
@@ -413,8 +418,10 @@ Write-Host "Removed host agent config, lock, and status files."
   await writeText(path.join(outputDir, "launch-host-agent.ps1"), launchPs1);
   await writeText(path.join(outputDir, "install-host-agent.ps1"), installPs1);
   await writeText(path.join(outputDir, "remove-host-agent.ps1"), removePs1);
-  await writeText(path.join(outputDir, "register-host-agent.ps1"), registerPs1);
-  await writeText(path.join(outputDir, "unregister-host-agent.ps1"), unregisterPs1);
+  await writeText(path.join(outputDir, "register-host-agent-startup.ps1"), registerStartupPs1);
+  await writeText(path.join(outputDir, "unregister-host-agent-startup.ps1"), unregisterStartupPs1);
+  await writeText(path.join(outputDir, "register-host-agent.ps1"), registerStartupPs1);
+  await writeText(path.join(outputDir, "unregister-host-agent.ps1"), unregisterStartupPs1);
   await writeText(path.join(outputDir, "uninstall-host-agent.ps1"), uninstallPs1);
   await writeText(path.join(outputDir, "host-agent-install.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
