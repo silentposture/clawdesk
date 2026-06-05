@@ -429,11 +429,14 @@ const BLOCKED_COMMAND_PATTERNS = [
 let targetRegistry = cloneTargetRegistryState(defaultTargetRegistry);
 let targetDispatches = [];
 const remoteDesktopSessions = new Map();
+const remoteDesktopLaunchRuntimes = new Map();
 const sshTerminalSessions = new Map();
 const sshTerminalInteractiveRuntimes = new Map();
 const sshExecutable = (process.env.CLAWDESK_SSH_EXECUTABLE || (process.platform === "win32" ? "ssh.exe" : "ssh")).trim();
 const sshRemoteShellCommand = (process.env.CLAWDESK_SSH_REMOTE_SHELL_COMMAND || "sh -s").trim();
 const sshSessionCommandTimeoutMs = Number(process.env.CLAWDESK_SSH_SESSION_COMMAND_TIMEOUT_MS ?? 60_000);
+const remoteDesktopClientExecutableOverride = process.env.CLAWDESK_REMOTE_DESKTOP_CLIENT_EXECUTABLE?.trim() || "";
+const remoteDesktopClientArgsOverrideJson = process.env.CLAWDESK_REMOTE_DESKTOP_CLIENT_ARGS_JSON?.trim() || "";
 // SSH credential vault uses an in-memory index plus a local encrypted file for durable storage.
 const targetCredentialVault = new Map();
 let targetCredentialVaultSaveTimer;
@@ -3902,6 +3905,18 @@ function remoteDesktopSessionStorageKey(targetId) {
   return sanitizeTargetStorageKey(targetId);
 }
 
+function remoteDesktopLaunchRuntimeKey(targetId) {
+  return remoteDesktopSessionStorageKey(targetId);
+}
+
+function getRemoteDesktopLaunchRuntime(targetId) {
+  return cloneRemoteDesktopLaunchRuntime(remoteDesktopLaunchRuntimes.get(remoteDesktopLaunchRuntimeKey(targetId)));
+}
+
+function clearRemoteDesktopLaunchRuntime(targetId) {
+  remoteDesktopLaunchRuntimes.delete(remoteDesktopLaunchRuntimeKey(targetId));
+}
+
 function cloneRemoteDesktopSessionState(session) {
   return {
     ...session,
@@ -3909,6 +3924,26 @@ function cloneRemoteDesktopSessionState(session) {
     notes: Array.isArray(session.notes) ? [...session.notes] : [],
     launchHistory: Array.isArray(session.launchHistory) ? session.launchHistory.map((entry) => ({ ...entry })) : [],
   };
+}
+
+function cloneRemoteDesktopLaunchRuntime(runtime) {
+  return runtime
+    ? {
+        ...runtime,
+      }
+    : runtime;
+}
+
+function isProcessAlive(pid) {
+  if (typeof pid !== "number" || !Number.isFinite(pid) || pid <= 0) {
+    return false;
+  }
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function buildRemoteDesktopSessionSummary(target, session) {
@@ -4002,6 +4037,20 @@ function refreshRemoteDesktopSessionState(target, session, now = nowIso()) {
         ? "control-pending"
         : "observing";
   const nextMode = nextState === "controlling" || nextState === "control-pending" ? "control" : "observe";
+  const launchRuntime = getRemoteDesktopLaunchRuntime(target.id);
+  const runtimeAlive = launchRuntime ? isProcessAlive(launchRuntime.pid) : false;
+  const nextClientLaunchState =
+    session.clientLaunchState === "launched" && launchRuntime && !runtimeAlive
+      ? "failed"
+      : session.clientLaunchState ?? "idle";
+  const nextClientLaunchPid =
+    session.clientLaunchState === "launched" && launchRuntime && !runtimeAlive
+      ? session.clientLaunchPid ?? launchRuntime.pid ?? null
+      : session.clientLaunchPid ?? launchRuntime?.pid ?? null;
+  const nextClientLaunchError =
+    session.clientLaunchState === "launched" && launchRuntime && !runtimeAlive
+      ? session.clientLaunchError ?? `Remote desktop client process ${launchRuntime.pid} is no longer running.`
+      : session.clientLaunchError;
   return withRemoteDesktopSessionSummary(target, {
     ...session,
     endpoint: target.adapters[0]?.endpoint ?? target.endpoint,
@@ -4015,6 +4064,9 @@ function refreshRemoteDesktopSessionState(target, session, now = nowIso()) {
     screenSummary: `Gateway 遠端桌面契約觀察：${target.displayName} · ${extractTargetHost(target) || target.endpoint}.`,
     sessionSummary: buildRemoteDesktopSessionSummary(target, session),
     launchHistory: Array.isArray(session.launchHistory) ? [...session.launchHistory] : [],
+    clientLaunchState: nextClientLaunchState,
+    clientLaunchPid: nextClientLaunchPid,
+    clientLaunchError: nextClientLaunchError,
     lastObservedAt: now,
     lastUpdatedAt: now,
     notes: [...session.notes.slice(-4), `Observation refreshed at ${now}.`],
@@ -4025,6 +4077,25 @@ function buildRemoteDesktopLaunchSpec(target) {
   const host = extractTargetHost(target) || target.adapters[0]?.endpoint || target.displayName;
   const port = Number(target.connection?.port ?? 3389);
   const endpoint = port > 0 ? `${host}:${port}` : host;
+  if (remoteDesktopClientExecutableOverride) {
+    let args = [];
+    if (remoteDesktopClientArgsOverrideJson) {
+      try {
+        const parsed = JSON.parse(remoteDesktopClientArgsOverrideJson);
+        if (Array.isArray(parsed) && parsed.every((item) => typeof item === "string")) {
+          args = parsed;
+        }
+      } catch {
+        // Fallback to default args if the override is malformed.
+      }
+    }
+    return {
+      executable: remoteDesktopClientExecutableOverride,
+      args,
+      command: [remoteDesktopClientExecutableOverride, ...args].join(" ").trim(),
+      transport: "native-rdp-client",
+    };
+  }
 
   if (process.platform === "win32") {
     return {
@@ -4341,6 +4412,16 @@ async function launchRemoteDesktopClientState(target) {
     };
   }
 
+  remoteDesktopLaunchRuntimes.set(remoteDesktopLaunchRuntimeKey(baseTarget.id), {
+    targetId: baseTarget.id,
+    pid: execution.pid ?? null,
+    command: launchSpec.command,
+    transport: launchSpec.transport,
+    launchedAt: now,
+    dryRun: false,
+    closed: false,
+  });
+
   const nextSession = withRemoteDesktopSessionSummary(baseTarget, {
     ...currentSession,
     state: baseTarget.connection?.sessionMode === "control" ? "controlling" : "observing",
@@ -4367,6 +4448,112 @@ async function launchRemoteDesktopClientState(target) {
       ...launchEntry,
       pid: execution.pid ?? null,
     },
+  };
+}
+
+async function terminateRemoteDesktopClientRuntime(targetId, runtime, reason = "disconnected") {
+  if (!runtime || runtime.dryRun) {
+    clearRemoteDesktopLaunchRuntime(targetId);
+    return { ok: true, reason: "dry-run" };
+  }
+
+  const pid = runtime.pid;
+  clearRemoteDesktopLaunchRuntime(targetId);
+  if (typeof pid !== "number" || !Number.isFinite(pid) || pid <= 0) {
+    return { ok: true, reason: "missing-pid" };
+  }
+
+  if (process.platform === "win32") {
+    const taskkill = spawn("taskkill", ["/PID", String(pid), "/T", "/F"], {
+      cwd: homeDir,
+      env: process.env,
+      shell: false,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const exitCode = await new Promise((resolve) => {
+      taskkill.once("error", () => resolve(1));
+      taskkill.once("close", (code) => resolve(typeof code === "number" ? code : 1));
+    });
+    return exitCode === 0
+      ? { ok: true, reason, pid }
+      : { ok: false, reason: `taskkill failed with exit code ${exitCode}.`, pid };
+  }
+
+  try {
+    process.kill(pid, "SIGTERM");
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+      pid,
+    };
+  }
+
+  const deadline = Date.now() + 1500;
+  while (Date.now() < deadline) {
+    if (!isProcessAlive(pid)) {
+      return { ok: true, reason, pid };
+    }
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+
+  try {
+    process.kill(pid, "SIGKILL");
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+      pid,
+    };
+  }
+
+  return { ok: true, reason, pid };
+}
+
+async function disconnectRemoteDesktopSessionState(target) {
+  const baseTarget = normalizeTargetProfileState(target);
+  if (baseTarget.kind !== "remote-desktop") {
+    return { allowed: false, reason: "This target is not a remote desktop target.", target: baseTarget };
+  }
+
+  const now = nowIso();
+  const runtime = getRemoteDesktopLaunchRuntime(baseTarget.id);
+  const closeResult = await terminateRemoteDesktopClientRuntime(baseTarget.id, runtime, "disconnect");
+  const currentSession = getRemoteDesktopSessionState(baseTarget);
+  const nextSession = withRemoteDesktopSessionSummary(baseTarget, {
+    ...currentSession,
+    state: "released",
+    mode: "observe",
+    controlRequestId: undefined,
+    releasedAt: now,
+    clientLaunchState: runtime ? "idle" : currentSession.clientLaunchState ?? "idle",
+    clientLaunchPid: null,
+    clientLaunchError: runtime && !closeResult.ok ? closeResult.reason : undefined,
+    lastUpdatedAt: now,
+    notes: [
+      ...currentSession.notes.slice(-4),
+      runtime
+        ? closeResult.ok
+          ? `Remote desktop client disconnected (${runtime.pid ?? "unknown pid"}).`
+          : `Remote desktop client disconnect failed: ${closeResult.reason}`
+        : "Remote desktop control released without an active client runtime.",
+    ],
+  });
+  remoteDesktopSessions.set(remoteDesktopSessionStorageKey(baseTarget.id), nextSession);
+  if (closeResult.ok) {
+    audit("targets.remote-desktop.client-disconnect", {
+      targetId: baseTarget.id,
+      targetName: baseTarget.displayName,
+      pid: closeResult.pid ?? runtime?.pid ?? null,
+      reason: closeResult.reason,
+    });
+  }
+  return {
+    allowed: true,
+    reason: runtime && !closeResult.ok ? `Remote desktop client disconnect failed: ${closeResult.reason}` : "Remote desktop control released and client disconnected.",
+    target: markRemoteDesktopTargetActive(baseTarget, now),
+    session: nextSession,
   };
 }
 
@@ -10134,8 +10321,10 @@ const server = http.createServer(async (req, res) => {
             session: seededSession,
           };
         }
-      } else if (action === "release_control" || action === "disconnect") {
+      } else if (action === "release_control") {
         result = releaseRemoteDesktopSessionState(target);
+      } else if (action === "disconnect") {
+        result = await disconnectRemoteDesktopSessionState(target);
       } else if (action === "launch_client" || action === "launch" || action === "open_client") {
         result = await launchRemoteDesktopClientState(target);
       } else {
