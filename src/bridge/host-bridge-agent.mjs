@@ -470,6 +470,8 @@ export {
   parseArgs,
   postJson,
   printResult,
+  resolveConfigPath,
+  resolveLockPath,
   runHostBridgeAgent,
   seedTargetRegistryIfNeeded,
 };
