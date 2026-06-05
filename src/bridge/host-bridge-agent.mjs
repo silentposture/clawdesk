@@ -129,6 +129,23 @@ async function writeJsonFile(filePath, value) {
   await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+async function persistHostAgentConfig(configPath, state) {
+  await writeJsonFile(configPath, {
+    configVersion: 1,
+    gatewayBaseUrl: state.gatewayBaseUrl,
+    targetId: state.targetId,
+    targetName: state.targetName,
+    kind: state.kind,
+    hostName: state.hostName,
+    bridgeVersion: state.bridgeVersion,
+    bridgeId: state.bridgeId,
+    deviceId: state.deviceId,
+    installId: state.installId,
+    platform: state.platform,
+    lockPath: state.lockPath,
+  });
+}
+
 function resolveLockPath(value) {
   const raw = String(value || "").trim();
   if (raw) return path.resolve(raw);
@@ -309,20 +326,7 @@ async function runHostBridgeAgent(argv, runtime = {}) {
   process.once("SIGTERM", handleSignal);
 
   try {
-    await writeJsonFile(configPath, {
-      configVersion: 1,
-      gatewayBaseUrl,
-      targetId,
-      targetName,
-      kind,
-      hostName,
-      bridgeVersion,
-      bridgeId,
-      deviceId,
-      installId,
-      platform,
-      lockPath,
-    });
+    await persistHostAgentConfig(configPath, state);
 
     await seedTargetRegistryIfNeeded(gatewayBaseUrl, targetId, targetName, kind);
 
@@ -349,6 +353,7 @@ async function runHostBridgeAgent(argv, runtime = {}) {
       }
 
       state.bridgeId = enroll.payload.target?.connection?.hostBridge?.bridgeId || bridgeId;
+      await persistHostAgentConfig(configPath, state);
     }
 
     const attest = await postJson(`${gatewayBaseUrl}/targets/host-bridge/attest`, {
