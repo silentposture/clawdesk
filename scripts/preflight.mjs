@@ -28,6 +28,7 @@ const requiredPaths = [
   "scripts/sign-win-installer.mjs",
   "scripts/validate-release-configs.mjs",
   "scripts/verify-target-session-exports.mjs",
+  "scripts/verify-ssh-terminal-lifecycle.mjs",
   "scripts/verify-remote-desktop-lifecycle.mjs",
   "scripts/smoke-gui.mjs",
   "scripts/smoke-store-installer-win.mjs",
@@ -161,6 +162,7 @@ async function main() {
   const hiddenWindowPolicyCheck = run("node", ["scripts/enforce-hidden-window-policy.mjs"]);
   const releaseConfigCheck = run("node", ["scripts/validate-release-configs.mjs"]);
   const targetSessionExportCheck = run("node", ["scripts/verify-target-session-exports.mjs"]);
+  const sshTerminalLifecycleCheck = run("node", ["scripts/verify-ssh-terminal-lifecycle.mjs"]);
   const remoteDesktopLifecycleCheck = run("node", ["scripts/verify-remote-desktop-lifecycle.mjs"]);
   const hiddenTaskAuditCheck = process.platform === "win32"
     ? run("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/audit-scheduled-tasks.ps1"])
@@ -175,6 +177,7 @@ async function main() {
     ...(hiddenWindowPolicyCheck.status === 0 ? [] : ["hidden-window-policy-violation"]),
     ...(releaseConfigCheck.status === 0 ? [] : ["invalid-release-configs"]),
     ...(targetSessionExportCheck.status === 0 ? [] : ["stale-target-session-exports"]),
+    ...(sshTerminalLifecycleCheck.status === 0 ? [] : ["stale-ssh-terminal-lifecycle"]),
     ...(remoteDesktopLifecycleCheck.status === 0 ? [] : ["stale-remote-desktop-lifecycle"]),
     ...(hiddenTaskAuditCheck.status === 0 ? [] : ["hidden-task-window-rule-violation"]),
   ];
@@ -212,6 +215,11 @@ async function main() {
       ok: targetSessionExportCheck.status === 0,
       stdout: targetSessionExportCheck.stdout.trim(),
       stderr: targetSessionExportCheck.stderr.trim(),
+    },
+    sshTerminalLifecycle: {
+      ok: sshTerminalLifecycleCheck.status === 0,
+      stdout: sshTerminalLifecycleCheck.stdout.trim(),
+      stderr: sshTerminalLifecycleCheck.stderr.trim(),
     },
     remoteDesktopLifecycle: {
       ok: remoteDesktopLifecycleCheck.status === 0,

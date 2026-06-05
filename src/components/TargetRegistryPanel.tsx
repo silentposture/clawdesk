@@ -232,7 +232,7 @@ interface RemoteDesktopSessionState {
 }
 
 type RemoteDesktopSessionAction = "observe_screen" | "request_control" | "release_control" | "disconnect" | "refresh" | "launch_client" | "reconnect" | "seed_credentials";
-type SshTerminalSessionAction = "open_session" | "run_command" | "close_session" | "refresh";
+type SshTerminalSessionAction = "open_session" | "run_command" | "close_session" | "reconnect" | "refresh";
 
 const initialRegistry = defaultTargetRegistry();
 const initialTarget = initialRegistry.targets[0];
@@ -2083,6 +2083,24 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
         return;
       }
 
+      if (action === "reconnect") {
+        const nextSession = normalizeSshTerminalSessionState(currentTarget, {
+          ...currentSession,
+          state: "connected",
+          lastObservedAt: now,
+          lastUpdatedAt: now,
+          notes: [...currentSession.notes.slice(-4), copy.targetRegistrySSHSessionReconnectNote],
+          transcript: [
+            ...currentSession.transcript.slice(-12),
+            { id: `ssh-entry-${Math.random().toString(36).slice(2, 10)}`, role: "system", text: copy.targetRegistrySSHSessionReconnectTranscript, createdAt: now },
+          ],
+        });
+        setSshTerminalSession(nextSession);
+        setMessage(copy.targetRegistrySSHSessionReconnectMessage);
+        setError(undefined);
+        return;
+      }
+
       if (action === "close_session") {
         const nextSession = normalizeSshTerminalSessionState(currentTarget, {
           ...currentSession,
@@ -3032,6 +3050,14 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   >
                     <RefreshCw size={16} />
                     {copy.targetRegistryConnectionReadinessRefreshAction}
+                  </button>
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => void mutateSshTerminalSession("reconnect")}
+                    disabled={busy || sshTerminalBusy || sshTerminalActionBlocked || connectionIssues.length > 0}
+                  >
+                    {copy.fieldSSHSessionReconnectButton}
                   </button>
                   <button
                     className="secondary-button"
