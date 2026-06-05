@@ -38,6 +38,7 @@ const targetCredentialVaultDurable = true;
 const targetCredentialVaultFilePath = path.join(homeDir, ".clawdesk", "ssh-credential-vault.json");
 const targetCredentialVaultKeyPath = path.join(homeDir, ".clawdesk", "ssh-credential-vault.key");
 const targetCredentialBundleIterations = 120_000;
+const pairingTicketDefaultTtlMs = 15 * 60 * 1000;
 const openClawUpstreamSnapshot = {
   repository: "https://github.com/openclaw/openclaw",
   commit: "278e3eabf29dd8ff31d633907525bda35ec6474a",
@@ -432,6 +433,7 @@ const remoteDesktopSessions = new Map();
 const remoteDesktopLaunchRuntimes = new Map();
 const sshTerminalSessions = new Map();
 const sshTerminalInteractiveRuntimes = new Map();
+const pairingTickets = new Map();
 const sshExecutable = (process.env.CLAWDESK_SSH_EXECUTABLE || (process.platform === "win32" ? "ssh.exe" : "ssh")).trim();
 const sshExecutableArgs = (() => {
   const raw = process.env.CLAWDESK_SSH_EXECUTABLE_ARGS_JSON;
@@ -3280,6 +3282,113 @@ function buildKnownHostEntry(target) {
   return `${host} ${keyMaterial}`;
 }
 
+function pairingTicketStorageKey(code) {
+  return String(code ?? "").trim().toLowerCase();
+}
+
+function clonePairingTicketState(ticket) {
+  return ticket ? { ...ticket } : ticket;
+}
+
+function issueTargetPairingTicketState(target, options = {}) {
+  const baseTarget = normalizeTargetProfileState(target);
+  const now = nowIso();
+  const ticket = {
+    code: `pair-${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`,
+    targetId: baseTarget.id,
+    targetName: baseTarget.displayName,
+    kind: baseTarget.kind,
+    createdAt: now,
+    expiresAt: new Date(Date.now() + (Number(options.expiresInMinutes) > 0 ? Number(options.expiresInMinutes) * 60_000 : pairingTicketDefaultTtlMs)).toISOString(),
+    redeemedAt: null,
+  };
+  pairingTickets.set(pairingTicketStorageKey(ticket.code), ticket);
+  audit("targets.pairing-ticket.issued", {
+    targetId: baseTarget.id,
+    targetName: baseTarget.displayName,
+    kind: baseTarget.kind,
+    expiresAt: ticket.expiresAt,
+  });
+  return ticket;
+}
+
+function resolveTargetPairingTicketState(code) {
+  const ticket = pairingTickets.get(pairingTicketStorageKey(code));
+  if (!ticket) return null;
+  return clonePairingTicketState(ticket);
+}
+
+function redeemTargetPairingTicketState(target, code) {
+  const baseTarget = normalizeTargetProfileState(target);
+  const ticket = resolveTargetPairingTicketState(code);
+  const now = nowIso();
+
+  if (!ticket) {
+    return {
+      allowed: false,
+      reason: "Pairing code is invalid or expired.",
+      target: baseTarget,
+    };
+  }
+
+  if (ticket.redeemedAt) {
+    return {
+      allowed: false,
+      reason: "Pairing code has already been redeemed.",
+      target: baseTarget,
+    };
+  }
+
+  if (new Date(ticket.expiresAt).getTime() <= Date.now()) {
+    pairingTickets.delete(pairingTicketStorageKey(ticket.code));
+    return {
+      allowed: false,
+      reason: "Pairing code is invalid or expired.",
+      target: baseTarget,
+    };
+  }
+
+  if (ticket.targetId && ticket.targetId !== baseTarget.id) {
+    return {
+      allowed: false,
+      reason: "Pairing code does not match this target.",
+      target: baseTarget,
+    };
+  }
+
+  if (ticket.kind && ticket.kind !== baseTarget.kind) {
+    return {
+      allowed: false,
+      reason: "Pairing code is not valid for this target kind.",
+      target: baseTarget,
+    };
+  }
+
+  const redeemedTicket = {
+    ...ticket,
+    redeemedAt: now,
+  };
+  pairingTickets.set(pairingTicketStorageKey(ticket.code), redeemedTicket);
+  audit("targets.pairing-ticket.redeemed", {
+    targetId: baseTarget.id,
+    targetName: baseTarget.displayName,
+    kind: baseTarget.kind,
+    code: `pairing:${hashForAudit(ticket.code)}`,
+  });
+
+  return {
+    allowed: true,
+    reason: "Pairing code redeemed.",
+    target: {
+      ...baseTarget,
+      paired: true,
+      state: "connecting",
+      lastSeenAt: now,
+    },
+    ticket: redeemedTicket,
+  };
+}
+
 async function ensureTargetKnownHostsFile(target) {
   const knownHostsPath = targetKnownHostsPath(target.id);
   await fs.mkdir(path.dirname(knownHostsPath), { recursive: true });
@@ -3693,7 +3802,7 @@ function probeTcpReachability(host, port, timeoutMs = 3000) {
   });
 }
 
-async function applyTargetConnectionActionState(target, action) {
+async function applyTargetConnectionActionState(target, action, options = {}) {
   const now = nowIso();
   const baseTarget = normalizeTargetProfileState(target);
   const adapter = Array.isArray(baseTarget.adapters) ? baseTarget.adapters[0] : undefined;
@@ -3791,6 +3900,32 @@ async function applyTargetConnectionActionState(target, action) {
             hostKeyVerified: true,
           })),
         },
+      };
+    }
+
+    const pairingCode = typeof options.pairingCode === "string" ? options.pairingCode.trim() : "";
+    if (pairingCode) {
+      const redeemedTicket = redeemTargetPairingTicketState(baseTarget, pairingCode);
+      if (!redeemedTicket.allowed) {
+        return redeemedTicket;
+      }
+
+      return {
+        allowed: true,
+        reason: "The target was paired through a pairing code and moved into connecting state.",
+        target: updatePrimaryTargetAdapterState(
+          {
+            ...redeemedTicket.target,
+            paired: true,
+            state: "connecting",
+            lastSeenAt: now,
+          },
+          (current) => ({
+            ...current,
+            authenticated: true,
+            hostKeyVerified: baseTarget.kind === "ssh-terminal" ? false : current.hostKeyVerified,
+          }),
+        ),
       };
     }
 
@@ -5544,6 +5679,7 @@ function snapshotState() {
     safetyQueue,
     targetRegistry,
     targetDispatches,
+    pairingTickets: [...pairingTickets.values()].map((ticket) => clonePairingTicketState(ticket)),
     remoteDesktopSessions: [...remoteDesktopSessions.values()].map((session) => cloneRemoteDesktopSessionState(session)),
     sshTerminalSessions: [...sshTerminalSessions.values()].map((session) => cloneSshTerminalSessionState(session)),
   };
@@ -5579,6 +5715,13 @@ function applyPersistedState(state) {
   if (Array.isArray(state.safetyQueue)) safetyQueue = state.safetyQueue;
   if (state.targetRegistry) targetRegistry = normalizeTargetRegistryState(state.targetRegistry);
   if (Array.isArray(state.targetDispatches)) targetDispatches = state.targetDispatches.slice(0, 200);
+  if (Array.isArray(state.pairingTickets)) {
+    pairingTickets.clear();
+    for (const ticket of state.pairingTickets) {
+      if (!ticket || typeof ticket.code !== "string") continue;
+      pairingTickets.set(pairingTicketStorageKey(ticket.code), clonePairingTicketState(ticket));
+    }
+  }
   if (Array.isArray(state.remoteDesktopSessions)) {
     remoteDesktopSessions.clear();
     for (const session of state.remoteDesktopSessions) {
@@ -10222,11 +10365,63 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && pathname === "/targets/pairing-ticket") {
+    try {
+      const body = await readJson(req);
+      const targetId = typeof body.targetId === "string" ? body.targetId.trim() : "";
+      const targetName = typeof body.targetName === "string" ? body.targetName.trim() : "";
+      const kind = typeof body.kind === "string" ? body.kind.trim() : "";
+      const expiresInMinutes = Number(body.expiresInMinutes ?? 15);
+      const target = targetId ? targetRegistry.targets.find((entry) => entry.id === targetId) : null;
+      if (targetId && !target) {
+        json(res, 404, { error: "target not found" });
+        return;
+      }
+      const ticket = issueTargetPairingTicketState(target ?? {
+        id: targetId || `pair-${crypto.randomUUID().slice(0, 8)}`,
+        displayName: targetName || "Target",
+        kind: kind === "remote-desktop" ? "remote-desktop" : kind === "ssh-terminal" ? "ssh-terminal" : "ssh-terminal",
+        state: "offline",
+        paired: false,
+        trustedWorkspaces: [],
+        adapters: [
+          {
+            kind: kind === "remote-desktop" ? "remote-desktop" : "ssh-terminal",
+            endpoint: "",
+            authenticated: false,
+            hostKeyVerified: false,
+            supportsTerminal: kind !== "remote-desktop",
+            supportsScreen: kind === "remote-desktop",
+            supportsClipboard: false,
+            supportsFileTransfer: false,
+          },
+        ],
+        connection: defaultTargetConnectionState(kind === "remote-desktop" ? "remote-desktop" : "ssh-terminal"),
+      }, { expiresInMinutes });
+      audit("targets.pairing-ticket.generated", {
+        targetId: ticket.targetId,
+        targetName: ticket.targetName,
+        kind: ticket.kind,
+        expiresAt: ticket.expiresAt,
+      });
+      scheduleStateSave();
+      json(res, 200, {
+        allowed: true,
+        reason: "Pairing code issued.",
+        ticket,
+      });
+    } catch (error) {
+      json(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON" });
+    }
+    return;
+  }
+
   if (req.method === "POST" && pathname === "/targets/connection") {
     try {
       const body = await readJson(req);
       const targetId = typeof body.targetId === "string" ? body.targetId.trim() : "";
       const action = typeof body.action === "string" ? body.action.trim() : "";
+      const pairingCode = typeof body.pairingCode === "string" ? body.pairingCode.trim() : "";
       if (!targetId || !action) {
         json(res, 400, { error: "targetId and action are required" });
         return;
@@ -10236,7 +10431,7 @@ const server = http.createServer(async (req, res) => {
         json(res, 404, { error: "target not found" });
         return;
       }
-      const result = await applyTargetConnectionActionState(target, action);
+      const result = await applyTargetConnectionActionState(target, action, { pairingCode });
       if (result.allowed && result.target) {
         targetRegistry = {
           ...targetRegistry,
@@ -10253,10 +10448,11 @@ const server = http.createServer(async (req, res) => {
           lastProbePort: result.target.connection?.lastProbePort,
           lastProbeLatencyMs: result.target.connection?.lastProbeLatencyMs,
           lastProbeError: result.target.connection?.lastProbeError,
+          pairingCodeUsed: Boolean(pairingCode && action === "pair"),
         });
         scheduleStateSave();
       } else {
-        audit("targets.connection.rejected", { targetId, action, allowed: result.allowed, reason: result.reason });
+        audit("targets.connection.rejected", { targetId, action, allowed: result.allowed, reason: result.reason, pairingCodeUsed: Boolean(pairingCode && action === "pair") });
       }
       json(res, 200, {
         allowed: result.allowed,

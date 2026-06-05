@@ -43,6 +43,7 @@ export interface GatewayAdapterMethod {
   | "targetsCredentialBundleExport"
   | "targetsCredentialBundlePreview"
   | "targetsCredentialBundleImport"
+  | "targetsPairingTicket"
   | "targetsConnection"
   | "targetsConnectionReadiness"
   | "targetsDispatchPreview"
@@ -119,6 +120,7 @@ export const gatewayAdapterMethods: GatewayAdapterMethod[] = [
   { name: "targetsCredentialBundleExport", method: "POST", path: "/targets/credential-bundle/export", status: "partial", purpose: "將 target registry 與已發行的 credential refs 匯出成 passphrase-protected encrypted bundle，用於換機或跨機器遷移。" },
   { name: "targetsCredentialBundlePreview", method: "POST", path: "/targets/credential-bundle/preview", status: "partial", purpose: "在匯入前預覽 passphrase-protected encrypted bundle 的 target / secret 摘要與來源資訊。" },
   { name: "targetsCredentialBundleImport", method: "POST", path: "/targets/credential-bundle/import", status: "partial", purpose: "匯入 passphrase-protected encrypted bundle，還原 target registry 與 gateway-managed credential refs。" },
+  { name: "targetsPairingTicket", method: "POST", path: "/targets/pairing-ticket", status: "partial", purpose: "發行短效 pairing code，讓新安裝的 SSH / remote-desktop target 可用一次性 enrollment code 完成安全 pairing。" },
   { name: "targetsConnection", method: "POST", path: "/targets/connection", status: "partial", purpose: "處理 target 的 pair / probe / verify_host_key / connect / disconnect / refresh 動作，並回寫連線可達性與驗證狀態。" },
   { name: "targetsConnectionReadiness", method: "GET", path: "/targets/connection-readiness", status: "partial", purpose: "讀取 target 連線前檢查報告，顯示 pairing、credential、host key 與 probe readiness。"},
   { name: "targetsDispatchPreview", method: "POST", path: "/targets/dispatch-preview", status: "mock", purpose: "建立 target dispatch 預覽與 audit record。" },

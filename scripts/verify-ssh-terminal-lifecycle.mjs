@@ -182,7 +182,7 @@ try {
         displayName: "SSH Test",
         kind: "ssh-terminal",
         state: "ready",
-        paired: true,
+        paired: false,
         trustedWorkspaces: ["~/ClawDesk Projects/SSH"],
         connection: {
           username: "ops-user",
@@ -209,6 +209,24 @@ try {
 
   const save = await postJson("/targets", { registry });
   if (!save.response.ok) throw new Error(`target registry save failed: ${save.response.status}`);
+
+  const pairingTicket = await postJson("/targets/pairing-ticket", {
+    targetId: "ssh-test",
+    targetName: "SSH Test",
+    kind: "ssh-terminal",
+    expiresInMinutes: 15,
+  });
+  if (!pairingTicket.response.ok || !pairingTicket.payload.allowed || !pairingTicket.payload.ticket?.code) {
+    throw new Error(`pairing ticket issuance failed: ${pairingTicket.payload.reason || pairingTicket.response.status}`);
+  }
+
+  const pair = await postJson("/targets/connection", {
+    targetId: "ssh-test",
+    action: "pair",
+    pairingCode: pairingTicket.payload.ticket.code,
+  });
+  if (!pair.response.ok || !pair.payload.allowed) throw new Error(`pair failed: ${pair.payload.reason || pair.response.status}`);
+  if (!pair.payload.target?.paired) throw new Error("pair did not mark target as paired");
 
   const probe = await postJson("/targets/connection", { targetId: "ssh-test", action: "probe" });
   if (!probe.response.ok || !probe.payload.allowed) throw new Error(`probe failed: ${probe.payload.reason || probe.response.status}`);
