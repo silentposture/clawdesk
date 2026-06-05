@@ -433,6 +433,16 @@ const remoteDesktopLaunchRuntimes = new Map();
 const sshTerminalSessions = new Map();
 const sshTerminalInteractiveRuntimes = new Map();
 const sshExecutable = (process.env.CLAWDESK_SSH_EXECUTABLE || (process.platform === "win32" ? "ssh.exe" : "ssh")).trim();
+const sshExecutableArgs = (() => {
+  const raw = process.env.CLAWDESK_SSH_EXECUTABLE_ARGS_JSON;
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map((item) => String(item)) : [];
+  } catch {
+    return [];
+  }
+})();
 const sshRemoteShellCommand = (process.env.CLAWDESK_SSH_REMOTE_SHELL_COMMAND || "sh -s").trim();
 const sshSessionCommandTimeoutMs = Number(process.env.CLAWDESK_SSH_SESSION_COMMAND_TIMEOUT_MS ?? 60_000);
 const remoteDesktopClientExecutableOverride = process.env.CLAWDESK_REMOTE_DESKTOP_CLIENT_EXECUTABLE?.trim() || "";
@@ -4739,14 +4749,72 @@ function createSshTerminalRuntimeState(target, child, credentialMaterial) {
   };
 }
 
+async function reconnectSshTerminalRuntime(target) {
+  const baseTarget = normalizeTargetProfileState(target);
+  const key = sshTerminalRuntimeKey(baseTarget.id);
+  const existing = sshTerminalInteractiveRuntimes.get(key);
+  if (existing && existing.child && existing.child.exitCode === null && existing.child.signalCode === null && !existing.closed) {
+    const session = refreshSshTerminalSessionView(baseTarget, getSshTerminalSessionState(baseTarget), nowIso());
+    return {
+      allowed: true,
+      reason: "SSH terminal session is already connected.",
+      target: {
+        ...baseTarget,
+        paired: true,
+        state: "ready",
+        lastSeenAt: nowIso(),
+      },
+      session,
+      runtime: existing,
+    };
+  }
+
+  if (existing) {
+    await disposeSshTerminalRuntime(baseTarget.id, existing, "reconnect");
+  }
+
+  const opened = await openSshTerminalRuntime(baseTarget);
+  if (!opened.allowed) {
+    return opened;
+  }
+
+  const now = nowIso();
+  const session = refreshSshTerminalSessionView(baseTarget, getSshTerminalSessionState(baseTarget), now);
+  const nextSession = withSshTerminalSessionSummary(baseTarget, {
+    ...session,
+    notes: [...session.notes.slice(-4), "SSH terminal session reconnected."],
+    lastUpdatedAt: now,
+  });
+  sshTerminalSessions.set(sshTerminalSessionStorageKey(baseTarget.id), nextSession);
+  audit("targets.ssh-terminal.session.reconnect", {
+    targetId: baseTarget.id,
+    targetName: baseTarget.displayName,
+    transport: nextSession.transport,
+  });
+  return {
+    allowed: true,
+    reason: "SSH terminal session reconnected.",
+    target: {
+      ...baseTarget,
+      paired: true,
+      state: "ready",
+      lastSeenAt: now,
+    },
+    session: nextSession,
+    runtime: opened.runtime,
+  };
+}
+
 async function disposeSshTerminalRuntime(targetId, runtime, reason = "disposed") {
   if (!runtime) return;
   runtime.closed = true;
   runtime.pendingCommand = null;
   try {
     if (runtime.child && !runtime.child.killed && runtime.child.exitCode === null && runtime.child.signalCode === null) {
-      runtime.child.stdin?.write("exit\n");
-      runtime.child.stdin?.end();
+      if (runtime.child.stdin && !runtime.child.stdin.destroyed && !runtime.child.stdin.writableEnded) {
+        runtime.child.stdin.write("exit\n");
+        runtime.child.stdin.end();
+      }
       await new Promise((resolve) => {
         const timer = setTimeout(() => {
           try {
@@ -4839,7 +4907,7 @@ async function openSshTerminalRuntime(target) {
 
   sshArgs.push("-p", String(baseTarget.connection.port ?? 22), remoteTarget, ...remoteShellArgs);
 
-  const child = spawn(sshExecutable, sshArgs, {
+  const child = spawn(sshExecutable, [...sshExecutableArgs, ...sshArgs], {
     cwd: homeDir,
     env: process.env,
     shell: false,
@@ -4911,8 +4979,10 @@ async function closeSshTerminalRuntime(targetId) {
     runtime.pendingCommand = null;
   }
   try {
-    runtime.child.stdin?.write("exit\n");
-    runtime.child.stdin?.end();
+    if (runtime.child.stdin && !runtime.child.stdin.destroyed && !runtime.child.stdin.writableEnded) {
+      runtime.child.stdin.write("exit\n");
+      runtime.child.stdin.end();
+    }
   } catch {
     // ignore
   }
@@ -5278,6 +5348,96 @@ async function openSshTerminalSessionState(target) {
   return {
     allowed: true,
     reason: "SSH terminal shell stream opened.",
+    target: {
+      ...baseTarget,
+      lastSeenAt: now,
+    },
+    session: nextSession,
+  };
+}
+
+async function reconnectSshTerminalSessionState(target) {
+  const baseTarget = normalizeTargetProfileState(target);
+  if (baseTarget.kind !== "ssh-terminal") {
+    return { allowed: false, reason: "This target is not an SSH terminal target.", target: baseTarget };
+  }
+
+  const runtime = getSshTerminalRuntime(baseTarget.id);
+  if (runtime && runtime.child && runtime.child.exitCode === null && runtime.child.signalCode === null && !runtime.closed) {
+    const now = nowIso();
+    const session = refreshSshTerminalSessionView(baseTarget, getSshTerminalSessionState(baseTarget), now);
+    const nextSession = withSshTerminalSessionSummary(baseTarget, {
+      ...session,
+      state: "connected",
+      transport: "gateway-ssh-terminal-shell-stream",
+      lastObservedAt: now,
+      lastUpdatedAt: now,
+      notes: [...session.notes.slice(-4), "SSH terminal runtime was already active during reconnect."],
+      transcript: [
+        ...session.transcript.slice(-12),
+        {
+          id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+          role: "system",
+          text: "SSH terminal reconnect reused the active runtime.",
+          createdAt: now,
+        },
+      ],
+    });
+    sshTerminalSessions.set(sshTerminalSessionStorageKey(baseTarget.id), nextSession);
+    audit("targets.ssh-terminal.session.reconnect", {
+      targetId: baseTarget.id,
+      targetName: baseTarget.displayName,
+      reusedRuntime: true,
+    });
+    return {
+      allowed: true,
+      reason: "SSH terminal session already connected.",
+      target: {
+        ...baseTarget,
+        lastSeenAt: now,
+      },
+      session: nextSession,
+    };
+  }
+
+  if (runtime) {
+    await disposeSshTerminalRuntime(baseTarget.id, runtime, "reconnect");
+  }
+
+  const reopened = await openSshTerminalRuntime(baseTarget);
+  if (!reopened.allowed) {
+    return reopened;
+  }
+
+  const now = nowIso();
+  const currentSession = refreshSshTerminalSessionView(baseTarget, getSshTerminalSessionState(baseTarget), now);
+  const nextSession = withSshTerminalSessionSummary(baseTarget, {
+    ...currentSession,
+    state: "connected",
+    transport: "gateway-ssh-terminal-shell-stream",
+    lastObservedAt: now,
+    lastUpdatedAt: now,
+    notes: [...currentSession.notes.slice(-4), "SSH terminal session reconnected."],
+    transcript: [
+      ...currentSession.transcript.slice(-12),
+      {
+        id: `ssh-entry-${crypto.randomUUID().slice(0, 8)}`,
+        role: "system",
+        text: "SSH terminal session reconnected.",
+        createdAt: now,
+      },
+    ],
+  });
+  nextSession.sessionSummary = buildSshTerminalSessionSummary(baseTarget, nextSession);
+  sshTerminalSessions.set(sshTerminalSessionStorageKey(baseTarget.id), nextSession);
+  audit("targets.ssh-terminal.session.reconnect", {
+    targetId: baseTarget.id,
+    targetName: baseTarget.displayName,
+    reusedRuntime: false,
+  });
+  return {
+    allowed: true,
+    reason: "SSH terminal session reconnected.",
     target: {
       ...baseTarget,
       lastSeenAt: now,
@@ -10216,6 +10376,8 @@ const server = http.createServer(async (req, res) => {
         result = await runSshTerminalSessionCommandState(target, command);
       } else if (action === "close_session" || action === "close" || action === "disconnect") {
         result = await closeSshTerminalSessionState(target);
+      } else if (action === "reconnect" || action === "resume_session") {
+        result = await reconnectSshTerminalRuntime(target);
       } else if (action === "refresh" || action === "observe") {
         const now = nowIso();
         const session = refreshSshTerminalSessionView(target, getSshTerminalSessionState(target), now);
