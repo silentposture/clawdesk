@@ -26,6 +26,7 @@ The agent bridge is the contract between ClawDesk's UI/policy layer and any agen
 - The runtime is therefore install-friendly: a future Windows service or startup hook can point at the same entrypoint without duplicating bridge logic.
 - The dedicated launcher at [`src/bridge/host-agent-launcher.mjs`](../src/bridge/host-agent-launcher.mjs) adds a lifecycle status file, which is the clean handoff point for a service manager or installer.
 - The install bundle generator at [`scripts/prepare-host-agent-install-bundle.mjs`](../scripts/prepare-host-agent-install-bundle.mjs) produces launcher, scheduled-task registration, and uninstall scripts plus a manifest, so packaging can target the same runtime without inventing a second contract.
+- The install bundle verifier is wired into preflight, so the install handoff is checked as part of the normal release gate instead of living as a one-off smoke test.
 - The local wrapper at [`examples/local-agent-bridge/bridge-agent.mjs`](../examples/local-agent-bridge/bridge-agent.mjs) seeds a target registry entry, redeems a short-lived host enrollment code, records device / install attestation, and can send heartbeat updates either as a bounded smoke run or as a long-lived daemon.
 - The example stays local-first and does not expose plaintext secrets or unrestricted execution.
 - The current shape is intentionally reusable so a future installed host-side agent can share the same runtime flow instead of duplicating enrollment / attestation / heartbeat logic.

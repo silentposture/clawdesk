@@ -30,6 +30,7 @@ const requiredPaths = [
   "scripts/verify-target-session-exports.mjs",
   "scripts/verify-host-enrollment.mjs",
   "scripts/verify-ssh-terminal-lifecycle.mjs",
+  "scripts/verify-host-agent-install-bundle.mjs",
   "scripts/verify-remote-desktop-lifecycle.mjs",
   "scripts/smoke-gui.mjs",
   "scripts/smoke-store-installer-win.mjs",
@@ -165,6 +166,7 @@ async function main() {
   const targetSessionExportCheck = run("node", ["scripts/verify-target-session-exports.mjs"]);
   const hostEnrollmentCheck = run("node", ["scripts/verify-host-enrollment.mjs"]);
   const sshTerminalLifecycleCheck = run("node", ["scripts/verify-ssh-terminal-lifecycle.mjs"]);
+  const hostAgentInstallBundleCheck = run("node", ["scripts/verify-host-agent-install-bundle.mjs"]);
   const remoteDesktopLifecycleCheck = run("node", ["scripts/verify-remote-desktop-lifecycle.mjs"]);
   const hiddenTaskAuditCheck = process.platform === "win32"
     ? run("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/audit-scheduled-tasks.ps1"])
@@ -181,6 +183,7 @@ async function main() {
     ...(targetSessionExportCheck.status === 0 ? [] : ["stale-target-session-exports"]),
     ...(hostEnrollmentCheck.status === 0 ? [] : ["stale-host-enrollment"]),
     ...(sshTerminalLifecycleCheck.status === 0 ? [] : ["stale-ssh-terminal-lifecycle"]),
+    ...(hostAgentInstallBundleCheck.status === 0 ? [] : ["stale-host-agent-install-bundle"]),
     ...(remoteDesktopLifecycleCheck.status === 0 ? [] : ["stale-remote-desktop-lifecycle"]),
     ...(hiddenTaskAuditCheck.status === 0 ? [] : ["hidden-task-window-rule-violation"]),
   ];
@@ -228,6 +231,11 @@ async function main() {
       ok: sshTerminalLifecycleCheck.status === 0,
       stdout: sshTerminalLifecycleCheck.stdout.trim(),
       stderr: sshTerminalLifecycleCheck.stderr.trim(),
+    },
+    hostAgentInstallBundle: {
+      ok: hostAgentInstallBundleCheck.status === 0,
+      stdout: hostAgentInstallBundleCheck.stdout.trim(),
+      stderr: hostAgentInstallBundleCheck.stderr.trim(),
     },
     remoteDesktopLifecycle: {
       ok: remoteDesktopLifecycleCheck.status === 0,
