@@ -14,6 +14,9 @@ function parseArgs(argv) {
     platform: os.platform(),
     dryRun: false,
     heartbeatOnly: false,
+    daemon: false,
+    heartbeatIntervalMs: 10_000,
+    maxHeartbeats: 0,
     bridgeId: "",
   };
 
@@ -54,6 +57,20 @@ function parseArgs(argv) {
       options.dryRun = true;
     } else if (arg === "--heartbeat-only") {
       options.heartbeatOnly = true;
+    } else if (arg === "--daemon") {
+      options.daemon = true;
+    } else if (arg === "--heartbeat-interval-ms" && next) {
+      const parsed = Number.parseInt(next, 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        options.heartbeatIntervalMs = parsed;
+      }
+      i += 1;
+    } else if (arg === "--max-heartbeats" && next) {
+      const parsed = Number.parseInt(next, 10);
+      if (Number.isFinite(parsed) && parsed > 0) {
+        options.maxHeartbeats = parsed;
+      }
+      i += 1;
     }
   }
 
@@ -171,12 +188,13 @@ async function main() {
     platform,
     dryRun: options.dryRun,
     heartbeatOnly: options.heartbeatOnly,
+    maxHeartbeats: options.maxHeartbeats,
   };
 
   if (options.dryRun) {
     printResult("local-agent-bridge dry run", {
       ...state,
-      steps: options.heartbeatOnly ? ["heartbeat"] : ["seed-registry", "host-enrollment-ticket", "host-enrollment", "attest", "heartbeat"],
+      steps: options.heartbeatOnly ? ["heartbeat"] : options.daemon ? ["seed-registry", "host-enrollment-ticket", "host-enrollment", "attest", "heartbeat-loop"] : ["seed-registry", "host-enrollment-ticket", "host-enrollment", "attest", "heartbeat"],
     });
     return;
   }
@@ -229,6 +247,60 @@ async function main() {
   });
   if (!heartbeat.response.ok || !heartbeat.payload.allowed) {
     throw new Error(heartbeat.payload.reason || `host bridge heartbeat failed: ${heartbeat.response.status}`);
+  }
+
+  if (options.daemon) {
+    let heartbeatCount = 1;
+    console.log(`# local-agent-bridge daemon`);
+    console.log(JSON.stringify({
+      ...state,
+      attestation: {
+        allowed: attest.payload.allowed,
+        reason: attest.payload.reason,
+        targetState: attest.payload.target?.connection?.hostBridge?.state,
+        attestedAt: attest.payload.target?.connection?.hostBridge?.attestedAt,
+      },
+      heartbeat: {
+        allowed: heartbeat.payload.allowed,
+        reason: heartbeat.payload.reason,
+        targetState: heartbeat.payload.target?.connection?.hostBridge?.state,
+        lastSeenAt: heartbeat.payload.target?.connection?.hostBridge?.lastSeenAt,
+      },
+      heartbeatIntervalMs: options.heartbeatIntervalMs,
+      maxHeartbeats: options.maxHeartbeats || undefined,
+      status: "running",
+    }, null, 2));
+    while (true) {
+      await new Promise((resolve) => setTimeout(resolve, options.heartbeatIntervalMs));
+      const nextHeartbeat = await postJson(`${gatewayBaseUrl}/targets/host-bridge/heartbeat`, {
+        targetId,
+        bridgeId: state.bridgeId,
+        hostName,
+        bridgeVersion,
+      });
+      if (!nextHeartbeat.response.ok || !nextHeartbeat.payload.allowed) {
+        throw new Error(nextHeartbeat.payload.reason || `host bridge heartbeat failed: ${nextHeartbeat.response.status}`);
+      }
+      heartbeatCount += 1;
+      console.log(JSON.stringify({
+        type: "heartbeat",
+        count: heartbeatCount,
+        lastSeenAt: nextHeartbeat.payload.target?.connection?.hostBridge?.lastSeenAt,
+        targetState: nextHeartbeat.payload.target?.connection?.hostBridge?.state,
+      }));
+      if (options.maxHeartbeats > 0 && heartbeatCount >= options.maxHeartbeats) {
+        break;
+      }
+    }
+
+    console.log(JSON.stringify({
+      type: "stopped",
+      heartbeatCount,
+      bridgeId: state.bridgeId,
+      targetId,
+    }));
+    process.exit(0);
+    return;
   }
 
   printResult("local-agent-bridge result", {
