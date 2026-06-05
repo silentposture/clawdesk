@@ -11,6 +11,10 @@ Responsibilities:
 - Safe execution requests.
 - Human approval handoff.
 
-Example implementation:
+Reusable runtime entrypoint:
 
-- [`examples/local-agent-bridge/bridge-agent.mjs`](../../examples/local-agent-bridge/bridge-agent.mjs) seeds a target, redeems a host enrollment code, records attestation, and can either send a bounded heartbeat smoke or run as a long-lived daemon against the mock gateway.
+- [`src/bridge/host-bridge-agent.mjs`](./host-bridge-agent.mjs) contains the reusable host bridge runtime for enrollment, attestation, heartbeat, and daemon-style loops, and can be invoked with `npm run bridge:host`.
+
+Example wrapper:
+
+- [`examples/local-agent-bridge/bridge-agent.mjs`](../../examples/local-agent-bridge/bridge-agent.mjs) is a thin CLI wrapper around the reusable host bridge runtime.
