@@ -21,6 +21,7 @@ The agent bridge is the contract between ClawDesk's UI/policy layer and any agen
 
 - The reusable host bridge runtime at [`src/bridge/host-bridge-agent.mjs`](../src/bridge/host-bridge-agent.mjs) shows the next step toward a real installed host bridge.
 - It can be invoked directly with `npm run bridge:host`, which makes it a concrete install-time entrypoint instead of just a one-off example.
+- It persists bridge identity to a local config file by default, so repeated launches on the same machine reuse the same bridge / device / install identity instead of generating fresh identities every time.
 - The local wrapper at [`examples/local-agent-bridge/bridge-agent.mjs`](../examples/local-agent-bridge/bridge-agent.mjs) seeds a target registry entry, redeems a short-lived host enrollment code, records device / install attestation, and can send heartbeat updates either as a bounded smoke run or as a long-lived daemon.
 - The example stays local-first and does not expose plaintext secrets or unrestricted execution.
 - The current shape is intentionally reusable so a future installed host-side agent can share the same runtime flow instead of duplicating enrollment / attestation / heartbeat logic.
