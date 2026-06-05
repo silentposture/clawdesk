@@ -2312,6 +2312,22 @@ th {
   line-height: 1.4;
 }
 
+.target-audit-report-preview {
+  margin: 0;
+  padding: 12px;
+  border: 1px solid #dbe2dc;
+  border-radius: 8px;
+  background: #f8fbf8;
+  color: #24322d;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  max-height: 340px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
 .pricing-grid,
 .agent-grid {
   display: grid;

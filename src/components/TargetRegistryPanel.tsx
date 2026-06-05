@@ -158,6 +158,11 @@ interface TargetTimelineEntry {
   lastProbeError?: string;
 }
 
+interface TargetAuditReportState {
+  text: string;
+  source: "gateway" | "local";
+}
+
 interface SshTerminalTranscriptEntry {
   id: string;
   role: "system" | "command" | "output" | "error";
@@ -665,6 +670,62 @@ function normalizeRemoteDesktopSessionState(
   };
 }
 
+function redactTargetAuditReportText(value: string): string {
+  return value
+    .replace(/\b(?:ssh|rdp|https?):\/\/[^\s]+/gi, "[redacted-endpoint]")
+    .replace(/\b[A-Za-z]:\\[^\s]+/g, "[redacted-path]")
+    .replace(/\b\/[^\s]+/g, (match) => (match.includes("://") ? match : "[redacted-path]"))
+    .replace(/\b[\w.+-]+@[\w.-]+\b/g, "[redacted-user]");
+}
+
+function buildLocalTargetAuditReportText(
+  target: TargetProfile,
+  readiness: TargetConnectionReadinessReport,
+  timeline: TargetTimelineEntry[],
+): string {
+  const lines: string[] = [];
+  lines.push(`# Target Audit Report`);
+  lines.push(`generatedAt: ${new Date().toISOString()}`);
+  lines.push(`targetId: ${target.id}`);
+  lines.push(`kind: ${target.kind}`);
+  lines.push(`state: ${target.state}`);
+  lines.push(`paired: ${target.paired ? "yes" : "no"}`);
+  lines.push(`readyToConnect: ${readiness.readyToConnect ? "yes" : "no"}`);
+  lines.push(`nextAction: ${readiness.nextAction}`);
+  lines.push(``);
+  lines.push(`## Readiness Checks`);
+  for (const check of readiness.checks) {
+    lines.push(`- ${check.key} | ${check.label} | ${check.status} | ${redactTargetAuditReportText(String(check.detail ?? ""))}`);
+  }
+  lines.push(``);
+  lines.push(`## Timeline`);
+  if (timeline.length === 0) {
+    lines.push(`- no timeline entries`);
+  } else {
+    for (const entry of timeline) {
+      const parts = [
+        entry.createdAt,
+        entry.eventType,
+        entry.kind,
+        entry.source,
+        redactTargetAuditReportText(entry.summary),
+      ];
+      if (entry.category) parts.push(`category=${entry.category}`);
+      if (typeof entry.allowed === "boolean") parts.push(`allowed=${entry.allowed ? "yes" : "no"}`);
+      if (entry.decision) parts.push(`decision=${redactTargetAuditReportText(entry.decision)}`);
+      if (entry.state) parts.push(`state=${entry.state}`);
+      if (entry.transport) parts.push(`transport=${entry.transport}`);
+      if (entry.lastProbeResult) parts.push(`probe=${entry.lastProbeResult}`);
+      if (typeof entry.lastExitCode === "number") parts.push(`exit=${entry.lastExitCode}`);
+      if (entry.clientLaunchState) parts.push(`launch=${entry.clientLaunchState}`);
+      if (entry.credentialSource) parts.push(`credentialSource=${entry.credentialSource}`);
+      if (entry.credentialSeedState) parts.push(`credentialSeed=${entry.credentialSeedState}`);
+      lines.push(`- ${parts.join(" | ")}`);
+    }
+  }
+  return lines.join("\n");
+}
+
 export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryPanelProps): JSX.Element {
   const { t } = useI18n();
   const [registry, setRegistry] = useState<TargetRegistry>(() => cloneTargetRegistry(initialRegistry));
@@ -695,6 +756,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const [sshTerminalSession, setSshTerminalSession] = useState<SshTerminalSessionState>();
   const [sshTerminalBusy, setSshTerminalBusy] = useState(false);
   const sshTerminalSessionRequestTokenRef = useRef(0);
+  const [targetAuditReportText, setTargetAuditReportText] = useState<string>();
   const [sshPrivateKeyDraft, setSshPrivateKeyDraft] = useState("");
   const [sshTerminalCommandDraft, setSshTerminalCommandDraft] = useState("git status");
   const [credentialBundlePassphraseDraft, setCredentialBundlePassphraseDraft] = useState("");
@@ -752,6 +814,11 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     timelineViewMode === "target" && selectedTarget
       ? dispatches.filter((record) => record.targetId === selectedTarget.id).slice(0, 6)
       : dispatches.slice(0, 6);
+  const localTargetAuditReportText = useMemo(
+    () => buildLocalTargetAuditReportText(selectedTarget ?? draftTarget, connectionReadiness, targetTimeline),
+    [connectionReadiness, draftTarget, selectedTarget, targetTimeline],
+  );
+  const targetAuditReport = targetAuditReportText ?? localTargetAuditReportText;
 
   useEffect(() => {
     const registryTargetIds = registry.targets.map((target) => target.id);
@@ -966,6 +1033,45 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     }
   }
 
+  async function loadTargetAuditReport(target?: TargetProfile) {
+    const nextTarget = target ?? selectedTarget ?? draftTarget;
+    if (!nextTarget) {
+      setTargetAuditReportText(undefined);
+      return;
+    }
+
+    const readiness = connectionReadinessReport?.report ?? buildTargetConnectionReadinessReport(nextTarget);
+    const localTimeline = targetTimeline.length > 0 ? targetTimeline : dispatches.filter((record) => record.targetId === nextTarget.id).slice(0, 6).map((record) => ({
+      id: record.id,
+      kind: "dispatch" as const,
+      eventType: "dispatch.record",
+      targetId: record.targetId,
+      targetName: record.targetName,
+      createdAt: record.createdAt,
+      summary: record.summary,
+      source: "local-dispatch-log",
+      action: record.category,
+      category: record.category,
+      command: record.command,
+      allowed: record.decision.allowed,
+      decision: record.decision.reason,
+    }));
+
+    if (!gatewayBaseUrl || !draftIsSaved) {
+      setTargetAuditReportText(buildLocalTargetAuditReportText(nextTarget, readiness, localTimeline));
+      return;
+    }
+
+    try {
+      const response = await fetch(`${gatewayBaseUrl}/targets/audit-report?targetId=${encodeURIComponent(nextTarget.id)}&limit=12`);
+      if (!response.ok) throw new Error("bad response");
+      const payload = (await response.json()) as { text?: string };
+      setTargetAuditReportText(typeof payload.text === "string" && payload.text.trim() ? payload.text : buildLocalTargetAuditReportText(nextTarget, readiness, localTimeline));
+    } catch {
+      setTargetAuditReportText(buildLocalTargetAuditReportText(nextTarget, readiness, localTimeline));
+    }
+  }
+
   async function loadTargetConnectionReadiness(target?: TargetProfile) {
     const nextTarget = target ?? selectedTarget ?? draftTarget;
     if (!nextTarget) {
@@ -1028,9 +1134,49 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     }
   }
 
+  async function copyTargetAuditReport(target?: TargetProfile) {
+    const nextTarget = target ?? selectedTarget ?? draftTarget;
+    if (!nextTarget) {
+      setError(copy.targetRegistryTargetListAuditReportCopyFailed);
+      return;
+    }
+
+    const text = targetAuditReport || buildLocalTargetAuditReportText(nextTarget, connectionReadinessReport?.report ?? buildTargetConnectionReadinessReport(nextTarget), targetTimeline);
+
+    try {
+      if (typeof navigator !== "undefined" && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else if (typeof document !== "undefined") {
+        const textarea = document.createElement("textarea");
+        textarea.value = text;
+        textarea.setAttribute("readonly", "true");
+        textarea.style.position = "absolute";
+        textarea.style.left = "-9999px";
+        document.body.appendChild(textarea);
+        textarea.select();
+        const copied = document.execCommand("copy");
+        document.body.removeChild(textarea);
+        if (!copied) {
+          throw new Error("clipboard copy failed");
+        }
+      } else {
+        throw new Error("clipboard not available");
+      }
+      setMessage(copy.targetRegistryTargetListAuditReportCopied);
+      setError(undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : copy.targetRegistryTargetListAuditReportCopyFailed);
+    }
+  }
+
   useEffect(() => {
     void loadTargetConnectionReadiness(selectedTarget ?? draftTarget);
   }, [draftTarget, draftIsSaved, gatewayBaseUrl, selectedTarget, selectedTargetId]);
+
+  useEffect(() => {
+    void loadTargetAuditReport(selectedTarget ?? draftTarget);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [draftTarget, draftIsSaved, gatewayBaseUrl, selectedTarget, selectedTargetId, targetTimeline, connectionReadinessReport]);
 
   function selectExistingTarget(target: TargetProfile) {
     setSelectedTargetId(target.id);
@@ -2939,6 +3085,30 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   <dd>{copy.fieldTargetListTimelineNoRecords}</dd>
                 </div>
               )}
+            </section>
+
+            <section className="adapter-list">
+              <div className="panel-actions">
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => void loadTargetAuditReport(selectedTarget ?? draftTarget)}
+                >
+                  {copy.targetRegistryFieldAuditReportRefreshButton}
+                </button>
+                <button
+                  className="secondary-button"
+                  type="button"
+                  onClick={() => void copyTargetAuditReport(selectedTarget ?? draftTarget)}
+                >
+                  {copy.targetRegistryFieldAuditReportCopyButton}
+                </button>
+              </div>
+              <div>
+                <dt>{copy.targetRegistryFieldAuditReportTitle}</dt>
+                <dd>{copy.targetRegistryTargetListAuditReportHint}</dd>
+              </div>
+              <pre className="target-audit-report-preview">{targetAuditReport || copy.targetRegistryTargetListAuditReportNoRecords}</pre>
             </section>
 
             <section className="adapter-list">
