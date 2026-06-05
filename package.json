@@ -42,6 +42,8 @@
     "verify:target-session-exports": "node scripts/verify-target-session-exports.mjs",
     "verify:host-enrollment": "node scripts/verify-host-enrollment.mjs",
     "verify:local-agent-bridge": "node scripts/verify-local-agent-bridge.mjs",
+    "bridge:host": "node src/bridge/host-bridge-agent.mjs",
+    "bridge:example": "node examples/local-agent-bridge/bridge-agent.mjs",
     "verify:ssh-terminal-lifecycle": "node scripts/verify-ssh-terminal-lifecycle.mjs",
     "verify:remote-desktop-lifecycle": "node scripts/verify-remote-desktop-lifecycle.mjs",
     "verify:production-gateway:sim": "node scripts/verify-production-gateway-sim.mjs",
