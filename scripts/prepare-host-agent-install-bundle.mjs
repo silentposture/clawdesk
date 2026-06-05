@@ -224,12 +224,28 @@ $env:CLAWDESK_HOST_AGENT_STATUS_FILE = "${statusPath}"
 & ${shellQuote(nodeExecutable)} ${launcherArgs.join(" ")}
 `;
 
-  const registerPs1 = `param()
+  const registerPs1 = `param(
+  [switch]$Preview
+)
 $ErrorActionPreference = "Stop"
 $taskName = "${manifest.taskName}"
 $powershell = ${shellQuote("powershell.exe")}
 $launchScript = ${shellQuote(path.join(outputDir, "launch-host-agent.ps1"))}
 $statusFile = "${statusPath}"
+$registerDefinition = [pscustomobject]@{
+  TaskName = $taskName
+  Execute = $powershell
+  Arguments = "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File $launchScript"
+  Trigger = "AtLogOn"
+  RunLevel = "LeastPrivilege"
+  HiddenWindow = $true
+}
+
+if ($Preview) {
+  $registerDefinition | ConvertTo-Json -Depth 4
+  return
+}
+
 $action = New-ScheduledTaskAction -Execute $powershell -Argument ("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File {0}" -f $launchScript)
 $trigger = New-ScheduledTaskTrigger -AtLogOn
 $principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel LeastPrivilege
@@ -239,9 +255,19 @@ Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Pr
 Write-Host ("Registered scheduled task: {0}" -f $taskName)
 `;
 
-  const unregisterPs1 = `param()
+  const unregisterPs1 = `param(
+  [switch]$Preview
+)
 $ErrorActionPreference = "Stop"
 $taskName = "${manifest.taskName}"
+$unregisterDefinition = [pscustomobject]@{
+  TaskName = $taskName
+  Action = "Unregister-ScheduledTask"
+}
+if ($Preview) {
+  $unregisterDefinition | ConvertTo-Json -Depth 4
+  return
+}
 if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
   Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
   Write-Host ("Unregistered scheduled task: {0}" -f $taskName)

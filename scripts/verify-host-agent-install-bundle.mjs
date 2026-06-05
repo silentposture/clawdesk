@@ -116,6 +116,24 @@ function spawnLauncher(baseUrl, manifest) {
   });
 }
 
+function spawnPowerShellScript(scriptPath, args = []) {
+  return spawn("powershell.exe", [
+    "-NoProfile",
+    "-ExecutionPolicy",
+    "Bypass",
+    "-File",
+    scriptPath,
+    ...args,
+  ], {
+    cwd: process.cwd(),
+    env: {
+      ...process.env,
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+    windowsHide: true,
+  });
+}
+
 const port = await reservePort();
 const baseUrl = `http://127.0.0.1:${port}`;
 const gateway = spawnGateway(port);
@@ -167,6 +185,39 @@ try {
 
   const unregisterPs1 = await fs.readFile(path.join(bundleDir, "unregister-host-agent.ps1"), "utf8");
   if (!unregisterPs1.includes("Unregister-ScheduledTask")) throw new Error("unregister ps1 missing scheduled task removal");
+
+  const registerPreview = spawnPowerShellScript(path.join(bundleDir, "register-host-agent.ps1"), ["-Preview"]);
+  let registerPreviewOutput = "";
+  registerPreview.stdout.on("data", (chunk) => {
+    registerPreviewOutput += chunk.toString();
+  });
+  registerPreview.stderr.on("data", (chunk) => {
+    registerPreviewOutput += chunk.toString();
+  });
+  const registerPreviewExit = await new Promise((resolve) => registerPreview.on("close", resolve));
+  if (registerPreviewExit !== 0) {
+    throw new Error(`register preview exited with ${registerPreviewExit}\n${registerPreviewOutput}`);
+  }
+  const registerPreviewJson = JSON.parse(registerPreviewOutput.trim());
+  if (registerPreviewJson.TaskName !== manifest.taskName) throw new Error("register preview task name mismatch");
+  if (registerPreviewJson.HiddenWindow !== true) throw new Error("register preview hidden window mismatch");
+  if (!String(registerPreviewJson.Arguments || "").includes("launch-host-agent.ps1")) throw new Error("register preview arguments missing launch script");
+
+  const unregisterPreview = spawnPowerShellScript(path.join(bundleDir, "unregister-host-agent.ps1"), ["-Preview"]);
+  let unregisterPreviewOutput = "";
+  unregisterPreview.stdout.on("data", (chunk) => {
+    unregisterPreviewOutput += chunk.toString();
+  });
+  unregisterPreview.stderr.on("data", (chunk) => {
+    unregisterPreviewOutput += chunk.toString();
+  });
+  const unregisterPreviewExit = await new Promise((resolve) => unregisterPreview.on("close", resolve));
+  if (unregisterPreviewExit !== 0) {
+    throw new Error(`unregister preview exited with ${unregisterPreviewExit}\n${unregisterPreviewOutput}`);
+  }
+  const unregisterPreviewJson = JSON.parse(unregisterPreviewOutput.trim());
+  if (unregisterPreviewJson.TaskName !== manifest.taskName) throw new Error("unregister preview task name mismatch");
+  if (unregisterPreviewJson.Action !== "Unregister-ScheduledTask") throw new Error("unregister preview action mismatch");
 
   const uninstallPs1 = await fs.readFile(path.join(bundleDir, "uninstall-host-agent.ps1"), "utf8");
   if (!uninstallPs1.includes("Removed host agent config, lock, and status files.")) throw new Error("uninstall script missing cleanup message");
