@@ -2453,6 +2453,53 @@ function formatTargetAuditReportText(report) {
   lines.push(`nextAction: ${report.readiness.nextAction}`);
   lines.push(`summary: ${report.summary}`);
   lines.push(``);
+  if (report.session) {
+    lines.push(`## Session Snapshot`);
+    lines.push(`state: ${report.session.state ?? "unknown"}`);
+    lines.push(`transport: ${report.session.transport ?? "unknown"}`);
+    lines.push(`sessionSummary: ${redactDiagnosticText(String(report.session.sessionSummary ?? ""))}`);
+    if (report.kind === "ssh-terminal") {
+      lines.push(`prompt: ${redactDiagnosticText(String(report.session.prompt ?? ""))}`);
+      lines.push(`currentDirectory: ${redactDiagnosticText(String(report.session.currentDirectory ?? ""))}`);
+      lines.push(`lastCommand: ${redactDiagnosticText(String(report.session.lastCommand ?? ""))}`);
+      lines.push(`lastExitCode: ${typeof report.session.lastExitCode === "number" ? report.session.lastExitCode : "n/a"}`);
+      lines.push(`transcript:`);
+      const transcript = Array.isArray(report.session.transcript) ? report.session.transcript.slice(-6) : [];
+      if (!transcript.length) {
+        lines.push(`- no transcript entries`);
+      } else {
+        for (const entry of transcript) {
+          lines.push(`- ${entry.createdAt} | ${entry.role} | ${redactDiagnosticText(String(entry.text ?? ""))}`);
+        }
+      }
+    } else if (report.kind === "remote-desktop") {
+      lines.push(`mode: ${report.session.mode ?? "unknown"}`);
+      lines.push(`credentialSource: ${report.session.credentialSource ?? "none"}`);
+      lines.push(`credentialSeedState: ${report.session.credentialSeedState ?? "idle"}`);
+      lines.push(`activeWindow: ${redactDiagnosticText(String(report.session.activeWindow ?? ""))}`);
+      lines.push(`clientLaunchState: ${report.session.clientLaunchState ?? "idle"}`);
+      lines.push(`clientLaunchCommand: ${redactDiagnosticText(String(report.session.clientLaunchCommand ?? ""))}`);
+      lines.push(`clientLaunchPid: ${typeof report.session.clientLaunchPid === "number" ? report.session.clientLaunchPid : "n/a"}`);
+      lines.push(`launchHistory:`);
+      const launchHistory = Array.isArray(report.session.launchHistory) ? report.session.launchHistory.slice(-4) : [];
+      if (!launchHistory.length) {
+        lines.push(`- no launch history`);
+      } else {
+        for (const entry of launchHistory) {
+          const fields = [
+            entry.launchedAt ?? entry.createdAt ?? report.generatedAt,
+            entry.transport ?? "unknown",
+            redactDiagnosticText(String(entry.command ?? "")),
+          ];
+          if (typeof entry.dryRun === "boolean") fields.push(`dryRun=${entry.dryRun ? "yes" : "no"}`);
+          if (entry.mode) fields.push(`mode=${entry.mode}`);
+          if (entry.result) fields.push(`result=${redactDiagnosticText(String(entry.result))}`);
+          lines.push(`- ${fields.filter(Boolean).join(" | ")}`);
+        }
+      }
+    }
+    lines.push(``);
+  }
   lines.push(`## Readiness Checks`);
   for (const check of report.readiness.checks) {
     const safeDetail = redactDiagnosticText(String(check.detail ?? ""));
@@ -2500,6 +2547,12 @@ function buildTargetAuditReportState(targetId, limit = 12) {
 
   const readiness = buildTargetConnectionReadinessReportState(target);
   const timeline = buildTargetTimelineState(normalizedTargetId, limit);
+  const session =
+    target.kind === "ssh-terminal"
+      ? getSshTerminalSessionState(target)
+      : target.kind === "remote-desktop"
+        ? getRemoteDesktopSessionState(target)
+        : undefined;
   const report = {
     version: 1,
     generatedAt: nowIso(),
@@ -2509,6 +2562,7 @@ function buildTargetAuditReportState(targetId, limit = 12) {
     paired: Boolean(target.paired),
     readiness,
     summary: summarizeTargetProfile(target),
+    session,
     timeline: timeline.entries.map((entry) => ({
       ...entry,
       summary: redactDiagnosticText(String(entry.summary ?? "")),
