@@ -1169,6 +1169,20 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     }
   }
 
+  function downloadMarkdownArtifact(filename: string, text: string) {
+    const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = filename;
+    anchor.rel = "noopener";
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+  }
+
   function buildTargetSessionExportText(target: TargetProfile, sshSession?: SshTerminalSessionState, remoteSession?: RemoteDesktopSessionState) {
     const lines = [
       `# Target Session Export`,
@@ -1252,43 +1266,42 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
 
     const text = targetAuditReport || buildLocalTargetAuditReportText(nextTarget, connectionReadinessReport?.report ?? buildTargetConnectionReadinessReport(nextTarget), targetTimeline);
     const safeTargetId = nextTarget.id.replace(/[^a-zA-Z0-9_-]+/g, "-");
-    const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${safeTargetId}-audit-report.md`;
-    anchor.rel = "noopener";
-    anchor.style.display = "none";
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-    URL.revokeObjectURL(url);
+    downloadMarkdownArtifact(`${safeTargetId}-audit-report.md`, text);
     setMessage(copy.targetRegistryTargetListAuditReportDownloaded);
     setError(undefined);
   }
 
-  function downloadTargetSessionExport(target?: TargetProfile) {
+  async function downloadTargetSessionExport(target?: TargetProfile) {
     const nextTarget = target ?? selectedTarget ?? draftTarget;
     if (!nextTarget) {
       setError(copy.targetRegistryTargetListSessionExportFailed);
       return;
     }
 
-    const text = buildTargetSessionExportText(nextTarget, sshTerminalView, remoteDesktopView);
     const safeTargetId = nextTarget.id.replace(/[^a-zA-Z0-9_-]+/g, "-");
-    const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `${safeTargetId}-session-export.md`;
-    anchor.rel = "noopener";
-    anchor.style.display = "none";
-    document.body.appendChild(anchor);
-    anchor.click();
-    document.body.removeChild(anchor);
-    URL.revokeObjectURL(url);
-    setMessage(copy.targetRegistryTargetListSessionExportDownloaded);
-    setError(undefined);
+    try {
+      let text: string | undefined;
+      if (gatewayBaseUrl && draftIsSaved && (nextTarget.kind === "ssh-terminal" || nextTarget.kind === "remote-desktop")) {
+        const endpoint =
+          nextTarget.kind === "ssh-terminal"
+            ? `${gatewayBaseUrl}/targets/ssh-terminal/session-export?targetId=${encodeURIComponent(nextTarget.id)}`
+            : `${gatewayBaseUrl}/targets/remote-desktop/session-export?targetId=${encodeURIComponent(nextTarget.id)}`;
+        const response = await fetch(endpoint);
+        const payload = (await response.json()) as { text?: string; error?: string };
+        if (!response.ok) {
+          throw new Error(payload.error || "bad response");
+        }
+        text = typeof payload.text === "string" && payload.text.trim() ? payload.text : undefined;
+      }
+      if (!text) {
+        text = buildTargetSessionExportText(nextTarget, sshTerminalView, remoteDesktopView);
+      }
+      downloadMarkdownArtifact(`${safeTargetId}-session-export.md`, text);
+      setMessage(copy.targetRegistryTargetListSessionExportDownloaded);
+      setError(undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : copy.targetRegistryTargetListSessionExportFailed);
+    }
   }
 
   useEffect(() => {
@@ -2816,7 +2829,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   <button
                     className="secondary-button"
                     type="button"
-                    onClick={() => downloadTargetSessionExport(selectedTarget ?? draftTarget)}
+                    onClick={() => void downloadTargetSessionExport(selectedTarget ?? draftTarget)}
                   >
                     {copy.fieldSessionExportButton}
                   </button>
@@ -2858,7 +2871,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                   <button
                     className="secondary-button"
                     type="button"
-                    onClick={() => downloadTargetSessionExport(selectedTarget ?? draftTarget)}
+                    onClick={() => void downloadTargetSessionExport(selectedTarget ?? draftTarget)}
                   >
                     {copy.fieldSessionExportButton}
                   </button>
