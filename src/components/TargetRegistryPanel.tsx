@@ -1169,6 +1169,80 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     }
   }
 
+  function buildTargetSessionExportText(target: TargetProfile, sshSession?: SshTerminalSessionState, remoteSession?: RemoteDesktopSessionState) {
+    const lines = [
+      `# Target Session Export`,
+      `generatedAt: ${new Date().toISOString()}`,
+      `targetId: ${target.id}`,
+      `displayName: ${target.displayName}`,
+      `kind: ${target.kind}`,
+      `endpoint: ${target.adapters[0]?.endpoint ?? target.displayName}`,
+      `state: ${target.state}`,
+      `paired: ${target.paired ? "yes" : "no"}`,
+      `summary: ${summarizeTargetProfile(target)}`,
+      ``,
+    ];
+
+    if (target.kind === "ssh-terminal" && sshSession) {
+      lines.push(`## SSH Session`);
+      lines.push(`sessionId: ${sshSession.sessionId}`);
+      lines.push(`state: ${sshSession.state}`);
+      lines.push(`mode: ${sshSession.mode}`);
+      lines.push(`transport: ${sshSession.transport}`);
+      lines.push(`sessionSummary: ${redactTargetAuditReportText(sshSession.sessionSummary)}`);
+      lines.push(`prompt: ${redactTargetAuditReportText(sshSession.prompt)}`);
+      lines.push(`currentDirectory: ${redactTargetAuditReportText(sshSession.currentDirectory)}`);
+      lines.push(`lastCommand: ${redactTargetAuditReportText(sshSession.lastCommand ?? "")}`);
+      lines.push(`lastExitCode: ${typeof sshSession.lastExitCode === "number" ? sshSession.lastExitCode : "n/a"}`);
+      lines.push(``);
+      lines.push(`### Transcript`);
+      const transcript = Array.isArray(sshSession.transcript) ? sshSession.transcript.slice(-20) : [];
+      if (!transcript.length) {
+        lines.push(`- no transcript entries`);
+      } else {
+        for (const entry of transcript) {
+          lines.push(`- ${entry.createdAt} | ${entry.role} | ${redactTargetAuditReportText(entry.text)}`);
+        }
+      }
+    }
+
+    if (target.kind === "remote-desktop" && remoteSession) {
+      lines.push(`## Remote Desktop Session`);
+      lines.push(`sessionId: ${remoteSession.sessionId}`);
+      lines.push(`state: ${remoteSession.state}`);
+      lines.push(`mode: ${remoteSession.mode}`);
+      lines.push(`transport: ${remoteSession.transport}`);
+      lines.push(`sessionSummary: ${redactTargetAuditReportText(remoteSession.sessionSummary)}`);
+      lines.push(`credentialSource: ${remoteSession.credentialSource ?? "none"}`);
+      lines.push(`credentialSeedState: ${remoteSession.credentialSeedState ?? "idle"}`);
+      lines.push(`activeWindow: ${redactTargetAuditReportText(remoteSession.activeWindow ?? "")}`);
+      lines.push(`clientLaunchState: ${remoteSession.clientLaunchState ?? "idle"}`);
+      lines.push(`clientLaunchCommand: ${redactTargetAuditReportText(remoteSession.clientLaunchCommand ?? "")}`);
+      lines.push(`clientLaunchPid: ${typeof remoteSession.clientLaunchPid === "number" ? remoteSession.clientLaunchPid : "n/a"}`);
+      lines.push(``);
+      lines.push(`### Launch History`);
+      const launchHistory = Array.isArray(remoteSession.launchHistory) ? remoteSession.launchHistory.slice(-10) : [];
+      if (!launchHistory.length) {
+        lines.push(`- no launch history`);
+      } else {
+        for (const entry of launchHistory) {
+          const fields = [
+            entry.launchedAt ?? "",
+            entry.transport ?? "unknown",
+            redactTargetAuditReportText(entry.command ?? ""),
+          ];
+          if (typeof entry.dryRun === "boolean") fields.push(`dryRun=${entry.dryRun ? "yes" : "no"}`);
+          if (entry.mode) fields.push(`mode=${entry.mode}`);
+          if (typeof entry.pid === "number") fields.push(`pid=${entry.pid}`);
+          if (entry.error) fields.push(`error=${redactTargetAuditReportText(entry.error)}`);
+          lines.push(`- ${fields.filter(Boolean).join(" | ")}`);
+        }
+      }
+    }
+
+    return lines.join("\n");
+  }
+
   function downloadTargetAuditReport(target?: TargetProfile) {
     const nextTarget = target ?? selectedTarget ?? draftTarget;
     if (!nextTarget) {
@@ -1190,6 +1264,30 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
     document.body.removeChild(anchor);
     URL.revokeObjectURL(url);
     setMessage(copy.targetRegistryTargetListAuditReportDownloaded);
+    setError(undefined);
+  }
+
+  function downloadTargetSessionExport(target?: TargetProfile) {
+    const nextTarget = target ?? selectedTarget ?? draftTarget;
+    if (!nextTarget) {
+      setError(copy.targetRegistryTargetListSessionExportFailed);
+      return;
+    }
+
+    const text = buildTargetSessionExportText(nextTarget, sshTerminalView, remoteDesktopView);
+    const safeTargetId = nextTarget.id.replace(/[^a-zA-Z0-9_-]+/g, "-");
+    const blob = new Blob([text], { type: "text/markdown;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `${safeTargetId}-session-export.md`;
+    anchor.rel = "noopener";
+    anchor.style.display = "none";
+    document.body.appendChild(anchor);
+    anchor.click();
+    document.body.removeChild(anchor);
+    URL.revokeObjectURL(url);
+    setMessage(copy.targetRegistryTargetListSessionExportDownloaded);
     setError(undefined);
   }
 
@@ -2714,6 +2812,15 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 <span>{copy.fieldRemoteDesktopTitle}</span>
                 <strong>{remoteDesktopView?.targetName ?? draft.displayName}</strong>
                 <p>{remoteDesktopView?.screenSummary ?? copy.fieldRemoteDesktopConnectionHint}</p>
+                <div className="panel-actions">
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => downloadTargetSessionExport(selectedTarget ?? draftTarget)}
+                  >
+                    {copy.fieldSessionExportButton}
+                  </button>
+                </div>
                 <small>{copy.fieldRemoteDesktopSessionSummary}：{remoteDesktopView?.sessionSummary ?? copy.targetRegistryFieldNotEstablished}</small>
                 <small>
                   {copy.fieldRemoteDesktopSessionStateIdle}：{remoteDesktopView?.state ?? copy.targetRegistryFieldNone} · mode：{remoteDesktopView?.mode ?? draft.sessionMode}
@@ -2747,6 +2854,15 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                       ? copy.fieldSSHSessionStateClosed
                     : copy.fieldSSHSessionStateIdle}
                 </p>
+                <div className="panel-actions">
+                  <button
+                    className="secondary-button"
+                    type="button"
+                    onClick={() => downloadTargetSessionExport(selectedTarget ?? draftTarget)}
+                  >
+                    {copy.fieldSessionExportButton}
+                  </button>
+                </div>
                 <small>{copy.fieldRemoteDesktopSessionSummary}：{sshTerminalView?.sessionSummary ?? copy.targetRegistryFieldNotEstablished}</small>
                 <small>{copy.fieldSshSessionStateIdle}：{sshTerminalView?.state ?? copy.fieldSshSessionStateIdle} · mode：{sshTerminalView?.mode ?? draft.sessionMode}</small>
                 <small>prompt：{sshTerminalView?.prompt ?? copy.targetRegistryFieldNotEstablished}</small>
