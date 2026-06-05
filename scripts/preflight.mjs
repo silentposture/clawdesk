@@ -27,6 +27,7 @@ const requiredPaths = [
   "scripts/prepare-website-release.mjs",
   "scripts/sign-win-installer.mjs",
   "scripts/validate-release-configs.mjs",
+  "scripts/verify-target-session-exports.mjs",
   "scripts/smoke-gui.mjs",
   "scripts/smoke-store-installer-win.mjs",
   "scripts/smoke-mac-dmg.mjs",
@@ -158,6 +159,7 @@ async function main() {
   const i18nAuditCheck = run("node", ["scripts/audit-i18n-literals.mjs", "--strict"]);
   const hiddenWindowPolicyCheck = run("node", ["scripts/enforce-hidden-window-policy.mjs"]);
   const releaseConfigCheck = run("node", ["scripts/validate-release-configs.mjs"]);
+  const targetSessionExportCheck = run("node", ["scripts/verify-target-session-exports.mjs"]);
   const hiddenTaskAuditCheck = process.platform === "win32"
     ? run("powershell.exe", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/audit-scheduled-tasks.ps1"])
     : { status: 0, stdout: "skipped: non-windows", stderr: "" };
@@ -170,6 +172,7 @@ async function main() {
     ...(i18nAuditCheck.status === 0 ? [] : ["hardcoded-ui-literals"]),
     ...(hiddenWindowPolicyCheck.status === 0 ? [] : ["hidden-window-policy-violation"]),
     ...(releaseConfigCheck.status === 0 ? [] : ["invalid-release-configs"]),
+    ...(targetSessionExportCheck.status === 0 ? [] : ["stale-target-session-exports"]),
     ...(hiddenTaskAuditCheck.status === 0 ? [] : ["hidden-task-window-rule-violation"]),
   ];
 
@@ -201,6 +204,11 @@ async function main() {
       ok: releaseConfigCheck.status === 0,
       stdout: releaseConfigCheck.stdout.trim(),
       stderr: releaseConfigCheck.stderr.trim(),
+    },
+    targetSessionExports: {
+      ok: targetSessionExportCheck.status === 0,
+      stdout: targetSessionExportCheck.stdout.trim(),
+      stderr: targetSessionExportCheck.stderr.trim(),
     },
     hiddenTaskAudit: {
       ok: hiddenTaskAuditCheck.status === 0,
