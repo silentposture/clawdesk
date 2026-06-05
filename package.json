@@ -40,6 +40,7 @@
     "verify:backend": "node scripts/verify-backend.mjs",
     "verify:backend:sim": "node scripts/verify-backend-sim.mjs",
     "verify:target-session-exports": "node scripts/verify-target-session-exports.mjs",
+    "verify:host-enrollment": "node scripts/verify-host-enrollment.mjs",
     "verify:ssh-terminal-lifecycle": "node scripts/verify-ssh-terminal-lifecycle.mjs",
     "verify:remote-desktop-lifecycle": "node scripts/verify-remote-desktop-lifecycle.mjs",
     "verify:production-gateway:sim": "node scripts/verify-production-gateway-sim.mjs",

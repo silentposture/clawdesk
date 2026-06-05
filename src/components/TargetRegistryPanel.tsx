@@ -419,6 +419,8 @@ function readinessBadgeClass(report: TargetConnectionReadinessReport): string {
 function readinessActionLabel(report: TargetConnectionReadinessReport): string {
   if (report.readyToConnect) return "Connect";
   switch (report.nextAction) {
+    case "enroll_host":
+      return "Enroll host";
     case "pair":
       return "Pair";
     case "probe":
@@ -760,6 +762,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const [sshPrivateKeyDraft, setSshPrivateKeyDraft] = useState("");
   const [sshTerminalCommandDraft, setSshTerminalCommandDraft] = useState("git status");
   const [pairingCodeDraft, setPairingCodeDraft] = useState("");
+  const [hostEnrollmentCodeDraft, setHostEnrollmentCodeDraft] = useState("");
   const [credentialBundlePassphraseDraft, setCredentialBundlePassphraseDraft] = useState("");
   const [credentialBundleImportDraft, setCredentialBundleImportDraft] = useState("");
   const [credentialBundleTargetIds, setCredentialBundleTargetIds] = useState<string[]>(
@@ -859,6 +862,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   function clearSensitiveDraftState() {
     setSshPrivateKeyDraft("");
     setPairingCodeDraft("");
+    setHostEnrollmentCodeDraft("");
   }
 
   function clearManagedSessionState() {
@@ -1466,7 +1470,13 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
 
   async function runConnectionAction(action: TargetConnectionAction, targetOverride?: TargetProfile) {
     const currentTarget = targetOverride ?? draftTarget;
-    const result = applyTargetConnectionAction(currentTarget, action);
+    const actionOptions =
+      action === "pair"
+        ? { pairingCode: pairingCodeDraft.trim() || undefined }
+        : action === "enroll_host"
+          ? { enrollmentCode: hostEnrollmentCodeDraft.trim() || undefined }
+          : {};
+    const result = applyTargetConnectionAction(currentTarget, action, actionOptions);
     if (!result.allowed) {
       setError(result.reason);
       setMessage(undefined);
@@ -1477,10 +1487,14 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setBusy(true);
       setError(undefined);
       try {
-        const requestBody: { targetId: string; action: TargetConnectionAction; pairingCode?: string } = { targetId: currentTarget.id, action };
-        if (action === "pair" && pairingCodeDraft.trim()) {
-          requestBody.pairingCode = pairingCodeDraft.trim();
-        }
+        const requestBody: {
+          targetId: string;
+          action: TargetConnectionAction;
+          pairingCode?: string;
+          enrollmentCode?: string;
+        } = { targetId: currentTarget.id, action };
+        if (action === "pair" && pairingCodeDraft.trim()) requestBody.pairingCode = pairingCodeDraft.trim();
+        if (action === "enroll_host" && hostEnrollmentCodeDraft.trim()) requestBody.enrollmentCode = hostEnrollmentCodeDraft.trim();
 
         const response = await fetch(`${gatewayBaseUrl}/targets/connection`, {
           method: "POST",
@@ -1778,6 +1792,55 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setError(undefined);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "pairing code issuance failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function issueTargetHostEnrollmentCode() {
+    if (!gatewayBaseUrl) {
+      setError(copy.targetRegistryHostEnrollmentCodeGatewayRequired);
+      return;
+    }
+
+    if (draft.kind === "local-shell" || draft.kind === "mock") {
+      setError(copy.targetRegistryHostEnrollmentCodeOnlyRemote);
+      return;
+    }
+
+    setBusy(true);
+    setError(undefined);
+    try {
+      const response = await fetch(`${gatewayBaseUrl}/targets/host-enrollment-ticket`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetId: draftTarget.id,
+          targetName: draft.displayName.trim() || defaultDisplayNameForKind(draft.kind),
+          kind: draft.kind,
+          hostName: draft.displayName.trim() || defaultDisplayNameForKind(draft.kind),
+          bridgeVersion: "1.0.0",
+          expiresInMinutes: 15,
+        }),
+      });
+      const payload = (await response.json()) as {
+        allowed?: boolean;
+        reason?: string;
+        ticket?: { code?: string; expiresAt?: string; hostName?: string; bridgeVersion?: string };
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "host enrollment code issuance failed");
+      }
+      if (!payload.allowed || !payload.ticket?.code) {
+        throw new Error(payload.reason || "host enrollment code was not returned by the gateway.");
+      }
+
+      setHostEnrollmentCodeDraft(payload.ticket.code);
+      setMessage(copy.targetRegistryHostEnrollmentCodeIssuedMessage(payload.ticket.code));
+      setError(undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "host enrollment code issuance failed");
     } finally {
       setBusy(false);
     }
@@ -2676,6 +2739,57 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               />
             </label>
             {draft.kind !== "local-shell" && draft.kind !== "mock" ? (
+              <section className="mcp-preview target-host-bridge">
+                <span>{copy.targetRegistryHostBridgeTitle}</span>
+                <strong>
+                  {selectedTarget?.connection.hostBridge?.state === "registered"
+                    ? copy.targetRegistryHostBridgeRegistered
+                    : selectedTarget?.connection.hostBridge?.state === "stale"
+                      ? copy.targetRegistryHostBridgeStale
+                      : copy.targetRegistryHostBridgeUnregistered}
+                </strong>
+                <p>
+                  {selectedTarget?.connection.hostBridge?.hostName
+                    ? `${copy.targetRegistryHostBridgeSummaryPrefix}${selectedTarget.connection.hostBridge.hostName}`
+                    : copy.targetRegistryHostBridgeMissing}
+                </p>
+                <div className="panel-actions">
+                  <button className="secondary-button" type="button" onClick={() => void issueTargetHostEnrollmentCode()} disabled={busy}>
+                    {copy.targetRegistryHostEnrollmentCodeIssueButton}
+                  </button>
+                  <button
+                    className="primary-button"
+                    type="button"
+                    onClick={() => void runConnectionAction("enroll_host")}
+                    disabled={busy}
+                  >
+                    {copy.targetRegistryHostBridgeEnrollButton}
+                  </button>
+                </div>
+                <label>
+                  <span>{copy.targetRegistryHostEnrollmentCodeLabel}</span>
+                  <input
+                    value={hostEnrollmentCodeDraft}
+                    onChange={(event) => setHostEnrollmentCodeDraft(event.target.value)}
+                    placeholder={copy.targetRegistryHostEnrollmentCodePlaceholder}
+                  />
+                  <small>{copy.targetRegistryHostEnrollmentCodeHint}</small>
+                </label>
+                <small>
+                  {copy.targetRegistryHostBridgeSummaryPrefix}
+                  {selectedTarget?.connection.hostBridge?.hostName ?? copy.targetRegistryHostBridgeMissing}
+                </small>
+                <small>
+                  {copy.targetRegistryHostBridgeState}：
+                  {selectedTarget?.connection.hostBridge?.state ?? copy.targetRegistryHostBridgeUnregistered}
+                </small>
+                <small>
+                  {copy.targetRegistryHostBridgeVersion}：
+                  {selectedTarget?.connection.hostBridge?.bridgeVersion ?? copy.targetRegistryFieldNa}
+                </small>
+              </section>
+            ) : null}
+            {draft.kind !== "local-shell" && draft.kind !== "mock" ? (
               <label>
                 <span>{copy.targetRegistryPairingCodeLabel}</span>
                 <input
@@ -2750,6 +2864,14 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
               <div>
                 <strong>{copy.fieldHostKey}</strong>
                 <span>{draft.hostKeyVerified ? copy.targetRegistryHostKeyVerified : copy.targetRegistryHostKeyNotVerified}</span>
+              </div>
+              <div>
+                <strong>{copy.targetRegistryHostBridgeTitle}</strong>
+                <span>
+                  {draft.kind === "local-shell" || draft.kind === "mock"
+                    ? copy.targetRegistryHostBridgeRegistered
+                    : selectedTarget?.connection.hostBridge?.state ?? copy.targetRegistryHostBridgeUnregistered}
+                </span>
               </div>
               <div>
                 <strong>{copy.fieldLastSeen}</strong>

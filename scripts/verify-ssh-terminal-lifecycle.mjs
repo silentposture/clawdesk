@@ -9,12 +9,23 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 const stateDir = await fs.mkdtemp(path.join(os.tmpdir(), "clawdesk-ssh-lifecycle-"));
 const stateFile = path.join(stateDir, "state.json");
 const launchStateFile = path.join(stateDir, "ssh-launch-state.json");
-const listener = net.createServer();
-await new Promise((resolve) => listener.listen(0, "127.0.0.1", resolve));
-const probePort = listener.address().port;
-const port = probePort + 1;
+async function reservePort() {
+  const server = net.createServer();
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const reserved = server.address().port;
+  await new Promise((resolve) => server.close(resolve));
+  return reserved;
+}
+
+const probePort = await reservePort();
+let port = await reservePort();
+while (port === probePort) {
+  port = await reservePort();
+}
 const baseUrl = `http://127.0.0.1:${port}`;
 let gatewayOutput = "";
+const listener = net.createServer();
+await new Promise((resolve) => listener.listen(probePort, "127.0.0.1", resolve));
 
 const fakeSshScript = path.join(stateDir, "fake-ssh.mjs");
 await fs.writeFile(
@@ -146,6 +157,23 @@ async function getJson(pathname) {
   return { response, payload };
 }
 
+async function waitForStateFile(timeoutMs = 8000) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    try {
+      const raw = await fs.readFile(stateFile, "utf8");
+      const snapshot = JSON.parse(raw);
+      if (snapshot && snapshot.targetRegistry?.targets?.length) {
+        return snapshot;
+      }
+    } catch {
+      await delay(100);
+    }
+    await delay(100);
+  }
+  throw new Error("gateway state file was not written");
+}
+
 async function waitForLaunchSnapshot(timeoutMs = 8000, minLaunchCount = 1, previousPid = null) {
   const started = Date.now();
   while (Date.now() - started < timeoutMs) {
@@ -210,23 +238,30 @@ try {
   const save = await postJson("/targets", { registry });
   if (!save.response.ok) throw new Error(`target registry save failed: ${save.response.status}`);
 
-  const pairingTicket = await postJson("/targets/pairing-ticket", {
+  await waitForStateFile();
+
+  const hostEnrollmentTicket = await postJson("/targets/host-enrollment-ticket", {
     targetId: "ssh-test",
     targetName: "SSH Test",
     kind: "ssh-terminal",
+    hostName: "SSH Host Bridge",
+    bridgeVersion: "1.0.0-test",
     expiresInMinutes: 15,
   });
-  if (!pairingTicket.response.ok || !pairingTicket.payload.allowed || !pairingTicket.payload.ticket?.code) {
-    throw new Error(`pairing ticket issuance failed: ${pairingTicket.payload.reason || pairingTicket.response.status}`);
+  if (!hostEnrollmentTicket.response.ok || !hostEnrollmentTicket.payload.allowed || !hostEnrollmentTicket.payload.ticket?.code) {
+    throw new Error(`host enrollment ticket issuance failed: ${hostEnrollmentTicket.payload.reason || hostEnrollmentTicket.response.status}`);
   }
 
-  const pair = await postJson("/targets/connection", {
+  const hostEnroll = await postJson("/targets/host-enrollment", {
     targetId: "ssh-test",
-    action: "pair",
-    pairingCode: pairingTicket.payload.ticket.code,
+    enrollmentCode: hostEnrollmentTicket.payload.ticket.code,
+    hostName: "SSH Host Bridge",
+    bridgeVersion: "1.0.0-test",
   });
-  if (!pair.response.ok || !pair.payload.allowed) throw new Error(`pair failed: ${pair.payload.reason || pair.response.status}`);
-  if (!pair.payload.target?.paired) throw new Error("pair did not mark target as paired");
+  if (!hostEnroll.response.ok || !hostEnroll.payload.allowed) throw new Error(`host enrollment failed: ${hostEnroll.payload.reason || hostEnroll.response.status}`);
+  if (hostEnroll.payload.target?.connection?.hostBridge?.state !== "registered") throw new Error("host enrollment did not register host bridge");
+
+  await waitForStateFile();
 
   const probe = await postJson("/targets/connection", { targetId: "ssh-test", action: "probe" });
   if (!probe.response.ok || !probe.payload.allowed) throw new Error(`probe failed: ${probe.payload.reason || probe.response.status}`);

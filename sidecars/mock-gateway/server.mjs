@@ -434,6 +434,7 @@ const remoteDesktopLaunchRuntimes = new Map();
 const sshTerminalSessions = new Map();
 const sshTerminalInteractiveRuntimes = new Map();
 const pairingTickets = new Map();
+const hostEnrollmentTickets = new Map();
 const sshExecutable = (process.env.CLAWDESK_SSH_EXECUTABLE || (process.platform === "win32" ? "ssh.exe" : "ssh")).trim();
 const sshExecutableArgs = (() => {
   const raw = process.env.CLAWDESK_SSH_EXECUTABLE_ARGS_JSON;
@@ -2209,6 +2210,12 @@ function defaultTargetConnectionState(kind) {
     return {
       credentialMode: "platform-managed",
       sessionMode: "control",
+      hostBridge: {
+        state: "registered",
+        bridgeId: `${kind}-bridge`,
+        hostName: kind === "local-shell" ? "Local Host" : "Mock Host",
+        bridgeVersion: "local",
+      },
     };
   }
 
@@ -2217,6 +2224,9 @@ function defaultTargetConnectionState(kind) {
       credentialMode: "none",
       sessionMode: "control",
       port: 22,
+      hostBridge: {
+        state: "unregistered",
+      },
     };
   }
 
@@ -2224,6 +2234,9 @@ function defaultTargetConnectionState(kind) {
     credentialMode: "none",
     sessionMode: "observe",
     port: 3389,
+    hostBridge: {
+      state: "unregistered",
+    },
   };
 }
 
@@ -2231,6 +2244,7 @@ function normalizeTargetConnectionState(kind, connection = {}) {
   const source = connection && typeof connection === "object" ? connection : {};
   const defaults = defaultTargetConnectionState(kind);
   const portValue = typeof source.port === "number" ? source.port : Number.parseInt(source.port, 10);
+  const hostBridgeSource = source.hostBridge && typeof source.hostBridge === "object" ? source.hostBridge : {};
   return {
     ...defaults,
     ...source,
@@ -2246,6 +2260,27 @@ function normalizeTargetConnectionState(kind, connection = {}) {
         ? source.knownHostFingerprint.trim()
         : undefined,
     note: typeof source.note === "string" && source.note.trim() ? source.note.trim() : undefined,
+    hostBridge: {
+      state:
+        typeof hostBridgeSource.state === "string" && hostBridgeSource.state
+          ? hostBridgeSource.state
+          : defaults.hostBridge?.state ?? "unregistered",
+      bridgeId: typeof hostBridgeSource.bridgeId === "string" && hostBridgeSource.bridgeId.trim() ? hostBridgeSource.bridgeId.trim() : defaults.hostBridge?.bridgeId,
+      hostName: typeof hostBridgeSource.hostName === "string" && hostBridgeSource.hostName.trim() ? hostBridgeSource.hostName.trim() : defaults.hostBridge?.hostName,
+      bridgeVersion:
+        typeof hostBridgeSource.bridgeVersion === "string" && hostBridgeSource.bridgeVersion.trim()
+          ? hostBridgeSource.bridgeVersion.trim()
+          : defaults.hostBridge?.bridgeVersion,
+      registeredAt:
+        typeof hostBridgeSource.registeredAt === "string" && hostBridgeSource.registeredAt.trim()
+          ? hostBridgeSource.registeredAt.trim()
+          : defaults.hostBridge?.registeredAt,
+      lastSeenAt:
+        typeof hostBridgeSource.lastSeenAt === "string" && hostBridgeSource.lastSeenAt.trim()
+          ? hostBridgeSource.lastSeenAt.trim()
+          : defaults.hostBridge?.lastSeenAt,
+      lastError: typeof hostBridgeSource.lastError === "string" && hostBridgeSource.lastError.trim() ? hostBridgeSource.lastError.trim() : defaults.hostBridge?.lastError,
+    },
   };
 }
 
@@ -2711,6 +2746,10 @@ function targetConnectionReadinessIssuesState(target) {
     issues.push("SSH host key is required for host-key verification.");
   }
 
+  if ((target.kind === "ssh-terminal" || target.kind === "remote-desktop") && connection.hostBridge?.state !== "registered") {
+    issues.push("Install and enroll the ClawDesk host bridge before pairing this target.");
+  }
+
   return issues;
 }
 
@@ -2724,6 +2763,15 @@ function buildTargetConnectionReadinessReportState(target) {
 
   const isLocalLike = baseTarget.kind === "local-shell" || baseTarget.kind === "mock";
   if (isLocalLike) {
+    addCheck(
+      "host-bridge",
+      "Host bridge",
+      connection.hostBridge?.state === "registered" ? "pass" : "warn",
+      connection.hostBridge?.state === "registered"
+        ? `Host bridge registered${connection.hostBridge.hostName ? ` for ${connection.hostBridge.hostName}` : ""}.`
+        : "Local targets ship with the host bridge already present.",
+      false,
+    );
     addCheck(
       "pair",
       "Pairing",
@@ -2746,10 +2794,23 @@ function buildTargetConnectionReadinessReportState(target) {
   }
 
   addCheck(
+    "host-bridge",
+    "Host bridge",
+    connection.hostBridge?.state === "registered" ? "pass" : "fail",
+    connection.hostBridge?.state === "registered"
+      ? `Host bridge registered${connection.hostBridge.hostName ? ` for ${connection.hostBridge.hostName}` : ""}${connection.hostBridge.bridgeVersion ? ` (${connection.hostBridge.bridgeVersion})` : ""}.`
+      : "Install and enroll the ClawDesk host bridge before pairing this target.",
+    true,
+  );
+  addCheck(
     "pair",
     "Pairing",
-    baseTarget.paired ? "pass" : "fail",
-    baseTarget.paired ? "Target is paired." : "Target must be paired before it can connect.",
+    baseTarget.paired ? "pass" : connection.hostBridge?.state === "registered" ? "warn" : "fail",
+    baseTarget.paired
+      ? "Target is paired."
+      : connection.hostBridge?.state === "registered"
+        ? "Enroll the host, then complete pairing before connect."
+        : "Target must be paired after host enrollment before it can connect.",
     true,
   );
   addCheck(
@@ -2813,7 +2874,9 @@ function buildTargetConnectionReadinessReportState(target) {
 
   const readyToConnect = checks.every((check) => check.status !== "fail");
   let nextAction = "connect";
-  if (!baseTarget.paired) {
+  if (connection.hostBridge?.state !== "registered") {
+    nextAction = "enroll_host";
+  } else if (!baseTarget.paired) {
     nextAction = "pair";
   } else if (connection.lastProbeResult !== "reachable") {
     nextAction = "probe";
@@ -3389,6 +3452,118 @@ function redeemTargetPairingTicketState(target, code) {
   };
 }
 
+function hostEnrollmentTicketStorageKey(code) {
+  return String(code ?? "").trim().toLowerCase();
+}
+
+function cloneHostEnrollmentTicketState(ticket) {
+  return ticket ? { ...ticket } : ticket;
+}
+
+function issueTargetHostEnrollmentTicketState(target, options = {}) {
+  const baseTarget = normalizeTargetProfileState(target);
+  const now = nowIso();
+  const ticket = {
+    code: `host-${crypto.randomUUID().replace(/-/g, "").slice(0, 16)}`,
+    targetId: baseTarget.id,
+    targetName: baseTarget.displayName,
+    kind: baseTarget.kind,
+    hostName: typeof options.hostName === "string" && options.hostName.trim() ? options.hostName.trim() : baseTarget.displayName,
+    bridgeVersion: typeof options.bridgeVersion === "string" && options.bridgeVersion.trim() ? options.bridgeVersion.trim() : "1.0.0",
+    createdAt: now,
+    expiresAt: new Date(Date.now() + (Number(options.expiresInMinutes) > 0 ? Number(options.expiresInMinutes) * 60_000 : pairingTicketDefaultTtlMs)).toISOString(),
+    redeemedAt: null,
+    bridgeId: `bridge-${crypto.randomUUID().replace(/-/g, "").slice(0, 12)}`,
+  };
+  hostEnrollmentTickets.set(hostEnrollmentTicketStorageKey(ticket.code), ticket);
+  audit("targets.host-enrollment-ticket.issued", {
+    targetId: baseTarget.id,
+    targetName: baseTarget.displayName,
+    kind: baseTarget.kind,
+    hostName: ticket.hostName,
+    bridgeVersion: ticket.bridgeVersion,
+    expiresAt: ticket.expiresAt,
+  });
+  return ticket;
+}
+
+function resolveTargetHostEnrollmentTicketState(code) {
+  const ticket = hostEnrollmentTickets.get(hostEnrollmentTicketStorageKey(code));
+  if (!ticket) return null;
+  return cloneHostEnrollmentTicketState(ticket);
+}
+
+function redeemTargetHostEnrollmentTicketState(target, code, options = {}) {
+  const baseTarget = normalizeTargetProfileState(target);
+  const ticket = resolveTargetHostEnrollmentTicketState(code);
+  const now = nowIso();
+
+  if (!ticket) {
+    return {
+      allowed: false,
+      reason: "Host enrollment code is invalid or expired.",
+      target: baseTarget,
+    };
+  }
+
+  if (ticket.redeemedAt) {
+    return {
+      allowed: false,
+      reason: "Host enrollment code has already been redeemed.",
+      target: baseTarget,
+    };
+  }
+
+  if (new Date(ticket.expiresAt).getTime() <= Date.now()) {
+    hostEnrollmentTickets.delete(hostEnrollmentTicketStorageKey(ticket.code));
+    return {
+      allowed: false,
+      reason: "Host enrollment code is invalid or expired.",
+      target: baseTarget,
+    };
+  }
+
+  if (ticket.targetId && ticket.targetId !== baseTarget.id) {
+    return {
+      allowed: false,
+      reason: "Host enrollment code does not match this target.",
+      target: baseTarget,
+    };
+  }
+
+  if (ticket.kind && ticket.kind !== baseTarget.kind) {
+    return {
+      allowed: false,
+      reason: "Host enrollment code is not valid for this target kind.",
+      target: baseTarget,
+    };
+  }
+
+  const redeemedTicket = {
+    ...ticket,
+    redeemedAt: now,
+  };
+  hostEnrollmentTickets.set(hostEnrollmentTicketStorageKey(ticket.code), redeemedTicket);
+  audit("targets.host-enrollment-ticket.redeemed", {
+    targetId: baseTarget.id,
+    targetName: baseTarget.displayName,
+    kind: baseTarget.kind,
+    code: `host-enrollment:${hashForAudit(ticket.code)}`,
+  });
+
+  return {
+    allowed: true,
+    reason: "Host enrollment code redeemed.",
+    target: {
+      ...baseTarget,
+      paired: true,
+      state: "connecting",
+      lastSeenAt: now,
+    },
+    ticket: redeemedTicket,
+  };
+}
+
 async function ensureTargetKnownHostsFile(target) {
   const knownHostsPath = targetKnownHostsPath(target.id);
   await fs.mkdir(path.dirname(knownHostsPath), { recursive: true });
@@ -3831,6 +4006,59 @@ async function applyTargetConnectionActionState(target, action, options = {}) {
         ...baseTarget,
         lastSeenAt: now,
       },
+    };
+  }
+
+  if (action === "enroll_host") {
+    const enrollmentCode = typeof options.enrollmentCode === "string" ? options.enrollmentCode.trim() : "";
+    if (!enrollmentCode) {
+      return {
+        allowed: false,
+        reason: "A host enrollment code is required.",
+        target: baseTarget,
+      };
+    }
+
+    const redeemedTicket = redeemTargetHostEnrollmentTicketState(baseTarget, enrollmentCode, options);
+    if (!redeemedTicket.allowed) {
+      return redeemedTicket;
+    }
+
+    const hostBridge = {
+      state: "registered",
+      bridgeId: redeemedTicket.ticket?.bridgeId ?? `${baseTarget.id}-bridge`,
+      hostName:
+        redeemedTicket.ticket?.hostName?.trim() ||
+        (typeof options.hostName === "string" && options.hostName.trim() ? options.hostName.trim() : baseTarget.displayName),
+      bridgeVersion:
+        redeemedTicket.ticket?.bridgeVersion?.trim() ||
+        (typeof options.bridgeVersion === "string" && options.bridgeVersion.trim() ? options.bridgeVersion.trim() : "1.0.0"),
+      registeredAt: redeemedTicket.ticket?.redeemedAt ?? now,
+      lastSeenAt: now,
+      lastError: undefined,
+    };
+
+    return {
+      allowed: true,
+      reason: "The host bridge was enrolled and moved into connecting state.",
+      target: updatePrimaryTargetAdapterState(
+        {
+          ...redeemedTicket.target,
+          paired: true,
+          state: "connecting",
+          lastSeenAt: now,
+          connection: {
+            ...redeemedTicket.target.connection,
+            hostBridge,
+          },
+        },
+        (current) => ({
+          ...current,
+          authenticated: true,
+          hostKeyVerified: baseTarget.kind === "ssh-terminal" ? false : current.hostKeyVerified,
+        }),
+      ),
+      ticket: redeemedTicket.ticket,
     };
   }
 
@@ -5654,7 +5882,7 @@ function redactAuditDetails(details) {
 
 function snapshotState() {
   return {
-    schemaVersion: 4,
+    schemaVersion: 5,
     savedAt: nowIso(),
     providerSession,
     visionProbeResults,
@@ -5680,6 +5908,7 @@ function snapshotState() {
     targetRegistry,
     targetDispatches,
     pairingTickets: [...pairingTickets.values()].map((ticket) => clonePairingTicketState(ticket)),
+    hostEnrollmentTickets: [...hostEnrollmentTickets.values()].map((ticket) => cloneHostEnrollmentTicketState(ticket)),
     remoteDesktopSessions: [...remoteDesktopSessions.values()].map((session) => cloneRemoteDesktopSessionState(session)),
     sshTerminalSessions: [...sshTerminalSessions.values()].map((session) => cloneSshTerminalSessionState(session)),
   };
@@ -5691,7 +5920,7 @@ function mergeArray(target, source) {
 }
 
 function applyPersistedState(state) {
-  if (!state || (state.schemaVersion !== 1 && state.schemaVersion !== 2 && state.schemaVersion !== 3 && state.schemaVersion !== 4)) return;
+  if (!state || (state.schemaVersion !== 1 && state.schemaVersion !== 2 && state.schemaVersion !== 3 && state.schemaVersion !== 4 && state.schemaVersion !== 5)) return;
   if (state.providerSession) providerSession = state.providerSession;
   if (state.visionProbeResults && typeof state.visionProbeResults === "object") visionProbeResults = state.visionProbeResults;
   mergeArray(connectedAccounts, state.connectedAccounts);
@@ -5720,6 +5949,13 @@ function applyPersistedState(state) {
     for (const ticket of state.pairingTickets) {
       if (!ticket || typeof ticket.code !== "string") continue;
       pairingTickets.set(pairingTicketStorageKey(ticket.code), clonePairingTicketState(ticket));
+    }
+  }
+  if (Array.isArray(state.hostEnrollmentTickets)) {
+    hostEnrollmentTickets.clear();
+    for (const ticket of state.hostEnrollmentTickets) {
+      if (!ticket || typeof ticket.code !== "string") continue;
+      hostEnrollmentTickets.set(hostEnrollmentTicketStorageKey(ticket.code), cloneHostEnrollmentTicketState(ticket));
     }
   }
   if (Array.isArray(state.remoteDesktopSessions)) {
@@ -10416,12 +10652,110 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && pathname === "/targets/host-enrollment-ticket") {
+    try {
+      const body = await readJson(req);
+      const targetId = typeof body.targetId === "string" ? body.targetId.trim() : "";
+      const targetName = typeof body.targetName === "string" ? body.targetName.trim() : "";
+      const kind = typeof body.kind === "string" ? body.kind.trim() : "";
+      const hostName = typeof body.hostName === "string" ? body.hostName.trim() : "";
+      const bridgeVersion = typeof body.bridgeVersion === "string" ? body.bridgeVersion.trim() : "";
+      const expiresInMinutes = Number(body.expiresInMinutes ?? 30);
+      const target = targetId ? targetRegistry.targets.find((entry) => entry.id === targetId) : null;
+      if (targetId && !target) {
+        json(res, 404, { error: "target not found" });
+        return;
+      }
+      const ticket = issueTargetHostEnrollmentTicketState(
+        target ?? {
+          id: targetId || `host-${crypto.randomUUID().slice(0, 8)}`,
+          displayName: targetName || "Target",
+          kind: kind === "remote-desktop" ? "remote-desktop" : kind === "ssh-terminal" ? "ssh-terminal" : "ssh-terminal",
+          state: "offline",
+          paired: false,
+          trustedWorkspaces: [],
+          adapters: [
+            {
+              kind: kind === "remote-desktop" ? "remote-desktop" : "ssh-terminal",
+              endpoint: "",
+              authenticated: false,
+              hostKeyVerified: false,
+              supportsTerminal: kind !== "remote-desktop",
+              supportsScreen: kind === "remote-desktop",
+              supportsClipboard: false,
+              supportsFileTransfer: false,
+            },
+          ],
+          connection: defaultTargetConnectionState(kind === "remote-desktop" ? "remote-desktop" : "ssh-terminal"),
+        },
+        { expiresInMinutes, hostName: hostName || targetName, bridgeVersion: bridgeVersion || undefined },
+      );
+      scheduleStateSave();
+      json(res, 200, {
+        allowed: true,
+        reason: "Host enrollment code issued.",
+        ticket,
+      });
+    } catch (error) {
+      json(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON" });
+    }
+    return;
+  }
+
+  if (req.method === "POST" && pathname === "/targets/host-enrollment") {
+    try {
+      const body = await readJson(req);
+      const targetId = typeof body.targetId === "string" ? body.targetId.trim() : "";
+      const enrollmentCode = typeof body.enrollmentCode === "string" ? body.enrollmentCode.trim() : "";
+      const hostName = typeof body.hostName === "string" ? body.hostName.trim() : "";
+      const bridgeVersion = typeof body.bridgeVersion === "string" ? body.bridgeVersion.trim() : "";
+      if (!targetId || !enrollmentCode) {
+        json(res, 400, { error: "targetId and enrollmentCode are required" });
+        return;
+      }
+      const target = targetRegistry.targets.find((entry) => entry.id === targetId);
+      if (!target) {
+        json(res, 404, { error: "target not found" });
+        return;
+      }
+      const result = await applyTargetConnectionActionState(target, "enroll_host", { enrollmentCode, hostName, bridgeVersion });
+      if (result.allowed && result.target) {
+        targetRegistry = {
+          ...targetRegistry,
+          targets: targetRegistry.targets.map((entry) => (entry.id === targetId ? result.target : entry)),
+        };
+        audit("targets.host-enrollment", {
+          targetId,
+          targetName: result.target.displayName,
+          hostName,
+          bridgeVersion,
+          allowed: result.allowed,
+        });
+        scheduleStateSave();
+      } else {
+        audit("targets.host-enrollment.rejected", { targetId, allowed: result.allowed, reason: result.reason });
+      }
+      json(res, 200, {
+        allowed: result.allowed,
+        reason: result.reason,
+        target: result.target,
+        registry: cloneTargetRegistryState(targetRegistry),
+      });
+    } catch (error) {
+      json(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON" });
+    }
+    return;
+  }
+
   if (req.method === "POST" && pathname === "/targets/connection") {
     try {
       const body = await readJson(req);
       const targetId = typeof body.targetId === "string" ? body.targetId.trim() : "";
       const action = typeof body.action === "string" ? body.action.trim() : "";
       const pairingCode = typeof body.pairingCode === "string" ? body.pairingCode.trim() : "";
+      const enrollmentCode = typeof body.enrollmentCode === "string" ? body.enrollmentCode.trim() : "";
+      const hostName = typeof body.hostName === "string" ? body.hostName.trim() : "";
+      const bridgeVersion = typeof body.bridgeVersion === "string" ? body.bridgeVersion.trim() : "";
       if (!targetId || !action) {
         json(res, 400, { error: "targetId and action are required" });
         return;
@@ -10431,7 +10765,7 @@ const server = http.createServer(async (req, res) => {
         json(res, 404, { error: "target not found" });
         return;
       }
-      const result = await applyTargetConnectionActionState(target, action, { pairingCode });
+      const result = await applyTargetConnectionActionState(target, action, { pairingCode, enrollmentCode, hostName, bridgeVersion });
       if (result.allowed && result.target) {
         targetRegistry = {
           ...targetRegistry,
@@ -10449,10 +10783,18 @@ const server = http.createServer(async (req, res) => {
           lastProbeLatencyMs: result.target.connection?.lastProbeLatencyMs,
           lastProbeError: result.target.connection?.lastProbeError,
           pairingCodeUsed: Boolean(pairingCode && action === "pair"),
+          enrollmentCodeUsed: Boolean(enrollmentCode && action === "enroll_host"),
         });
         scheduleStateSave();
       } else {
-        audit("targets.connection.rejected", { targetId, action, allowed: result.allowed, reason: result.reason, pairingCodeUsed: Boolean(pairingCode && action === "pair") });
+        audit("targets.connection.rejected", {
+          targetId,
+          action,
+          allowed: result.allowed,
+          reason: result.reason,
+          pairingCodeUsed: Boolean(pairingCode && action === "pair"),
+          enrollmentCodeUsed: Boolean(enrollmentCode && action === "enroll_host"),
+        });
       }
       json(res, 200, {
         allowed: result.allowed,

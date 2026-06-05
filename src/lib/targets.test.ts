@@ -10,6 +10,7 @@ import {
   decideTargetDispatch,
   defaultTargetGroups,
   selectTargetForDispatch,
+  buildTargetConnectionReadinessReport,
   summarizeTargetConnectionProfile,
   summarizeTargetRegistry,
   summarizeTargetProfile,
@@ -84,6 +85,12 @@ describe("target orchestration contract", () => {
         username: "ops-user",
         credentialMode: "secret-ref",
         credentialRef: "rdp-secret-12345678",
+        hostBridge: {
+          state: "registered",
+          bridgeId: "ops-rdp-bridge",
+          hostName: "Ops Host Bridge",
+          bridgeVersion: "1.0.0-test",
+        },
       },
     });
 
@@ -133,6 +140,12 @@ describe("target orchestration contract", () => {
           username: "ops-user",
           credentialMode: "platform-managed",
           sessionMode: "observe",
+          hostBridge: {
+            state: "registered",
+            bridgeId: "ops-vm-bridge",
+            hostName: "Ops Host Bridge",
+            bridgeVersion: "1.0.0-test",
+          },
         },
       }),
       createTargetProfile({
@@ -147,6 +160,12 @@ describe("target orchestration contract", () => {
           username: "builder",
           credentialMode: "ssh-agent",
           knownHostFingerprint: "ssh-ed25519 AAAA...builder",
+          hostBridge: {
+            state: "registered",
+            bridgeId: "builder-ssh-bridge",
+            hostName: "SSH Host Bridge",
+            bridgeVersion: "1.0.0-test",
+          },
         },
       }),
     ]);
@@ -299,6 +318,12 @@ describe("target orchestration contract", () => {
         username: "builder",
         credentialMode: "ssh-agent",
         knownHostFingerprint: "ssh-ed25519 AAAA...builder",
+        hostBridge: {
+          state: "registered",
+          bridgeId: "builder-ssh-bridge",
+          hostName: "SSH Host Bridge",
+          bridgeVersion: "1.0.0-test",
+        },
       },
     });
 
@@ -334,6 +359,12 @@ describe("target orchestration contract", () => {
         username: "builder",
         credentialMode: "ssh-agent",
         knownHostFingerprint: "ssh-ed25519 AAAA...builder",
+        hostBridge: {
+          state: "registered",
+          bridgeId: "builder-ssh-bridge",
+          hostName: "SSH Host Bridge",
+          bridgeVersion: "1.0.0-test",
+        },
       },
     });
 
@@ -369,17 +400,27 @@ describe("target orchestration contract", () => {
         credentialMode: "secret-ref",
         credentialRef: "ssh-builder-secret",
         knownHostFingerprint: "ssh-ed25519 AAAA...builder",
+        hostBridge: {
+          state: "registered",
+          bridgeId: "builder-ssh-bridge",
+          hostName: "SSH Host Bridge",
+          bridgeVersion: "1.0.0-test",
+        },
       },
     });
 
-    const pairResult = applyTargetConnectionAction(target, "pair");
-    expect(pairResult.allowed).toBe(true);
-    expect(pairResult.target.paired).toBe(true);
-    expect(pairResult.target.state).toBe("connecting");
-    expect(pairResult.target.adapters[0].authenticated).toBe(true);
-    expect(pairResult.target.adapters[0].hostKeyVerified).toBe(false);
+    const enrollResult = applyTargetConnectionAction(target, "enroll_host", {
+      enrollmentCode: "host-enroll-12345678",
+      hostName: "SSH Host Bridge",
+      bridgeVersion: "1.0.0-test",
+    });
+    expect(enrollResult.allowed).toBe(true);
+    expect(enrollResult.target.paired).toBe(true);
+    expect(enrollResult.target.state).toBe("connecting");
+    expect(enrollResult.target.adapters[0].authenticated).toBe(true);
+    expect(enrollResult.target.adapters[0].hostKeyVerified).toBe(false);
 
-    const hostKeyResult = applyTargetConnectionAction(pairResult.target, "verify_host_key");
+    const hostKeyResult = applyTargetConnectionAction(enrollResult.target, "verify_host_key");
     expect(hostKeyResult.allowed).toBe(true);
     expect(hostKeyResult.target.adapters[0].hostKeyVerified).toBe(true);
     expect(hostKeyResult.target.connection.knownHostFingerprint).toContain("ssh-ed25519");
@@ -387,6 +428,41 @@ describe("target orchestration contract", () => {
     const connectResult = applyTargetConnectionAction(hostKeyResult.target, "connect");
     expect(connectResult.allowed).toBe(true);
     expect(connectResult.target.state).toBe("ready");
+  });
+
+  it("enrolls a remote desktop host bridge before readiness moves to connect", () => {
+    const target = createTargetProfile({
+      id: "ops-vm",
+      displayName: "Ops VM",
+      kind: "remote-desktop",
+      endpoint: "rdp://ops.example",
+      paired: false,
+      state: "offline",
+      connectionOverrides: {
+        username: "ops-user",
+        credentialMode: "platform-managed",
+        lastProbeResult: "reachable",
+        lastProbeAt: "2026-06-05T12:00:00.000Z",
+      },
+      adapterOverrides: { authenticated: false },
+    });
+
+    const enrolled = applyTargetConnectionAction(target, "enroll_host", {
+      enrollmentCode: "host-enroll-12345678",
+      hostName: "Ops Host Bridge",
+      bridgeVersion: "1.0.0-test",
+    });
+
+    expect(enrolled.allowed).toBe(true);
+    expect(enrolled.target.paired).toBe(true);
+    expect(enrolled.target.connection.hostBridge?.state).toBe("registered");
+    expect(enrolled.target.connection.hostBridge?.hostName).toBe("Ops Host Bridge");
+    expect(enrolled.target.connection.hostBridge?.bridgeVersion).toBe("1.0.0-test");
+
+    const readiness = buildTargetConnectionReadinessReport(enrolled.target);
+    expect(readiness.readyToConnect).toBe(true);
+    expect(readiness.nextAction).toBe("connect");
+    expect(targetConnectionReadinessIssues(enrolled.target)).toHaveLength(0);
   });
 
   it("blocks SSH host-key verification before pairing", () => {
@@ -401,6 +477,12 @@ describe("target orchestration contract", () => {
         username: "builder",
         credentialMode: "secret-ref",
         credentialRef: "ssh-builder-secret",
+        hostBridge: {
+          state: "registered",
+          bridgeId: "builder-ssh-bridge",
+          hostName: "SSH Host Bridge",
+          bridgeVersion: "1.0.0-test",
+        },
       },
     });
 
@@ -421,6 +503,12 @@ describe("target orchestration contract", () => {
       connectionOverrides: {
         credentialMode: "none",
         username: "",
+        hostBridge: {
+          state: "registered",
+          bridgeId: "builder-ssh-bridge",
+          hostName: "SSH Host Bridge",
+          bridgeVersion: "1.0.0-test",
+        },
       },
     });
 

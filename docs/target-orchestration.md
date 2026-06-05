@@ -29,6 +29,7 @@ Saved target groups let operators keep recurring broadcast sets, such as local +
 
 - Pair before any remote dispatch.
 - Issue a short-lived pairing code when onboarding a new remote host so the installed software can prove it belongs to the target before the first pair.
+- Issue a short-lived host enrollment code when onboarding a new remote host so the installed ClawDesk host bridge can self-register before pairing and connect.
 - Probe SSH / remote-desktop reachability before connect so the control plane can report a real host/port result and mark degraded targets early.
 - Verify SSH host keys before shell dispatch, and persist them in the gateway-managed known_hosts file.
 - Issue SSH private keys and remote-desktop login secrets as gateway-managed credential refs for secret-ref dispatch flows when ssh-agent or platform-managed secrets are not used.
@@ -53,6 +54,7 @@ Saved target groups let operators keep recurring broadcast sets, such as local +
 - Multi-target safe execute that can broadcast the same allowlisted command to several selected SSH/local targets and collect per-target results: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
 - Saved target groups / fleet presets that can be applied to the broadcast selection and persisted through the registry save flow: [`src/lib/targets.ts`](../src/lib/targets.ts), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx), [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
 - Short-lived pairing code issuance for secure enrollment before pairing remote SSH / remote-desktop targets: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
+- Short-lived host enrollment code issuance plus host bridge registration for remote SSH / remote-desktop targets: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`scripts/verify-host-enrollment.mjs`](../scripts/verify-host-enrollment.mjs), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
 - Gateway-managed SSH credential ref issuance, allowlisted local-shell / SSH safe command execution, gateway-managed SSH terminal session contracts with redacted transcripts and audit-friendly summaries, and remote-desktop observe/control session contracts with permission-gated control requests, a gated native client launch helper, a client reconnect / disconnect path, credential-seed action, and session summaries through the gateway. Remote-desktop secret-ref credentials can be seeded into the local Windows client flow before launch: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
 - Passphrase-protected credential bundle export/import for target registry migration and gateway-managed credential ref rehydration: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
 - Bundle preview before import so operators can inspect target/secret summaries without exposing plaintext secrets: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
@@ -103,7 +105,8 @@ flowchart TD
 ## Next implementation steps
 
 1. Expand the remote-desktop credential-seed flow into a production transport and interactive session connector on top of the existing gateway contract.
-2. Add durable credential storage for SSH and remote-desktop connectors beyond the current gateway-managed secret-ref vault / ssh-agent / platform-managed defaults where needed.
-3. Route dispatch decisions through the existing permission queue.
-4. Add richer audit timelines for each target.
-5. Introduce interactive SSH terminal sessions and production remote desktop transport once the safe contract is stable.
+2. Expand the host enrollment contract into a host-side agent bridge with richer device identity, heartbeat, and attestation details.
+3. Add durable credential storage for SSH and remote-desktop connectors beyond the current gateway-managed secret-ref vault / ssh-agent / platform-managed defaults where needed.
+4. Route dispatch decisions through the existing permission queue.
+5. Add richer audit timelines for each target.
+6. Introduce interactive SSH terminal sessions and production remote desktop transport once the safe contract is stable.
