@@ -147,16 +147,26 @@ try {
   if (manifest.runtimeInstallMode !== "service-friendly-launcher") throw new Error("manifest runtime install mode mismatch");
   if (!manifest.launcherCommand.includes("host-agent-launcher.mjs")) throw new Error("manifest launcher command missing launcher entry point");
   if (!manifest.launcherCommand.includes("--status-file")) throw new Error("manifest launcher command missing status file");
+  if (!manifest.taskName || !manifest.taskName.startsWith("ClawDeskHostAgent-")) throw new Error("manifest missing task name");
 
   const readme = await fs.readFile(path.join(bundleDir, "README.md"), "utf8");
   if (!readme.includes("Host Agent Install Bundle")) throw new Error("bundle readme missing title");
   if (!readme.includes("service-friendly handoff")) throw new Error("bundle readme missing service-friendly wording");
+  if (!readme.includes("Scheduled Task")) throw new Error("bundle readme missing scheduled task section");
 
   const launchCmd = await fs.readFile(path.join(bundleDir, "launch-host-agent.cmd"), "utf8");
   if (!launchCmd.includes("CLAWDESK_HOST_AGENT_STATUS_FILE")) throw new Error("launch cmd missing status env");
 
   const launchPs1 = await fs.readFile(path.join(bundleDir, "launch-host-agent.ps1"), "utf8");
   if (!launchPs1.includes("CLAWDESK_HOST_AGENT_STATUS_FILE")) throw new Error("launch ps1 missing status env");
+
+  const registerPs1 = await fs.readFile(path.join(bundleDir, "register-host-agent.ps1"), "utf8");
+  if (!registerPs1.includes("Register-ScheduledTask")) throw new Error("register ps1 missing scheduled task registration");
+  if (!registerPs1.includes("-WindowStyle Hidden")) throw new Error("register ps1 missing hidden window policy");
+  if (!registerPs1.includes(manifest.taskName)) throw new Error("register ps1 missing task name");
+
+  const unregisterPs1 = await fs.readFile(path.join(bundleDir, "unregister-host-agent.ps1"), "utf8");
+  if (!unregisterPs1.includes("Unregister-ScheduledTask")) throw new Error("unregister ps1 missing scheduled task removal");
 
   const uninstallPs1 = await fs.readFile(path.join(bundleDir, "uninstall-host-agent.ps1"), "utf8");
   if (!uninstallPs1.includes("Removed host agent config, lock, and status files.")) throw new Error("uninstall script missing cleanup message");

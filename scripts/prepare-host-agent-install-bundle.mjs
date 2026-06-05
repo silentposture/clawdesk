@@ -153,12 +153,15 @@ async function prepareHostAgentInstallBundle(argv) {
     statusPath,
     launcherArgs,
     launcherCommand,
+    taskName: `ClawDeskHostAgent-${targetId}`,
     runtimeEntryPoint: "src/bridge/host-agent-launcher.mjs",
     runtimeInstallMode: "service-friendly-launcher",
     files: [
       "README.md",
       "launch-host-agent.cmd",
       "launch-host-agent.ps1",
+      "register-host-agent.ps1",
+      "unregister-host-agent.ps1",
       "uninstall-host-agent.ps1",
       "host-agent-install.json",
     ],
@@ -198,6 +201,14 @@ uninstall-host-agent.ps1
 \`\`\`
 
 The launcher writes a lifecycle status file so a future Windows service or startup hook can supervise the runtime without changing the bridge contract.
+
+## Scheduled Task
+
+\`\`\`powershell
+register-host-agent.ps1
+\`\`\`
+
+This creates a hidden logon task that launches the same runtime through the launcher entrypoint.
 `;
 
   const launchCmd = `@echo off
@@ -211,6 +222,32 @@ endlocal
 $ErrorActionPreference = "Stop"
 $env:CLAWDESK_HOST_AGENT_STATUS_FILE = "${statusPath}"
 & ${shellQuote(nodeExecutable)} ${launcherArgs.join(" ")}
+`;
+
+  const registerPs1 = `param()
+$ErrorActionPreference = "Stop"
+$taskName = "${manifest.taskName}"
+$powershell = ${shellQuote("powershell.exe")}
+$launchScript = ${shellQuote(path.join(outputDir, "launch-host-agent.ps1"))}
+$statusFile = "${statusPath}"
+$action = New-ScheduledTaskAction -Execute $powershell -Argument ("-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File {0}" -f $launchScript)
+$trigger = New-ScheduledTaskTrigger -AtLogOn
+$principal = New-ScheduledTaskPrincipal -UserId $env:USERNAME -LogonType Interactive -RunLevel LeastPrivilege
+$settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew
+
+Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Description "ClawDesk host agent launcher"
+Write-Host ("Registered scheduled task: {0}" -f $taskName)
+`;
+
+  const unregisterPs1 = `param()
+$ErrorActionPreference = "Stop"
+$taskName = "${manifest.taskName}"
+if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
+  Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
+  Write-Host ("Unregistered scheduled task: {0}" -f $taskName)
+} else {
+  Write-Host ("Scheduled task not found: {0}" -f $taskName)
+}
 `;
 
   const uninstallPs1 = `param()
@@ -229,6 +266,8 @@ Write-Host "Removed host agent config, lock, and status files."
   await writeText(path.join(outputDir, "README.md"), readme);
   await writeText(path.join(outputDir, "launch-host-agent.cmd"), launchCmd);
   await writeText(path.join(outputDir, "launch-host-agent.ps1"), launchPs1);
+  await writeText(path.join(outputDir, "register-host-agent.ps1"), registerPs1);
+  await writeText(path.join(outputDir, "unregister-host-agent.ps1"), unregisterPs1);
   await writeText(path.join(outputDir, "uninstall-host-agent.ps1"), uninstallPs1);
   await writeText(path.join(outputDir, "host-agent-install.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
