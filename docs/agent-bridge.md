@@ -17,6 +17,12 @@ The agent bridge is the contract between ClawDesk's UI/policy layer and any agen
 - Debug output must be redacted before leaving the local machine.
 - Safe execution must stay inside the workspace boundary and the allowlist.
 
+## Host bridge example
+
+- The local bridge example at [`examples/local-agent-bridge/bridge-agent.mjs`](../examples/local-agent-bridge/bridge-agent.mjs) shows the next step toward a real installed host bridge.
+- It seeds a target registry entry, redeems a short-lived host enrollment code, records device / install attestation, and sends heartbeat updates to the gateway.
+- The example stays local-first and does not expose plaintext secrets or unrestricted execution.
+
 ## Example payloads
 
 ### observe_screen
@@ -85,4 +91,3 @@ The agent bridge is the contract between ClawDesk's UI/policy layer and any agen
   }
 }
 ```
-

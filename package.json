@@ -41,6 +41,7 @@
     "verify:backend:sim": "node scripts/verify-backend-sim.mjs",
     "verify:target-session-exports": "node scripts/verify-target-session-exports.mjs",
     "verify:host-enrollment": "node scripts/verify-host-enrollment.mjs",
+    "verify:local-agent-bridge": "node scripts/verify-local-agent-bridge.mjs",
     "verify:ssh-terminal-lifecycle": "node scripts/verify-ssh-terminal-lifecycle.mjs",
     "verify:remote-desktop-lifecycle": "node scripts/verify-remote-desktop-lifecycle.mjs",
     "verify:production-gateway:sim": "node scripts/verify-production-gateway-sim.mjs",

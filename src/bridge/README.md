@@ -11,3 +11,6 @@ Responsibilities:
 - Safe execution requests.
 - Human approval handoff.
 
+Example implementation:
+
+- [`examples/local-agent-bridge/bridge-agent.mjs`](../../examples/local-agent-bridge/bridge-agent.mjs) seeds a target, redeems a host enrollment code, records attestation, and sends heartbeat updates against the mock gateway.
