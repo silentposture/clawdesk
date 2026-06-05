@@ -2272,15 +2272,26 @@ function normalizeTargetConnectionState(kind, connection = {}) {
         typeof hostBridgeSource.bridgeVersion === "string" && hostBridgeSource.bridgeVersion.trim()
           ? hostBridgeSource.bridgeVersion.trim()
           : defaults.hostBridge?.bridgeVersion,
+      deviceId: typeof hostBridgeSource.deviceId === "string" && hostBridgeSource.deviceId.trim() ? hostBridgeSource.deviceId.trim() : defaults.hostBridge?.deviceId,
+      installId: typeof hostBridgeSource.installId === "string" && hostBridgeSource.installId.trim() ? hostBridgeSource.installId.trim() : defaults.hostBridge?.installId,
+      platform: typeof hostBridgeSource.platform === "string" && hostBridgeSource.platform.trim() ? hostBridgeSource.platform.trim() : defaults.hostBridge?.platform,
       registeredAt:
         typeof hostBridgeSource.registeredAt === "string" && hostBridgeSource.registeredAt.trim()
           ? hostBridgeSource.registeredAt.trim()
           : defaults.hostBridge?.registeredAt,
+      attestedAt:
+        typeof hostBridgeSource.attestedAt === "string" && hostBridgeSource.attestedAt.trim()
+          ? hostBridgeSource.attestedAt.trim()
+          : defaults.hostBridge?.attestedAt,
       lastSeenAt:
         typeof hostBridgeSource.lastSeenAt === "string" && hostBridgeSource.lastSeenAt.trim()
           ? hostBridgeSource.lastSeenAt.trim()
           : defaults.hostBridge?.lastSeenAt,
       lastError: typeof hostBridgeSource.lastError === "string" && hostBridgeSource.lastError.trim() ? hostBridgeSource.lastError.trim() : defaults.hostBridge?.lastError,
+      lastAttestationError:
+        typeof hostBridgeSource.lastAttestationError === "string" && hostBridgeSource.lastAttestationError.trim()
+          ? hostBridgeSource.lastAttestationError.trim()
+          : defaults.hostBridge?.lastAttestationError,
     },
   };
 }
@@ -2300,6 +2311,18 @@ function hostBridgeStalenessState(hostBridge) {
   }
 
   return Date.now() - seenAt > hostBridgeHeartbeatStaleAfterMs ? "stale" : "fresh";
+}
+
+function hostBridgeAttestationState(hostBridge) {
+  if (!hostBridge || hostBridge.state !== "registered") {
+    return "missing";
+  }
+
+  if (!hostBridge.attestedAt || !hostBridge.deviceId || !hostBridge.installId) {
+    return "missing";
+  }
+
+  return "fresh";
 }
 
 function normalizeTargetProfileState(target) {
@@ -2736,6 +2759,7 @@ function targetConnectionReadinessIssuesState(target) {
   const issues = [];
   const connection = target.connection ?? defaultTargetConnectionState(target.kind);
   const hostBridgeStaleness = hostBridgeStalenessState(connection.hostBridge);
+  const hostBridgeAttestation = hostBridgeAttestationState(connection.hostBridge);
 
   if (target.kind === "local-shell" || target.kind === "mock") {
     return issues;
@@ -2768,6 +2792,8 @@ function targetConnectionReadinessIssuesState(target) {
   if (target.kind === "ssh-terminal" || target.kind === "remote-desktop") {
     if (connection.hostBridge?.state !== "registered") {
       issues.push("Install and enroll the ClawDesk host bridge before pairing this target.");
+    } else if (hostBridgeAttestation === "missing") {
+      issues.push("Attest the host bridge identity before connecting this target.");
     } else if (hostBridgeStaleness === "stale") {
       issues.push("Host bridge heartbeat is stale; request a fresh heartbeat from the host bridge.");
     }
@@ -2786,6 +2812,7 @@ function buildTargetConnectionReadinessReportState(target) {
 
   const isLocalLike = baseTarget.kind === "local-shell" || baseTarget.kind === "mock";
   const hostBridgeStaleness = hostBridgeStalenessState(connection.hostBridge);
+  const hostBridgeAttestation = hostBridgeAttestationState(connection.hostBridge);
   if (isLocalLike) {
     addCheck(
       "host-bridge",
@@ -2803,6 +2830,15 @@ function buildTargetConnectionReadinessReportState(target) {
       "Pairing",
       baseTarget.paired ? "pass" : "warn",
       baseTarget.paired ? "Local targets remain paired and ready." : "Local targets can be paired before dispatch.",
+      false,
+    );
+    addCheck(
+      "attestation",
+      "Host attestation",
+      connection.hostBridge?.state === "registered" ? "pass" : "warn",
+      connection.hostBridge?.state === "registered"
+        ? "Local host bridge attestation is already present."
+        : "Local targets ship with the host bridge already present.",
       false,
     );
     addCheck("probe", "Probe", "pass", "Local targets do not require a network probe.", false);
@@ -2839,6 +2875,15 @@ function buildTargetConnectionReadinessReportState(target) {
       : connection.hostBridge?.state === "registered"
         ? "Enroll the host, then complete pairing before connect."
         : "Target must be paired after host enrollment before it can connect.",
+    true,
+  );
+  addCheck(
+    "attestation",
+    "Host attestation",
+    hostBridgeAttestation === "fresh" ? "pass" : "fail",
+    hostBridgeAttestation === "fresh"
+      ? `Host bridge attested${connection.hostBridge.deviceId ? ` from device ${connection.hostBridge.deviceId}` : ""}${connection.hostBridge.installId ? ` / install ${connection.hostBridge.installId}` : ""}.`
+      : "Host bridge attestation is required before connect.",
     true,
   );
   addCheck(
@@ -2904,6 +2949,8 @@ function buildTargetConnectionReadinessReportState(target) {
   let nextAction = "connect";
   if (connection.hostBridge?.state !== "registered") {
     nextAction = "enroll_host";
+  } else if (hostBridgeAttestation === "missing") {
+    nextAction = "attest";
   } else if (hostBridgeStaleness === "stale") {
     nextAction = "heartbeat";
   } else if (!baseTarget.paired) {
@@ -4063,9 +4110,14 @@ async function applyTargetConnectionActionState(target, action, options = {}) {
       bridgeVersion:
         redeemedTicket.ticket?.bridgeVersion?.trim() ||
         (typeof options.bridgeVersion === "string" && options.bridgeVersion.trim() ? options.bridgeVersion.trim() : "1.0.0"),
+      deviceId: redeemedTicket.target.connection.hostBridge?.deviceId ?? `${baseTarget.id}-device`,
+      installId: redeemedTicket.target.connection.hostBridge?.installId ?? `${baseTarget.id}-install`,
+      platform: redeemedTicket.target.connection.hostBridge?.platform ?? os.platform(),
       registeredAt: redeemedTicket.ticket?.redeemedAt ?? now,
+      attestedAt: redeemedTicket.ticket?.redeemedAt ?? now,
       lastSeenAt: now,
       lastError: undefined,
+      lastAttestationError: undefined,
     };
 
     return {
@@ -4089,6 +4141,65 @@ async function applyTargetConnectionActionState(target, action, options = {}) {
         }),
       ),
       ticket: redeemedTicket.ticket,
+    };
+  }
+
+  if (action === "attest") {
+    if (baseTarget.connection.hostBridge?.state !== "registered") {
+      return {
+        allowed: false,
+        reason: "Enroll the host bridge before attesting its identity.",
+        target: baseTarget,
+      };
+    }
+
+    const bridgeId = typeof options.bridgeId === "string" ? options.bridgeId.trim() : "";
+    if (bridgeId && baseTarget.connection.hostBridge.bridgeId && bridgeId !== baseTarget.connection.hostBridge.bridgeId) {
+      return {
+        allowed: false,
+        reason: "The host bridge identity does not match this target.",
+        target: baseTarget,
+      };
+    }
+
+    const deviceId = typeof options.deviceId === "string" && options.deviceId.trim() ? options.deviceId.trim() : baseTarget.connection.hostBridge.deviceId || `${baseTarget.id}-device`;
+    const installId = typeof options.installId === "string" && options.installId.trim() ? options.installId.trim() : baseTarget.connection.hostBridge.installId || `${baseTarget.id}-install`;
+    const platform = typeof options.platform === "string" && options.platform.trim() ? options.platform.trim() : baseTarget.connection.hostBridge.platform || os.platform();
+
+    return {
+      allowed: true,
+      reason: "The host bridge identity was attested.",
+      target: updatePrimaryTargetAdapterState(
+        {
+          ...baseTarget,
+          state: baseTarget.state === "offline" ? "connecting" : baseTarget.state,
+          lastSeenAt: now,
+          connection: {
+            ...baseTarget.connection,
+            hostBridge: {
+              ...baseTarget.connection.hostBridge,
+              state: "registered",
+              bridgeId: baseTarget.connection.hostBridge.bridgeId ?? `${baseTarget.id}-bridge`,
+              hostName: options.hostName?.trim() || baseTarget.connection.hostBridge.hostName || baseTarget.displayName,
+              bridgeVersion: options.bridgeVersion?.trim() || baseTarget.connection.hostBridge.bridgeVersion || "1.0.0",
+              deviceId,
+              installId,
+              platform,
+              registeredAt: baseTarget.connection.hostBridge.registeredAt ?? now,
+              attestedAt: now,
+              lastSeenAt: now,
+              lastError: undefined,
+              lastAttestationError: undefined,
+            },
+          },
+        },
+        (current) => ({
+          ...current,
+          authenticated: true,
+          hostKeyVerified: current.hostKeyVerified,
+        }),
+      ),
+      action,
     };
   }
 
@@ -10875,6 +10986,58 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && pathname === "/targets/host-bridge/attest") {
+    try {
+      const body = await readJson(req);
+      const targetId = typeof body.targetId === "string" ? body.targetId.trim() : "";
+      const bridgeId = typeof body.bridgeId === "string" ? body.bridgeId.trim() : "";
+      const hostName = typeof body.hostName === "string" ? body.hostName.trim() : "";
+      const bridgeVersion = typeof body.bridgeVersion === "string" ? body.bridgeVersion.trim() : "";
+      const deviceId = typeof body.deviceId === "string" ? body.deviceId.trim() : "";
+      const installId = typeof body.installId === "string" ? body.installId.trim() : "";
+      const platform = typeof body.platform === "string" ? body.platform.trim() : "";
+      if (!targetId) {
+        json(res, 400, { error: "targetId is required" });
+        return;
+      }
+      const target = targetRegistry.targets.find((entry) => entry.id === targetId);
+      if (!target) {
+        json(res, 404, { error: "target not found" });
+        return;
+      }
+      const result = await applyTargetConnectionActionState(target, "attest", { bridgeId, hostName, bridgeVersion, deviceId, installId, platform });
+      if (result.allowed && result.target) {
+        targetRegistry = {
+          ...targetRegistry,
+          targets: targetRegistry.targets.map((entry) => (entry.id === targetId ? result.target : entry)),
+        };
+        audit("targets.host-bridge.attest", {
+          targetId,
+          targetName: result.target.displayName,
+          bridgeId: result.target.connection?.hostBridge?.bridgeId,
+          hostName,
+          bridgeVersion,
+          deviceId: result.target.connection?.hostBridge?.deviceId,
+          installId: result.target.connection?.hostBridge?.installId,
+          platform: result.target.connection?.hostBridge?.platform,
+          allowed: result.allowed,
+        });
+        scheduleStateSave();
+      } else {
+        audit("targets.host-bridge.attest.rejected", { targetId, allowed: result.allowed, reason: result.reason });
+      }
+      json(res, 200, {
+        allowed: result.allowed,
+        reason: result.reason,
+        target: result.target,
+        registry: cloneTargetRegistryState(targetRegistry),
+      });
+    } catch (error) {
+      json(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON" });
+    }
+    return;
+  }
+
   if (req.method === "POST" && pathname === "/targets/connection") {
     try {
       const body = await readJson(req);
@@ -10885,6 +11048,9 @@ const server = http.createServer(async (req, res) => {
       const bridgeId = typeof body.bridgeId === "string" ? body.bridgeId.trim() : "";
       const hostName = typeof body.hostName === "string" ? body.hostName.trim() : "";
       const bridgeVersion = typeof body.bridgeVersion === "string" ? body.bridgeVersion.trim() : "";
+      const deviceId = typeof body.deviceId === "string" ? body.deviceId.trim() : "";
+      const installId = typeof body.installId === "string" ? body.installId.trim() : "";
+      const platform = typeof body.platform === "string" ? body.platform.trim() : "";
       if (!targetId || !action) {
         json(res, 400, { error: "targetId and action are required" });
         return;
@@ -10894,7 +11060,7 @@ const server = http.createServer(async (req, res) => {
         json(res, 404, { error: "target not found" });
         return;
       }
-      const result = await applyTargetConnectionActionState(target, action, { pairingCode, enrollmentCode, bridgeId, hostName, bridgeVersion });
+      const result = await applyTargetConnectionActionState(target, action, { pairingCode, enrollmentCode, bridgeId, hostName, bridgeVersion, deviceId, installId, platform });
       if (result.allowed && result.target) {
         targetRegistry = {
           ...targetRegistry,
@@ -10913,7 +11079,7 @@ const server = http.createServer(async (req, res) => {
           lastProbeError: result.target.connection?.lastProbeError,
           pairingCodeUsed: Boolean(pairingCode && action === "pair"),
           enrollmentCodeUsed: Boolean(enrollmentCode && action === "enroll_host"),
-          bridgeIdUsed: Boolean(bridgeId && action === "heartbeat"),
+          bridgeIdUsed: Boolean(bridgeId && (action === "heartbeat" || action === "attest")),
         });
         scheduleStateSave();
       } else {
@@ -10924,7 +11090,7 @@ const server = http.createServer(async (req, res) => {
           reason: result.reason,
           pairingCodeUsed: Boolean(pairingCode && action === "pair"),
           enrollmentCodeUsed: Boolean(enrollmentCode && action === "enroll_host"),
-          bridgeIdUsed: Boolean(bridgeId && action === "heartbeat"),
+          bridgeIdUsed: Boolean(bridgeId && (action === "heartbeat" || action === "attest")),
         });
       }
       json(res, 200, {

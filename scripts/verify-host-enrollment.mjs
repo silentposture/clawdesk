@@ -183,6 +183,22 @@ try {
 
   await waitForStateFile();
 
+  const attest = await postJson("/targets/host-bridge/attest", {
+    targetId: "rdp-host",
+    bridgeId: heartbeat.payload.target?.connection?.hostBridge?.bridgeId,
+    hostName: "Ops Host Bridge",
+    bridgeVersion: "1.0.0-test",
+    deviceId: "rdp-host-device",
+    installId: "rdp-host-install",
+    platform: "windows-11",
+  });
+  if (!attest.response.ok || !attest.payload.allowed) throw new Error(`host bridge attestation failed: ${attest.payload.reason || attest.response.status}`);
+  if (attest.payload.target?.connection?.hostBridge?.attestedAt === undefined) throw new Error("host bridge attestation timestamp was not recorded");
+  if (attest.payload.target?.connection?.hostBridge?.deviceId !== "rdp-host-device") throw new Error("host bridge device id was not recorded");
+  if (attest.payload.target?.connection?.hostBridge?.installId !== "rdp-host-install") throw new Error("host bridge install id was not recorded");
+
+  await waitForStateFile();
+
   const probe = await postJson("/targets/connection", { targetId: "rdp-host", action: "probe" });
   if (!probe.response.ok || !probe.payload.allowed) throw new Error(`probe failed: ${probe.payload.reason || probe.response.status}`);
   if (probe.payload.target?.connection?.lastProbeResult !== "reachable") throw new Error("probe did not mark target reachable");
@@ -192,6 +208,8 @@ try {
   if (readiness.payload.report.nextAction !== "connect") throw new Error(`unexpected next action: ${readiness.payload.report.nextAction}`);
   const hostBridgeCheck = readiness.payload.report.checks.find((check) => check.key === "host-bridge");
   if (!hostBridgeCheck || hostBridgeCheck.status !== "pass") throw new Error("host bridge readiness check did not pass");
+  const hostAttestationCheck = readiness.payload.report.checks.find((check) => check.key === "attestation");
+  if (!hostAttestationCheck || hostAttestationCheck.status !== "pass") throw new Error("host bridge attestation readiness check did not pass");
 
   const audit = await getJson("/backend/audit?limit=50");
   if (!audit.response.ok) throw new Error("audit endpoint failed");
@@ -199,6 +217,7 @@ try {
   if (!actions.includes("targets.host-enrollment-ticket.issued")) throw new Error("missing host enrollment ticket issue audit event");
   if (!actions.includes("targets.host-enrollment-ticket.redeemed")) throw new Error("missing host enrollment ticket redeem audit event");
   if (!actions.includes("targets.host-enrollment")) throw new Error("missing host enrollment audit event");
+  if (!actions.includes("targets.host-bridge.attest")) throw new Error("missing host bridge attestation audit event");
   if (!actions.includes("targets.host-bridge.heartbeat")) throw new Error("missing host bridge heartbeat audit event");
 
   await waitForStateFile();
@@ -212,8 +231,10 @@ try {
     if (!targetAfterRestart) throw new Error("target disappeared after restart");
     if (targetAfterRestart.connection?.hostBridge?.state !== "registered") throw new Error("host bridge state did not persist after restart");
     if (!targetAfterRestart.connection?.hostBridge?.lastSeenAt) throw new Error("host bridge heartbeat timestamp did not persist after restart");
+    if (!targetAfterRestart.connection?.hostBridge?.attestedAt) throw new Error("host bridge attestation timestamp did not persist after restart");
+    if (targetAfterRestart.connection?.hostBridge?.deviceId !== "rdp-host-device") throw new Error("host bridge device id did not persist after restart");
     if (!targetAfterRestart.paired) throw new Error("paired state did not persist after restart");
-    console.log("PASS host enrollment code issuance, redemption, and persistence are managed by the gateway.");
+    console.log("PASS host enrollment code issuance, attestation, redemption, and persistence are managed by the gateway.");
   } finally {
     await stop(restartedGateway);
   }
