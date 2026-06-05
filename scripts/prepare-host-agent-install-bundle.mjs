@@ -160,6 +160,8 @@ async function prepareHostAgentInstallBundle(argv) {
       "README.md",
       "launch-host-agent.cmd",
       "launch-host-agent.ps1",
+      "install-host-agent.ps1",
+      "remove-host-agent.ps1",
       "register-host-agent.ps1",
       "unregister-host-agent.ps1",
       "uninstall-host-agent.ps1",
@@ -194,6 +196,18 @@ or
 launch-host-agent.cmd
 \`\`\`
 
+## Install
+
+\`\`\`powershell
+install-host-agent.ps1
+\`\`\`
+
+## Remove
+
+\`\`\`powershell
+remove-host-agent.ps1
+\`\`\`
+
 ## Uninstall
 
 \`\`\`powershell
@@ -222,6 +236,26 @@ endlocal
 $ErrorActionPreference = "Stop"
 $env:CLAWDESK_HOST_AGENT_STATUS_FILE = "${statusPath}"
 & ${shellQuote(nodeExecutable)} ${launcherArgs.join(" ")}
+`;
+
+  const installPs1 = `param(
+  [switch]$Preview
+)
+$ErrorActionPreference = "Stop"
+$scriptPath = Join-Path $PSScriptRoot "register-host-agent.ps1"
+$arguments = @()
+if ($Preview) { $arguments += "-Preview" }
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath @arguments
+`;
+
+  const removePs1 = `param(
+  [switch]$Preview
+)
+$ErrorActionPreference = "Stop"
+$scriptPath = Join-Path $PSScriptRoot "unregister-host-agent.ps1"
+$arguments = @()
+if ($Preview) { $arguments += "-Preview" }
+& powershell.exe -NoProfile -ExecutionPolicy Bypass -File $scriptPath @arguments
 `;
 
   const registerPs1 = `param(
@@ -292,6 +326,8 @@ Write-Host "Removed host agent config, lock, and status files."
   await writeText(path.join(outputDir, "README.md"), readme);
   await writeText(path.join(outputDir, "launch-host-agent.cmd"), launchCmd);
   await writeText(path.join(outputDir, "launch-host-agent.ps1"), launchPs1);
+  await writeText(path.join(outputDir, "install-host-agent.ps1"), installPs1);
+  await writeText(path.join(outputDir, "remove-host-agent.ps1"), removePs1);
   await writeText(path.join(outputDir, "register-host-agent.ps1"), registerPs1);
   await writeText(path.join(outputDir, "unregister-host-agent.ps1"), unregisterPs1);
   await writeText(path.join(outputDir, "uninstall-host-agent.ps1"), uninstallPs1);
