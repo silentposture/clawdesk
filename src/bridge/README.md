@@ -16,6 +16,7 @@ Reusable runtime entrypoint:
 - [`src/bridge/host-bridge-agent.mjs`](./host-bridge-agent.mjs) contains the reusable host bridge runtime for enrollment, attestation, heartbeat, and daemon-style loops, persists identity to a local config file by default, uses a single-instance lock, and can be invoked with `npm run bridge:host`.
 - [`src/bridge/host-agent-launcher.mjs`](./host-agent-launcher.mjs) adds a lifecycle status file so a service manager or installer can supervise the runtime without changing the bridge contract.
 - [`scripts/prepare-host-agent-install-bundle.mjs`](../scripts/prepare-host-agent-install-bundle.mjs) turns that runtime into a concrete install bundle with launcher, scheduled-task registration, and uninstall scripts.
+- The install bundle verifier is part of preflight, so the install-friendly handoff is checked as an expected release gate.
 - Together they form an install-friendly handoff for a future Windows service or startup hook.
 
 Example wrapper:
