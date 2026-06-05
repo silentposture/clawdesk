@@ -2544,7 +2544,7 @@ function formatTargetSessionExportText(target, session) {
   lines.push(`endpoint: ${target.adapters[0]?.endpoint ?? target.endpoint ?? target.displayName}`);
   lines.push(`state: ${target.state}`);
   lines.push(`paired: ${target.paired ? "yes" : "no"}`);
-  lines.push(`summary: ${summarizeTargetProfile(target)}`);
+  lines.push(`summary: ${target.displayName} ${target.kind} target (${target.state})`);
   lines.push(``);
 
   if (target.kind === "ssh-terminal") {
@@ -2634,7 +2634,7 @@ function buildTargetAuditReportState(targetId, limit = 12) {
     state: target.state,
     paired: Boolean(target.paired),
     readiness,
-    summary: summarizeTargetProfile(target),
+    summary: `${target.displayName} ${target.kind} target (${target.state})`,
     session,
     timeline: timeline.entries.map((entry) => ({
       ...entry,
