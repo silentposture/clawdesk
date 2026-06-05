@@ -1,7 +1,7 @@
 export type TargetKind = "local-shell" | "ssh-terminal" | "remote-desktop" | "mock";
 export type TargetConnectionState = "offline" | "connecting" | "ready" | "degraded";
 export type TargetDispatchCategory = "observe" | "inspect" | "debug" | "execute_safe" | "request_approval";
-export type TargetConnectionAction = "enroll_host" | "pair" | "verify_host_key" | "probe" | "connect" | "disconnect" | "refresh";
+export type TargetConnectionAction = "enroll_host" | "heartbeat" | "pair" | "verify_host_key" | "probe" | "connect" | "disconnect" | "refresh";
 export type TargetCredentialMode = "none" | "secret-ref" | "ssh-agent" | "platform-managed";
 export type TargetSessionMode = "observe" | "control";
 export type ShellCommandSafety = "allowlisted" | "needs-review" | "blocked";
@@ -128,6 +128,7 @@ export interface TargetConnectionReadinessReport {
   lastProbeAt?: string;
   nextAction:
     | "enroll_host"
+    | "heartbeat"
     | "pair"
     | "probe"
     | "verify_host_key"
@@ -180,6 +181,25 @@ const BLOCKED_COMMAND_PATTERNS = [
   /\bcurl\b.*\|\s*sh/i,
   /\bwget\b.*\|\s*sh/i,
 ] as const;
+
+const HOST_BRIDGE_STALE_AFTER_MS = 10 * 60 * 1000;
+
+function getHostBridgeStalenessState(hostBridge?: TargetHostBridgeProfile): "fresh" | "stale" | "missing" {
+  if (!hostBridge || hostBridge.state !== "registered") {
+    return "missing";
+  }
+
+  if (!hostBridge.lastSeenAt) {
+    return "fresh";
+  }
+
+  const seenAt = new Date(hostBridge.lastSeenAt).getTime();
+  if (!Number.isFinite(seenAt)) {
+    return "stale";
+  }
+
+  return Date.now() - seenAt > HOST_BRIDGE_STALE_AFTER_MS ? "stale" : "fresh";
+}
 
 export function defaultTargetConnection(kind: TargetKind): TargetConnectionProfile {
   if (kind === "local-shell" || kind === "mock") {
@@ -532,15 +552,18 @@ export function buildTargetConnectionReadinessReport(target: TargetProfile): Tar
   const checks: TargetConnectionReadinessCheck[] = [];
   const isLocalLike = target.kind === "local-shell" || target.kind === "mock";
   const isRemote = target.kind === "ssh-terminal" || target.kind === "remote-desktop";
+  const hostBridgeStaleness = getHostBridgeStalenessState(connection.hostBridge);
 
   if (isLocalLike) {
     checks.push({
       key: "host-bridge",
       label: "Host bridge",
-      status: connection.hostBridge?.state === "registered" ? "pass" : "warn",
+      status: connection.hostBridge?.state === "registered" ? (hostBridgeStaleness === "fresh" ? "pass" : "warn") : "warn",
       detail:
         connection.hostBridge?.state === "registered"
-          ? `Host bridge registered${connection.hostBridge.hostName ? ` for ${connection.hostBridge.hostName}` : ""}.`
+          ? hostBridgeStaleness === "fresh"
+            ? `Host bridge registered${connection.hostBridge.hostName ? ` for ${connection.hostBridge.hostName}` : ""}.`
+            : "Host bridge heartbeat is stale; request a fresh heartbeat from the host bridge."
           : "Local targets ship with the host bridge already present.",
       required: false,
     });
@@ -574,10 +597,12 @@ export function buildTargetConnectionReadinessReport(target: TargetProfile): Tar
   checks.push({
     key: "host-bridge",
     label: "Host bridge",
-    status: connection.hostBridge?.state === "registered" ? "pass" : "fail",
+    status: connection.hostBridge?.state === "registered" ? (hostBridgeStaleness === "fresh" ? "pass" : "fail") : "fail",
     detail:
       connection.hostBridge?.state === "registered"
-        ? `Host bridge registered${connection.hostBridge.hostName ? ` for ${connection.hostBridge.hostName}` : ""}${connection.hostBridge.bridgeVersion ? ` (${connection.hostBridge.bridgeVersion})` : ""}.`
+        ? hostBridgeStaleness === "fresh"
+          ? `Host bridge registered${connection.hostBridge.hostName ? ` for ${connection.hostBridge.hostName}` : ""}${connection.hostBridge.bridgeVersion ? ` (${connection.hostBridge.bridgeVersion})` : ""}.`
+          : "Host bridge heartbeat is stale; request a fresh heartbeat from the host bridge."
         : "Install and enroll the ClawDesk host bridge before pairing this target.",
     required: true,
   });
@@ -674,6 +699,8 @@ export function buildTargetConnectionReadinessReport(target: TargetProfile): Tar
   let nextAction: TargetConnectionReadinessReport["nextAction"] = "connect";
   if (connection.hostBridge?.state !== "registered") {
     nextAction = "enroll_host";
+  } else if (hostBridgeStaleness === "stale") {
+    nextAction = "heartbeat";
   } else if (!target.paired) {
     nextAction = "pair";
   } else if (connection.lastProbeResult !== "reachable") {
@@ -719,7 +746,7 @@ function updatePrimaryAdapter(target: TargetProfile, updater: (adapter: TargetAd
 export function applyTargetConnectionAction(
   target: TargetProfile,
   action: TargetConnectionAction,
-  options: { pairingCode?: string; enrollmentCode?: string; hostName?: string; bridgeVersion?: string } = {},
+  options: { pairingCode?: string; enrollmentCode?: string; bridgeId?: string; hostName?: string; bridgeVersion?: string } = {},
 ): TargetConnectionResult {
   const now = new Date().toISOString();
   const baseTarget = cloneTargetProfile(target);
@@ -823,6 +850,58 @@ export function applyTargetConnectionAction(
           ...current,
           authenticated: true,
           hostKeyVerified: baseTarget.kind === "ssh-terminal" ? false : current.hostKeyVerified,
+        }),
+      ),
+    };
+  }
+
+  if (action === "heartbeat") {
+    if (baseTarget.connection.hostBridge?.state !== "registered") {
+      return {
+        allowed: false,
+        reason: "Enroll the host bridge before reporting a heartbeat.",
+        action,
+        target: baseTarget,
+      };
+    }
+
+    const bridgeId = typeof options.bridgeId === "string" ? options.bridgeId.trim() : "";
+    if (bridgeId && baseTarget.connection.hostBridge.bridgeId && bridgeId !== baseTarget.connection.hostBridge.bridgeId) {
+      return {
+        allowed: false,
+        reason: "The host bridge identity does not match this target.",
+        action,
+        target: baseTarget,
+      };
+    }
+
+    return {
+      allowed: true,
+      reason: "The host bridge heartbeat was recorded.",
+      action,
+      target: updatePrimaryAdapter(
+        {
+          ...baseTarget,
+          state: baseTarget.state === "offline" ? "connecting" : baseTarget.state,
+          lastSeenAt: now,
+          connection: {
+            ...baseTarget.connection,
+            hostBridge: {
+              ...baseTarget.connection.hostBridge,
+              state: "registered",
+              bridgeId: baseTarget.connection.hostBridge.bridgeId ?? `${baseTarget.id}-bridge`,
+              hostName: options.hostName?.trim() || baseTarget.connection.hostBridge.hostName || baseTarget.displayName,
+              bridgeVersion: options.bridgeVersion?.trim() || baseTarget.connection.hostBridge.bridgeVersion || "1.0.0",
+              registeredAt: baseTarget.connection.hostBridge.registeredAt ?? now,
+              lastSeenAt: now,
+              lastError: undefined,
+            },
+          },
+        },
+        (current) => ({
+          ...current,
+          authenticated: true,
+          hostKeyVerified: current.hostKeyVerified,
         }),
       ),
     };

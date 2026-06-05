@@ -39,6 +39,7 @@ const targetCredentialVaultFilePath = path.join(homeDir, ".clawdesk", "ssh-crede
 const targetCredentialVaultKeyPath = path.join(homeDir, ".clawdesk", "ssh-credential-vault.key");
 const targetCredentialBundleIterations = 120_000;
 const pairingTicketDefaultTtlMs = 15 * 60 * 1000;
+const hostBridgeHeartbeatStaleAfterMs = 10 * 60 * 1000;
 const openClawUpstreamSnapshot = {
   repository: "https://github.com/openclaw/openclaw",
   commit: "278e3eabf29dd8ff31d633907525bda35ec6474a",
@@ -2284,6 +2285,23 @@ function normalizeTargetConnectionState(kind, connection = {}) {
   };
 }
 
+function hostBridgeStalenessState(hostBridge) {
+  if (!hostBridge || hostBridge.state !== "registered") {
+    return "missing";
+  }
+
+  if (!hostBridge.lastSeenAt) {
+    return "fresh";
+  }
+
+  const seenAt = new Date(hostBridge.lastSeenAt).getTime();
+  if (!Number.isFinite(seenAt)) {
+    return "stale";
+  }
+
+  return Date.now() - seenAt > hostBridgeHeartbeatStaleAfterMs ? "stale" : "fresh";
+}
+
 function normalizeTargetProfileState(target) {
   const cloned = cloneTargetProfileState(target);
   const kind = typeof cloned.kind === "string" ? cloned.kind : "local-shell";
@@ -2717,6 +2735,7 @@ function buildTargetSessionExportState(targetId, limit = 20) {
 function targetConnectionReadinessIssuesState(target) {
   const issues = [];
   const connection = target.connection ?? defaultTargetConnectionState(target.kind);
+  const hostBridgeStaleness = hostBridgeStalenessState(connection.hostBridge);
 
   if (target.kind === "local-shell" || target.kind === "mock") {
     return issues;
@@ -2746,8 +2765,12 @@ function targetConnectionReadinessIssuesState(target) {
     issues.push("SSH host key is required for host-key verification.");
   }
 
-  if ((target.kind === "ssh-terminal" || target.kind === "remote-desktop") && connection.hostBridge?.state !== "registered") {
-    issues.push("Install and enroll the ClawDesk host bridge before pairing this target.");
+  if (target.kind === "ssh-terminal" || target.kind === "remote-desktop") {
+    if (connection.hostBridge?.state !== "registered") {
+      issues.push("Install and enroll the ClawDesk host bridge before pairing this target.");
+    } else if (hostBridgeStaleness === "stale") {
+      issues.push("Host bridge heartbeat is stale; request a fresh heartbeat from the host bridge.");
+    }
   }
 
   return issues;
@@ -2762,13 +2785,16 @@ function buildTargetConnectionReadinessReportState(target) {
   };
 
   const isLocalLike = baseTarget.kind === "local-shell" || baseTarget.kind === "mock";
+  const hostBridgeStaleness = hostBridgeStalenessState(connection.hostBridge);
   if (isLocalLike) {
     addCheck(
       "host-bridge",
       "Host bridge",
-      connection.hostBridge?.state === "registered" ? "pass" : "warn",
+      connection.hostBridge?.state === "registered" ? (hostBridgeStaleness === "fresh" ? "pass" : "warn") : "warn",
       connection.hostBridge?.state === "registered"
-        ? `Host bridge registered${connection.hostBridge.hostName ? ` for ${connection.hostBridge.hostName}` : ""}.`
+        ? hostBridgeStaleness === "fresh"
+          ? `Host bridge registered${connection.hostBridge.hostName ? ` for ${connection.hostBridge.hostName}` : ""}.`
+          : "Host bridge heartbeat is stale; request a fresh heartbeat from the host bridge."
         : "Local targets ship with the host bridge already present.",
       false,
     );
@@ -2796,9 +2822,11 @@ function buildTargetConnectionReadinessReportState(target) {
   addCheck(
     "host-bridge",
     "Host bridge",
-    connection.hostBridge?.state === "registered" ? "pass" : "fail",
+    connection.hostBridge?.state === "registered" ? (hostBridgeStaleness === "fresh" ? "pass" : "fail") : "fail",
     connection.hostBridge?.state === "registered"
-      ? `Host bridge registered${connection.hostBridge.hostName ? ` for ${connection.hostBridge.hostName}` : ""}${connection.hostBridge.bridgeVersion ? ` (${connection.hostBridge.bridgeVersion})` : ""}.`
+      ? hostBridgeStaleness === "fresh"
+        ? `Host bridge registered${connection.hostBridge.hostName ? ` for ${connection.hostBridge.hostName}` : ""}${connection.hostBridge.bridgeVersion ? ` (${connection.hostBridge.bridgeVersion})` : ""}.`
+        : "Host bridge heartbeat is stale; request a fresh heartbeat from the host bridge."
       : "Install and enroll the ClawDesk host bridge before pairing this target.",
     true,
   );
@@ -2876,6 +2904,8 @@ function buildTargetConnectionReadinessReportState(target) {
   let nextAction = "connect";
   if (connection.hostBridge?.state !== "registered") {
     nextAction = "enroll_host";
+  } else if (hostBridgeStaleness === "stale") {
+    nextAction = "heartbeat";
   } else if (!baseTarget.paired) {
     nextAction = "pair";
   } else if (connection.lastProbeResult !== "reachable") {
@@ -4059,6 +4089,56 @@ async function applyTargetConnectionActionState(target, action, options = {}) {
         }),
       ),
       ticket: redeemedTicket.ticket,
+    };
+  }
+
+  if (action === "heartbeat") {
+    if (baseTarget.connection.hostBridge?.state !== "registered") {
+      return {
+        allowed: false,
+        reason: "Enroll the host bridge before reporting a heartbeat.",
+        target: baseTarget,
+      };
+    }
+
+    const bridgeId = typeof options.bridgeId === "string" ? options.bridgeId.trim() : "";
+    if (bridgeId && baseTarget.connection.hostBridge.bridgeId && bridgeId !== baseTarget.connection.hostBridge.bridgeId) {
+      return {
+        allowed: false,
+        reason: "The host bridge identity does not match this target.",
+        target: baseTarget,
+      };
+    }
+
+    return {
+      allowed: true,
+      reason: "The host bridge heartbeat was recorded.",
+      target: updatePrimaryTargetAdapterState(
+        {
+          ...baseTarget,
+          state: baseTarget.state === "offline" ? "connecting" : baseTarget.state,
+          lastSeenAt: now,
+          connection: {
+            ...baseTarget.connection,
+            hostBridge: {
+              ...baseTarget.connection.hostBridge,
+              state: "registered",
+              bridgeId: baseTarget.connection.hostBridge.bridgeId ?? `${baseTarget.id}-bridge`,
+              hostName: options.hostName?.trim() || baseTarget.connection.hostBridge.hostName || baseTarget.displayName,
+              bridgeVersion: options.bridgeVersion?.trim() || baseTarget.connection.hostBridge.bridgeVersion || "1.0.0",
+              registeredAt: baseTarget.connection.hostBridge.registeredAt ?? now,
+              lastSeenAt: now,
+              lastError: undefined,
+            },
+          },
+        },
+        (current) => ({
+          ...current,
+          authenticated: true,
+          hostKeyVerified: current.hostKeyVerified,
+        }),
+      ),
+      action,
     };
   }
 
@@ -10707,6 +10787,7 @@ const server = http.createServer(async (req, res) => {
       const body = await readJson(req);
       const targetId = typeof body.targetId === "string" ? body.targetId.trim() : "";
       const enrollmentCode = typeof body.enrollmentCode === "string" ? body.enrollmentCode.trim() : "";
+      const bridgeId = typeof body.bridgeId === "string" ? body.bridgeId.trim() : "";
       const hostName = typeof body.hostName === "string" ? body.hostName.trim() : "";
       const bridgeVersion = typeof body.bridgeVersion === "string" ? body.bridgeVersion.trim() : "";
       if (!targetId || !enrollmentCode) {
@@ -10718,7 +10799,7 @@ const server = http.createServer(async (req, res) => {
         json(res, 404, { error: "target not found" });
         return;
       }
-      const result = await applyTargetConnectionActionState(target, "enroll_host", { enrollmentCode, hostName, bridgeVersion });
+      const result = await applyTargetConnectionActionState(target, "enroll_host", { enrollmentCode, bridgeId, hostName, bridgeVersion });
       if (result.allowed && result.target) {
         targetRegistry = {
           ...targetRegistry,
@@ -10727,6 +10808,7 @@ const server = http.createServer(async (req, res) => {
         audit("targets.host-enrollment", {
           targetId,
           targetName: result.target.displayName,
+          bridgeId: result.target.connection?.hostBridge?.bridgeId,
           hostName,
           bridgeVersion,
           allowed: result.allowed,
@@ -10747,6 +10829,52 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  if (req.method === "POST" && pathname === "/targets/host-bridge/heartbeat") {
+    try {
+      const body = await readJson(req);
+      const targetId = typeof body.targetId === "string" ? body.targetId.trim() : "";
+      const bridgeId = typeof body.bridgeId === "string" ? body.bridgeId.trim() : "";
+      const hostName = typeof body.hostName === "string" ? body.hostName.trim() : "";
+      const bridgeVersion = typeof body.bridgeVersion === "string" ? body.bridgeVersion.trim() : "";
+      if (!targetId) {
+        json(res, 400, { error: "targetId is required" });
+        return;
+      }
+      const target = targetRegistry.targets.find((entry) => entry.id === targetId);
+      if (!target) {
+        json(res, 404, { error: "target not found" });
+        return;
+      }
+      const result = await applyTargetConnectionActionState(target, "heartbeat", { bridgeId, hostName, bridgeVersion });
+      if (result.allowed && result.target) {
+        targetRegistry = {
+          ...targetRegistry,
+          targets: targetRegistry.targets.map((entry) => (entry.id === targetId ? result.target : entry)),
+        };
+        audit("targets.host-bridge.heartbeat", {
+          targetId,
+          targetName: result.target.displayName,
+          bridgeId: result.target.connection?.hostBridge?.bridgeId,
+          hostName,
+          bridgeVersion,
+          allowed: result.allowed,
+        });
+        scheduleStateSave();
+      } else {
+        audit("targets.host-bridge.heartbeat.rejected", { targetId, allowed: result.allowed, reason: result.reason });
+      }
+      json(res, 200, {
+        allowed: result.allowed,
+        reason: result.reason,
+        target: result.target,
+        registry: cloneTargetRegistryState(targetRegistry),
+      });
+    } catch (error) {
+      json(res, 400, { error: error instanceof Error ? error.message : "Invalid JSON" });
+    }
+    return;
+  }
+
   if (req.method === "POST" && pathname === "/targets/connection") {
     try {
       const body = await readJson(req);
@@ -10754,6 +10882,7 @@ const server = http.createServer(async (req, res) => {
       const action = typeof body.action === "string" ? body.action.trim() : "";
       const pairingCode = typeof body.pairingCode === "string" ? body.pairingCode.trim() : "";
       const enrollmentCode = typeof body.enrollmentCode === "string" ? body.enrollmentCode.trim() : "";
+      const bridgeId = typeof body.bridgeId === "string" ? body.bridgeId.trim() : "";
       const hostName = typeof body.hostName === "string" ? body.hostName.trim() : "";
       const bridgeVersion = typeof body.bridgeVersion === "string" ? body.bridgeVersion.trim() : "";
       if (!targetId || !action) {
@@ -10765,7 +10894,7 @@ const server = http.createServer(async (req, res) => {
         json(res, 404, { error: "target not found" });
         return;
       }
-      const result = await applyTargetConnectionActionState(target, action, { pairingCode, enrollmentCode, hostName, bridgeVersion });
+      const result = await applyTargetConnectionActionState(target, action, { pairingCode, enrollmentCode, bridgeId, hostName, bridgeVersion });
       if (result.allowed && result.target) {
         targetRegistry = {
           ...targetRegistry,
@@ -10784,6 +10913,7 @@ const server = http.createServer(async (req, res) => {
           lastProbeError: result.target.connection?.lastProbeError,
           pairingCodeUsed: Boolean(pairingCode && action === "pair"),
           enrollmentCodeUsed: Boolean(enrollmentCode && action === "enroll_host"),
+          bridgeIdUsed: Boolean(bridgeId && action === "heartbeat"),
         });
         scheduleStateSave();
       } else {
@@ -10794,6 +10924,7 @@ const server = http.createServer(async (req, res) => {
           reason: result.reason,
           pairingCodeUsed: Boolean(pairingCode && action === "pair"),
           enrollmentCodeUsed: Boolean(enrollmentCode && action === "enroll_host"),
+          bridgeIdUsed: Boolean(bridgeId && action === "heartbeat"),
         });
       }
       json(res, 200, {

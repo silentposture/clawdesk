@@ -125,6 +125,7 @@ export const gatewayAdapterMethods: GatewayAdapterMethod[] = [
   { name: "targetsPairingTicket", method: "POST", path: "/targets/pairing-ticket", status: "partial", purpose: "發行短效 pairing code，讓新安裝的 SSH / remote-desktop target 可用一次性 enrollment code 完成安全 pairing。" },
   { name: "targetsHostEnrollmentTicket", method: "POST", path: "/targets/host-enrollment-ticket", status: "partial", purpose: "發行短效 host enrollment code，讓新安裝的 host bridge 可先完成身分註冊。" },
   { name: "targetsHostEnrollment", method: "POST", path: "/targets/host-enrollment", status: "partial", purpose: "由 host bridge redeem enrollment code，註冊主機身分並回寫 paired / connection readiness。" },
+  { name: "targetsHostBridgeHeartbeat", method: "POST", path: "/targets/host-bridge/heartbeat", status: "partial", purpose: "由 host bridge 回報 heartbeat 與版本，維持已註冊主機的可管理性。" },
   { name: "targetsConnection", method: "POST", path: "/targets/connection", status: "partial", purpose: "處理 target 的 pair / probe / verify_host_key / connect / disconnect / refresh 動作，並回寫連線可達性與驗證狀態。" },
   { name: "targetsConnectionReadiness", method: "GET", path: "/targets/connection-readiness", status: "partial", purpose: "讀取 target 連線前檢查報告，顯示 pairing、credential、host key 與 probe readiness。"},
   { name: "targetsDispatchPreview", method: "POST", path: "/targets/dispatch-preview", status: "mock", purpose: "建立 target dispatch 預覽與 audit record。" },

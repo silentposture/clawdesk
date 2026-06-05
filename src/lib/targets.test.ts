@@ -465,6 +465,50 @@ describe("target orchestration contract", () => {
     expect(targetConnectionReadinessIssues(enrolled.target)).toHaveLength(0);
   });
 
+  it("requests a heartbeat when a remote host bridge goes stale", () => {
+    const staleAt = new Date(Date.now() - 12 * 60 * 1000).toISOString();
+    const target = createTargetProfile({
+      id: "ops-vm",
+      displayName: "Ops VM",
+      kind: "remote-desktop",
+      endpoint: "rdp://ops.example",
+      paired: true,
+      state: "ready",
+      connectionOverrides: {
+        username: "ops-user",
+        credentialMode: "platform-managed",
+        hostBridge: {
+          state: "registered",
+          bridgeId: "ops-vm-bridge",
+          hostName: "Ops Host Bridge",
+          bridgeVersion: "1.0.0-test",
+          registeredAt: staleAt,
+          lastSeenAt: staleAt,
+        },
+        lastProbeResult: "reachable",
+        lastProbeAt: "2026-06-05T12:00:00.000Z",
+      },
+      adapterOverrides: { authenticated: true },
+    });
+
+    const readiness = buildTargetConnectionReadinessReport(target);
+    expect(readiness.readyToConnect).toBe(false);
+    expect(readiness.nextAction).toBe("heartbeat");
+    expect(readiness.checks.find((check) => check.key === "host-bridge")?.status).toBe("fail");
+
+    const heartbeat = applyTargetConnectionAction(target, "heartbeat", {
+      bridgeId: "ops-vm-bridge",
+      hostName: "Ops Host Bridge",
+      bridgeVersion: "1.0.0-test",
+    });
+
+    expect(heartbeat.allowed).toBe(true);
+    expect(heartbeat.target.connection.hostBridge?.state).toBe("registered");
+    expect(heartbeat.target.connection.hostBridge?.hostName).toBe("Ops Host Bridge");
+    expect(heartbeat.target.connection.hostBridge?.bridgeVersion).toBe("1.0.0-test");
+    expect(buildTargetConnectionReadinessReport(heartbeat.target).nextAction).toBe("connect");
+  });
+
   it("blocks SSH host-key verification before pairing", () => {
     const target = createTargetProfile({
       id: "builder-ssh",

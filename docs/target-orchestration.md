@@ -30,6 +30,7 @@ Saved target groups let operators keep recurring broadcast sets, such as local +
 - Pair before any remote dispatch.
 - Issue a short-lived pairing code when onboarding a new remote host so the installed software can prove it belongs to the target before the first pair.
 - Issue a short-lived host enrollment code when onboarding a new remote host so the installed ClawDesk host bridge can self-register before pairing and connect.
+- Send a host bridge heartbeat after enrollment so the control plane can keep the bridge freshness state current and mark stale targets for refresh.
 - Probe SSH / remote-desktop reachability before connect so the control plane can report a real host/port result and mark degraded targets early.
 - Verify SSH host keys before shell dispatch, and persist them in the gateway-managed known_hosts file.
 - Issue SSH private keys and remote-desktop login secrets as gateway-managed credential refs for secret-ref dispatch flows when ssh-agent or platform-managed secrets are not used.
@@ -55,6 +56,7 @@ Saved target groups let operators keep recurring broadcast sets, such as local +
 - Saved target groups / fleet presets that can be applied to the broadcast selection and persisted through the registry save flow: [`src/lib/targets.ts`](../src/lib/targets.ts), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx), [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
 - Short-lived pairing code issuance for secure enrollment before pairing remote SSH / remote-desktop targets: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
 - Short-lived host enrollment code issuance plus host bridge registration for remote SSH / remote-desktop targets: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`scripts/verify-host-enrollment.mjs`](../scripts/verify-host-enrollment.mjs), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
+- Host bridge heartbeat support that keeps enrollment freshness current, marks stale targets in readiness reports, and surfaces `heartbeat` as the next action when a registered bridge has gone stale: [`src/lib/targets.ts`](../src/lib/targets.ts), [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx), [`scripts/verify-host-enrollment.mjs`](../scripts/verify-host-enrollment.mjs)
 - Gateway-managed SSH credential ref issuance, allowlisted local-shell / SSH safe command execution, gateway-managed SSH terminal session contracts with redacted transcripts and audit-friendly summaries, and remote-desktop observe/control session contracts with permission-gated control requests, a gated native client launch helper, a client reconnect / disconnect path, credential-seed action, and session summaries through the gateway. Remote-desktop secret-ref credentials can be seeded into the local Windows client flow before launch: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs)
 - Passphrase-protected credential bundle export/import for target registry migration and gateway-managed credential ref rehydration: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
 - Bundle preview before import so operators can inspect target/secret summaries without exposing plaintext secrets: [`sidecars/mock-gateway/server.mjs`](../sidecars/mock-gateway/server.mjs), [`src/components/TargetRegistryPanel.tsx`](../src/components/TargetRegistryPanel.tsx)
@@ -91,9 +93,10 @@ flowchart TD
 2. The control plane resolves the safest available adapter.
 3. The policy layer checks pairing, authentication, host-key verification, connectivity probe results, connection readiness, and command safety.
 4. SSH host-key verification stores the trusted key in a gateway-managed known_hosts file before command execution.
-5. Observe / inspect / debug requests can proceed when the target is ready.
-6. Execute-safe requests are queued for approval before command dispatch, then can run through the local-shell or SSH safe connector.
-7. The target returns screen state, terminal output, or diagnostic evidence back into the shell.
+5. Host bridge freshness is tracked through enrollment and heartbeat so stale targets can be flagged before connect.
+6. Observe / inspect / debug requests can proceed when the target is ready.
+7. Execute-safe requests are queued for approval before command dispatch, then can run through the local-shell or SSH safe connector.
+8. The target returns screen state, terminal output, or diagnostic evidence back into the shell.
 
 ## What is not implemented yet
 

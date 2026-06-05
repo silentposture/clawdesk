@@ -172,6 +172,17 @@ try {
 
   await waitForStateFile();
 
+  const heartbeat = await postJson("/targets/host-bridge/heartbeat", {
+    targetId: "rdp-host",
+    bridgeId: enroll.payload.target?.connection?.hostBridge?.bridgeId,
+    hostName: "Ops Host Bridge",
+    bridgeVersion: "1.0.0-test",
+  });
+  if (!heartbeat.response.ok || !heartbeat.payload.allowed) throw new Error(`host bridge heartbeat failed: ${heartbeat.payload.reason || heartbeat.response.status}`);
+  if (heartbeat.payload.target?.connection?.hostBridge?.state !== "registered") throw new Error("host bridge heartbeat did not keep bridge registered");
+
+  await waitForStateFile();
+
   const probe = await postJson("/targets/connection", { targetId: "rdp-host", action: "probe" });
   if (!probe.response.ok || !probe.payload.allowed) throw new Error(`probe failed: ${probe.payload.reason || probe.response.status}`);
   if (probe.payload.target?.connection?.lastProbeResult !== "reachable") throw new Error("probe did not mark target reachable");
@@ -188,6 +199,7 @@ try {
   if (!actions.includes("targets.host-enrollment-ticket.issued")) throw new Error("missing host enrollment ticket issue audit event");
   if (!actions.includes("targets.host-enrollment-ticket.redeemed")) throw new Error("missing host enrollment ticket redeem audit event");
   if (!actions.includes("targets.host-enrollment")) throw new Error("missing host enrollment audit event");
+  if (!actions.includes("targets.host-bridge.heartbeat")) throw new Error("missing host bridge heartbeat audit event");
 
   await waitForStateFile();
 
@@ -199,6 +211,7 @@ try {
     const targetAfterRestart = registryAfterRestart.payload.registry?.targets?.find((entry) => entry.id === "rdp-host");
     if (!targetAfterRestart) throw new Error("target disappeared after restart");
     if (targetAfterRestart.connection?.hostBridge?.state !== "registered") throw new Error("host bridge state did not persist after restart");
+    if (!targetAfterRestart.connection?.hostBridge?.lastSeenAt) throw new Error("host bridge heartbeat timestamp did not persist after restart");
     if (!targetAfterRestart.paired) throw new Error("paired state did not persist after restart");
     console.log("PASS host enrollment code issuance, redemption, and persistence are managed by the gateway.");
   } finally {
