@@ -361,6 +361,7 @@ export const targetRegistryCopy = {
   fieldRemoteDesktopCredentialKind: "RDP credential ref",
   fieldRemoteDesktopCredentialLabel: "Remote desktop credential secret",
   fieldRemoteDesktopLaunchButton: "啟動 RDP Client",
+  fieldRemoteDesktopReconnectButton: "重新連線",
   fieldRemoteDesktopSeedButton: "準備登入憑證",
   fieldRemoteDesktopObserveButton: "觀察",
   fieldRemoteDesktopRequestControlButton: "請求控制",

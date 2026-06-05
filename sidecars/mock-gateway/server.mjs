@@ -4451,6 +4451,62 @@ async function launchRemoteDesktopClientState(target) {
   };
 }
 
+async function reconnectRemoteDesktopClientState(target) {
+  const baseTarget = normalizeTargetProfileState(target);
+  if (baseTarget.kind !== "remote-desktop") {
+    return { allowed: false, reason: "This target is not a remote desktop target.", target: baseTarget };
+  }
+
+  const runtime = getRemoteDesktopLaunchRuntime(baseTarget.id);
+  if (runtime && runtime.dryRun === false && isProcessAlive(runtime.pid)) {
+    const currentSession = refreshRemoteDesktopSessionState(baseTarget, getRemoteDesktopSessionState(baseTarget), nowIso());
+    return {
+      allowed: true,
+      reason: "Remote desktop client is already running.",
+      target: markRemoteDesktopTargetActive(baseTarget),
+      session: currentSession,
+      launch: {
+        launchedAt: runtime.launchedAt,
+        transport: runtime.transport,
+        command: runtime.command,
+        mode: currentSession.mode,
+        dryRun: false,
+        pid: runtime.pid,
+        credentialSource: currentSession.credentialSource ?? baseTarget.connection?.credentialMode ?? "none",
+        credentialSeedState: currentSession.credentialSeedState ?? "idle",
+      },
+    };
+  }
+
+  const relaunchResult = await launchRemoteDesktopClientState(baseTarget);
+  if (!relaunchResult.allowed) {
+    return relaunchResult;
+  }
+
+  const now = nowIso();
+  const nextSession = relaunchResult.session
+    ? withRemoteDesktopSessionSummary(baseTarget, {
+        ...relaunchResult.session,
+        notes: [...(Array.isArray(relaunchResult.session.notes) ? relaunchResult.session.notes : []).slice(-4), "Remote desktop client relaunched via reconnect."],
+        lastUpdatedAt: now,
+      })
+    : undefined;
+  if (nextSession) {
+    remoteDesktopSessions.set(remoteDesktopSessionStorageKey(baseTarget.id), nextSession);
+  }
+  audit("targets.remote-desktop.client-reconnect", {
+    targetId: baseTarget.id,
+    targetName: baseTarget.displayName,
+    launchState: nextSession?.clientLaunchState ?? relaunchResult.session?.clientLaunchState ?? "unknown",
+    pid: relaunchResult.launch?.pid ?? null,
+  });
+  return {
+    ...relaunchResult,
+    session: nextSession ?? relaunchResult.session,
+    reason: "Remote desktop client reconnected.",
+  };
+}
+
 async function terminateRemoteDesktopClientRuntime(targetId, runtime, reason = "disconnected") {
   if (!runtime || runtime.dryRun) {
     clearRemoteDesktopLaunchRuntime(targetId);
@@ -10327,6 +10383,8 @@ const server = http.createServer(async (req, res) => {
         result = await disconnectRemoteDesktopSessionState(target);
       } else if (action === "launch_client" || action === "launch" || action === "open_client") {
         result = await launchRemoteDesktopClientState(target);
+      } else if (action === "reconnect" || action === "relaunch" || action === "resume_client") {
+        result = await reconnectRemoteDesktopClientState(target);
       } else {
         json(res, 400, { error: "Unsupported remote desktop action" });
         return;
