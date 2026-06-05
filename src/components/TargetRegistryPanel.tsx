@@ -759,6 +759,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
   const [targetAuditReportText, setTargetAuditReportText] = useState<string>();
   const [sshPrivateKeyDraft, setSshPrivateKeyDraft] = useState("");
   const [sshTerminalCommandDraft, setSshTerminalCommandDraft] = useState("git status");
+  const [pairingCodeDraft, setPairingCodeDraft] = useState("");
   const [credentialBundlePassphraseDraft, setCredentialBundlePassphraseDraft] = useState("");
   const [credentialBundleImportDraft, setCredentialBundleImportDraft] = useState("");
   const [credentialBundleTargetIds, setCredentialBundleTargetIds] = useState<string[]>(
@@ -857,6 +858,7 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
 
   function clearSensitiveDraftState() {
     setSshPrivateKeyDraft("");
+    setPairingCodeDraft("");
   }
 
   function clearManagedSessionState() {
@@ -1475,10 +1477,15 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setBusy(true);
       setError(undefined);
       try {
+        const requestBody: { targetId: string; action: TargetConnectionAction; pairingCode?: string } = { targetId: currentTarget.id, action };
+        if (action === "pair" && pairingCodeDraft.trim()) {
+          requestBody.pairingCode = pairingCodeDraft.trim();
+        }
+
         const response = await fetch(`${gatewayBaseUrl}/targets/connection`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ targetId: currentTarget.id, action }),
+          body: JSON.stringify(requestBody),
         });
         if (!response.ok) throw new Error("bad response");
         const payload = (await response.json()) as { allowed?: boolean; reason?: string; target?: TargetProfile; registry?: TargetRegistry; dispatches?: TargetDispatchRecord[] };
@@ -1724,6 +1731,53 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
       setError(undefined);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "credential ref issuance failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function issueTargetPairingCode() {
+    if (!gatewayBaseUrl) {
+      setError(copy.targetRegistryPairingCodeGatewayRequired);
+      return;
+    }
+
+    if (draft.kind === "local-shell" || draft.kind === "mock") {
+      setError(copy.targetRegistryPairingCodeOnlyRemote);
+      return;
+    }
+
+    setBusy(true);
+    setError(undefined);
+    try {
+      const response = await fetch(`${gatewayBaseUrl}/targets/pairing-ticket`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          targetId: draftTarget.id,
+          targetName: draft.displayName.trim() || defaultDisplayNameForKind(draft.kind),
+          kind: draft.kind,
+          expiresInMinutes: 15,
+        }),
+      });
+      const payload = (await response.json()) as {
+        allowed?: boolean;
+        reason?: string;
+        ticket?: { code?: string; expiresAt?: string; targetName?: string };
+        error?: string;
+      };
+      if (!response.ok) {
+        throw new Error(payload.error || "pairing code issuance failed");
+      }
+      if (!payload.allowed || !payload.ticket?.code) {
+        throw new Error(payload.reason || "pairing code was not returned by the gateway.");
+      }
+
+      setPairingCodeDraft(payload.ticket.code);
+      setMessage(copy.targetRegistryPairingCodeIssuedMessage(payload.ticket.code));
+      setError(undefined);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "pairing code issuance failed");
     } finally {
       setBusy(false);
     }
@@ -2621,6 +2675,17 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 placeholder={draft.kind === "ssh-terminal" ? copy.fieldConnectionPortSshPlaceholder : draft.kind === "remote-desktop" ? copy.fieldConnectionPortRdpPlaceholder : copy.fieldConnectionPortOptionalPlaceholder}
               />
             </label>
+            {draft.kind !== "local-shell" && draft.kind !== "mock" ? (
+              <label>
+                <span>{copy.targetRegistryPairingCodeLabel}</span>
+                <input
+                  value={pairingCodeDraft}
+                  onChange={(event) => setPairingCodeDraft(event.target.value)}
+                  placeholder={copy.targetRegistryPairingCodePlaceholder}
+                />
+                <small>{copy.targetRegistryPairingCodeHint}</small>
+              </label>
+            ) : null}
             <label>
               <span>{copy.fieldCredentialMode}</span>
               <select value={draft.credentialMode} onChange={(event) => setDraft((current) => ({ ...current, credentialMode: event.target.value as TargetCredentialMode }))}>
@@ -3073,6 +3138,11 @@ export function TargetRegistryPanel({ gatewayBaseUrl, onClose }: TargetRegistryP
                 <button className="secondary-button" type="button" onClick={() => void issueTargetCredentialRef()} disabled={busy || !sshPrivateKeyDraft.trim()}>
                   <Send size={16} />
                   {draft.kind === "ssh-terminal" ? copy.fieldSSHCredentialRefIssueButton : copy.fieldRemoteDesktopCredentialRefIssueButton}
+                </button>
+              ) : null}
+              {draft.kind === "ssh-terminal" || draft.kind === "remote-desktop" ? (
+                <button className="secondary-button" type="button" onClick={() => void issueTargetPairingCode()} disabled={busy}>
+                  {copy.targetRegistryPairingCodeIssueButton}
                 </button>
               ) : null}
               <button className="secondary-button" type="button" onClick={() => void exportCredentialBundle()} disabled={busy || !credentialBundlePassphraseDraft.trim()}>
