@@ -22,6 +22,7 @@ function parseArgs(argv) {
     maxHeartbeats: 0,
     bridgeId: "",
     configPath: "",
+    lockPath: "",
   };
 
   for (let i = 2; i < argv.length; i += 1) {
@@ -59,6 +60,9 @@ function parseArgs(argv) {
       i += 1;
     } else if (arg === "--config" && next) {
       options.configPath = next;
+      i += 1;
+    } else if (arg === "--lock-file" && next) {
+      options.lockPath = next;
       i += 1;
     } else if (arg === "--dry-run") {
       options.dryRun = true;
@@ -125,6 +129,55 @@ async function writeJsonFile(filePath, value) {
   await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
+function resolveLockPath(value) {
+  const raw = String(value || "").trim();
+  if (raw) return path.resolve(raw);
+  return path.join(os.homedir(), ".clawdesk", "host-agent.lock");
+}
+
+async function processIsAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) {
+    return false;
+  }
+
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function acquireLock(lockPath) {
+  await fs.mkdir(path.dirname(lockPath), { recursive: true });
+  try {
+    const handle = await fs.open(lockPath, "wx");
+    await handle.writeFile(JSON.stringify({
+      pid: process.pid,
+      startedAt: new Date().toISOString(),
+    }, null, 2));
+    await handle.close();
+    return {
+      lockPath,
+      async release() {
+        await fs.rm(lockPath, { force: true });
+      },
+    };
+  } catch (error) {
+    if (!(error && typeof error === "object" && error.code === "EEXIST")) {
+      throw error;
+    }
+
+    const existing = await readJsonFile(lockPath);
+    if (existing?.pid && await processIsAlive(existing.pid)) {
+      throw new Error(`Host agent is already running (pid ${existing.pid}).`);
+    }
+
+    await fs.rm(lockPath, { force: true });
+    return acquireLock(lockPath);
+  }
+}
+
 async function postJson(url, body) {
   const response = await fetch(url, {
     method: "POST",
@@ -183,6 +236,7 @@ async function seedTargetRegistryIfNeeded(gatewayBaseUrl, targetId, targetName, 
 async function runHostBridgeAgent(argv, runtime = {}) {
   const options = parseArgs(argv);
   const configPath = resolveConfigPath(options.configPath || runtime.configPath || process.env.CLAWDESK_HOST_AGENT_CONFIG || "");
+  const lockPath = resolveLockPath(options.lockPath || runtime.lockPath || process.env.CLAWDESK_HOST_AGENT_LOCK || "");
   const gatewayBaseUrl = normalizeBaseUrl(
     options.gatewayBaseUrl || runtime.gatewayBaseUrl || process.env.CLAWDESK_GATEWAY_URL || process.env.OPENCLAW_GATEWAY_URL || "http://127.0.0.1:18890",
   );
@@ -220,23 +274,8 @@ async function runHostBridgeAgent(argv, runtime = {}) {
     heartbeatOnly: options.heartbeatOnly,
     maxHeartbeats: options.maxHeartbeats,
     configPath,
+    lockPath,
   };
-
-  if (!options.dryRun) {
-    await writeJsonFile(configPath, {
-      configVersion: 1,
-      gatewayBaseUrl,
-      targetId,
-      targetName,
-      kind,
-      hostName,
-      bridgeVersion,
-      bridgeId,
-      deviceId,
-      installId,
-      platform,
-    });
-  }
 
   if (options.dryRun) {
     printResult("local-agent-bridge dry run", {
@@ -251,60 +290,149 @@ async function runHostBridgeAgent(argv, runtime = {}) {
     return { status: "dry-run", state };
   }
 
-  await seedTargetRegistryIfNeeded(gatewayBaseUrl, targetId, targetName, kind);
+  const lock = await acquireLock(lockPath);
+  let lockReleased = false;
+  const releaseLock = async () => {
+    if (lockReleased) return;
+    lockReleased = true;
+    await lock.release();
+  };
+  const handleSignal = async (signal) => {
+    try {
+      await releaseLock();
+    } finally {
+      process.exitCode = process.exitCode ?? 0;
+      process.kill(process.pid, signal);
+    }
+  };
+  process.once("SIGINT", handleSignal);
+  process.once("SIGTERM", handleSignal);
 
-  if (!options.heartbeatOnly) {
-    const ticket = await postJson(`${gatewayBaseUrl}/targets/host-enrollment-ticket`, {
+  try {
+    await writeJsonFile(configPath, {
+      configVersion: 1,
+      gatewayBaseUrl,
       targetId,
       targetName,
       kind,
       hostName,
       bridgeVersion,
+      bridgeId,
+      deviceId,
+      installId,
+      platform,
+      lockPath,
     });
-    if (!ticket.response.ok || !ticket.payload.allowed || !ticket.payload.ticket?.code) {
-      throw new Error(ticket.payload.reason || `host enrollment ticket request failed: ${ticket.response.status}`);
+
+    await seedTargetRegistryIfNeeded(gatewayBaseUrl, targetId, targetName, kind);
+
+    if (!options.heartbeatOnly) {
+      const ticket = await postJson(`${gatewayBaseUrl}/targets/host-enrollment-ticket`, {
+        targetId,
+        targetName,
+        kind,
+        hostName,
+        bridgeVersion,
+      });
+      if (!ticket.response.ok || !ticket.payload.allowed || !ticket.payload.ticket?.code) {
+        throw new Error(ticket.payload.reason || `host enrollment ticket request failed: ${ticket.response.status}`);
+      }
+
+      const enroll = await postJson(`${gatewayBaseUrl}/targets/host-enrollment`, {
+        targetId,
+        enrollmentCode: ticket.payload.ticket.code,
+        hostName,
+        bridgeVersion,
+      });
+      if (!enroll.response.ok || !enroll.payload.allowed) {
+        throw new Error(enroll.payload.reason || `host enrollment failed: ${enroll.response.status}`);
+      }
+
+      state.bridgeId = enroll.payload.target?.connection?.hostBridge?.bridgeId || bridgeId;
     }
 
-    const enroll = await postJson(`${gatewayBaseUrl}/targets/host-enrollment`, {
+    const attest = await postJson(`${gatewayBaseUrl}/targets/host-bridge/attest`, {
       targetId,
-      enrollmentCode: ticket.payload.ticket.code,
+      bridgeId: state.bridgeId,
+      hostName,
+      bridgeVersion,
+      deviceId,
+      installId,
+      platform,
+    });
+    if (!attest.response.ok || !attest.payload.allowed) {
+      throw new Error(attest.payload.reason || `host bridge attestation failed: ${attest.response.status}`);
+    }
+
+    const heartbeat = await postJson(`${gatewayBaseUrl}/targets/host-bridge/heartbeat`, {
+      targetId,
+      bridgeId: state.bridgeId,
       hostName,
       bridgeVersion,
     });
-    if (!enroll.response.ok || !enroll.payload.allowed) {
-      throw new Error(enroll.payload.reason || `host enrollment failed: ${enroll.response.status}`);
+    if (!heartbeat.response.ok || !heartbeat.payload.allowed) {
+      throw new Error(heartbeat.payload.reason || `host bridge heartbeat failed: ${heartbeat.response.status}`);
     }
 
-    state.bridgeId = enroll.payload.target?.connection?.hostBridge?.bridgeId || bridgeId;
-  }
+    if (options.daemon) {
+      let heartbeatCount = 1;
+      console.log(`# local-agent-bridge daemon`);
+      console.log(JSON.stringify({
+        ...state,
+        configPath,
+        attestation: {
+          allowed: attest.payload.allowed,
+          reason: attest.payload.reason,
+          targetState: attest.payload.target?.connection?.hostBridge?.state,
+          attestedAt: attest.payload.target?.connection?.hostBridge?.attestedAt,
+        },
+        heartbeat: {
+          allowed: heartbeat.payload.allowed,
+          reason: heartbeat.payload.reason,
+          targetState: heartbeat.payload.target?.connection?.hostBridge?.state,
+          lastSeenAt: heartbeat.payload.target?.connection?.hostBridge?.lastSeenAt,
+        },
+        heartbeatIntervalMs: options.heartbeatIntervalMs,
+        maxHeartbeats: options.maxHeartbeats || undefined,
+        status: "running",
+      }, null, 2));
+      try {
+        while (true) {
+          await new Promise((resolve) => setTimeout(resolve, options.heartbeatIntervalMs));
+          const nextHeartbeat = await postJson(`${gatewayBaseUrl}/targets/host-bridge/heartbeat`, {
+            targetId,
+            bridgeId: state.bridgeId,
+            hostName,
+            bridgeVersion,
+          });
+          if (!nextHeartbeat.response.ok || !nextHeartbeat.payload.allowed) {
+            throw new Error(nextHeartbeat.payload.reason || `host bridge heartbeat failed: ${nextHeartbeat.response.status}`);
+          }
+          heartbeatCount += 1;
+          console.log(JSON.stringify({
+            type: "heartbeat",
+            count: heartbeatCount,
+            lastSeenAt: nextHeartbeat.payload.target?.connection?.hostBridge?.lastSeenAt,
+            targetState: nextHeartbeat.payload.target?.connection?.hostBridge?.state,
+          }));
+          if (options.maxHeartbeats > 0 && heartbeatCount >= options.maxHeartbeats) {
+            break;
+          }
+        }
 
-  const attest = await postJson(`${gatewayBaseUrl}/targets/host-bridge/attest`, {
-    targetId,
-    bridgeId: state.bridgeId,
-    hostName,
-    bridgeVersion,
-    deviceId,
-    installId,
-    platform,
-  });
-  if (!attest.response.ok || !attest.payload.allowed) {
-    throw new Error(attest.payload.reason || `host bridge attestation failed: ${attest.response.status}`);
-  }
+        console.log(JSON.stringify({
+          type: "stopped",
+          heartbeatCount,
+          bridgeId: state.bridgeId,
+          targetId,
+        }));
+        return { status: "stopped", state, attestation: attest.payload, heartbeat: heartbeat.payload };
+      } finally {
+        await releaseLock();
+      }
+    }
 
-  const heartbeat = await postJson(`${gatewayBaseUrl}/targets/host-bridge/heartbeat`, {
-    targetId,
-    bridgeId: state.bridgeId,
-    hostName,
-    bridgeVersion,
-  });
-  if (!heartbeat.response.ok || !heartbeat.payload.allowed) {
-    throw new Error(heartbeat.payload.reason || `host bridge heartbeat failed: ${heartbeat.response.status}`);
-  }
-
-  if (options.daemon) {
-    let heartbeatCount = 1;
-    console.log(`# local-agent-bridge daemon`);
-    console.log(JSON.stringify({
+    printResult("local-agent-bridge result", {
       ...state,
       configPath,
       attestation: {
@@ -319,61 +447,13 @@ async function runHostBridgeAgent(argv, runtime = {}) {
         targetState: heartbeat.payload.target?.connection?.hostBridge?.state,
         lastSeenAt: heartbeat.payload.target?.connection?.hostBridge?.lastSeenAt,
       },
-      heartbeatIntervalMs: options.heartbeatIntervalMs,
-      maxHeartbeats: options.maxHeartbeats || undefined,
-      status: "running",
-    }, null, 2));
-    while (true) {
-      await new Promise((resolve) => setTimeout(resolve, options.heartbeatIntervalMs));
-      const nextHeartbeat = await postJson(`${gatewayBaseUrl}/targets/host-bridge/heartbeat`, {
-        targetId,
-        bridgeId: state.bridgeId,
-        hostName,
-        bridgeVersion,
-      });
-      if (!nextHeartbeat.response.ok || !nextHeartbeat.payload.allowed) {
-        throw new Error(nextHeartbeat.payload.reason || `host bridge heartbeat failed: ${nextHeartbeat.response.status}`);
-      }
-      heartbeatCount += 1;
-      console.log(JSON.stringify({
-        type: "heartbeat",
-        count: heartbeatCount,
-        lastSeenAt: nextHeartbeat.payload.target?.connection?.hostBridge?.lastSeenAt,
-        targetState: nextHeartbeat.payload.target?.connection?.hostBridge?.state,
-      }));
-      if (options.maxHeartbeats > 0 && heartbeatCount >= options.maxHeartbeats) {
-        break;
-      }
-    }
+      nextStep: "probe-or-connect",
+    });
 
-    console.log(JSON.stringify({
-      type: "stopped",
-      heartbeatCount,
-      bridgeId: state.bridgeId,
-      targetId,
-    }));
-    return { status: "stopped", state, attestation: attest.payload, heartbeat: heartbeat.payload };
+    return { status: "completed", state, attestation: attest.payload, heartbeat: heartbeat.payload };
+  } finally {
+    await releaseLock();
   }
-
-  printResult("local-agent-bridge result", {
-    ...state,
-    configPath,
-    attestation: {
-      allowed: attest.payload.allowed,
-      reason: attest.payload.reason,
-      targetState: attest.payload.target?.connection?.hostBridge?.state,
-      attestedAt: attest.payload.target?.connection?.hostBridge?.attestedAt,
-    },
-    heartbeat: {
-      allowed: heartbeat.payload.allowed,
-      reason: heartbeat.payload.reason,
-      targetState: heartbeat.payload.target?.connection?.hostBridge?.state,
-      lastSeenAt: heartbeat.payload.target?.connection?.hostBridge?.lastSeenAt,
-    },
-    nextStep: "probe-or-connect",
-  });
-
-  return { status: "completed", state, attestation: attest.payload, heartbeat: heartbeat.payload };
 }
 
 export {

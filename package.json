@@ -45,6 +45,7 @@
     "bridge:host": "node src/bridge/host-bridge-agent.mjs",
     "bridge:example": "node examples/local-agent-bridge/bridge-agent.mjs",
     "verify:host-agent-config": "node scripts/verify-host-agent-config.mjs",
+    "verify:host-agent-lock": "node scripts/verify-host-agent-lock.mjs",
     "verify:ssh-terminal-lifecycle": "node scripts/verify-ssh-terminal-lifecycle.mjs",
     "verify:remote-desktop-lifecycle": "node scripts/verify-remote-desktop-lifecycle.mjs",
     "verify:production-gateway:sim": "node scripts/verify-production-gateway-sim.mjs",

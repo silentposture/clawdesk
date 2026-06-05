@@ -13,7 +13,8 @@ Responsibilities:
 
 Reusable runtime entrypoint:
 
-- [`src/bridge/host-bridge-agent.mjs`](./host-bridge-agent.mjs) contains the reusable host bridge runtime for enrollment, attestation, heartbeat, and daemon-style loops, persists identity to a local config file by default, and can be invoked with `npm run bridge:host`.
+- [`src/bridge/host-bridge-agent.mjs`](./host-bridge-agent.mjs) contains the reusable host bridge runtime for enrollment, attestation, heartbeat, and daemon-style loops, persists identity to a local config file by default, uses a single-instance lock, and can be invoked with `npm run bridge:host`.
+- That makes it a practical install target for a Windows service or startup hook later without changing the bridge contract.
 
 Example wrapper:
 
