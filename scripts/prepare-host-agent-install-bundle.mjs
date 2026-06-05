@@ -2,8 +2,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import os from "node:os";
 import { pathToFileURL } from "node:url";
-import { defaultHostName, resolveConfigPath, resolveLockPath } from "../src/bridge/host-bridge-agent.mjs";
-import { resolveStatusPath } from "../src/bridge/host-agent-launcher.mjs";
+import { defaultHostName } from "../src/bridge/host-bridge-agent.mjs";
 
 function parseArgs(argv) {
   const options = {
@@ -63,7 +62,7 @@ function shellQuote(value) {
 
 function buildLauncherArgs({ targetId, targetName, kind, hostName, gatewayBaseUrl, bridgeVersion, statusPath, configPath, lockPath, heartbeatIntervalMs }) {
   return [
-    shellQuote(path.resolve("src/bridge/host-agent-launcher.mjs")),
+    shellQuote("src/bridge/host-agent-launcher.mjs"),
     "--status-file",
     shellQuote(statusPath),
     "--gateway",
@@ -93,6 +92,11 @@ async function writeText(filePath, content) {
   await fs.writeFile(filePath, content, "utf8");
 }
 
+async function copyFile(srcPath, dstPath) {
+  await fs.mkdir(path.dirname(dstPath), { recursive: true });
+  await fs.copyFile(srcPath, dstPath);
+}
+
 async function readJsonIfExists(filePath) {
   try {
     return JSON.parse(await fs.readFile(filePath, "utf8"));
@@ -116,13 +120,22 @@ async function prepareHostAgentInstallBundle(argv) {
   const bridgeVersion = options.bridgeVersion.trim();
   const outputDir = resolveOutputDir(options.outputDir);
   const bundleName = `${targetId}-host-agent-install-bundle`;
+  const runtimeLauncherPath = path.join(outputDir, "src", "bridge", "host-agent-launcher.mjs");
+  const runtimeBridgePath = path.join(outputDir, "src", "bridge", "host-bridge-agent.mjs");
+  const runtimeLauncherRelativePath = "src/bridge/host-agent-launcher.mjs";
+  const runtimeBridgeRelativePath = "src/bridge/host-bridge-agent.mjs";
+  const configRelativePath = "host-agent.json";
+  const lockRelativePath = "host-agent.lock";
+  const statusRelativePath = "host-agent-status.json";
 
-  const configPath = resolveConfigPath(path.join(outputDir, "host-agent.json"));
-  const lockPath = resolveLockPath(path.join(outputDir, "host-agent.lock"));
-  const statusPath = resolveStatusPath(path.join(outputDir, "host-agent-status.json"));
+  const configPath = configRelativePath;
+  const lockPath = lockRelativePath;
+  const statusPath = statusRelativePath;
 
   await fs.rm(outputDir, { recursive: true, force: true });
   await fs.mkdir(outputDir, { recursive: true });
+  await copyFile(path.join(process.cwd(), "src", "bridge", "host-agent-launcher.mjs"), runtimeLauncherPath);
+  await copyFile(path.join(process.cwd(), "src", "bridge", "host-bridge-agent.mjs"), runtimeBridgePath);
 
   const launcherArgs = buildLauncherArgs({
     targetId,
@@ -154,9 +167,14 @@ async function prepareHostAgentInstallBundle(argv) {
     launcherArgs,
     launcherCommand,
     taskName: `ClawDeskHostAgent-${targetId}`,
-    runtimeEntryPoint: "src/bridge/host-agent-launcher.mjs",
+    runtimeRoot: "src/bridge",
+    runtimeEntryPoint: runtimeLauncherRelativePath,
+    runtimeBridgeEntryPoint: runtimeBridgeRelativePath,
     runtimeInstallMode: "service-friendly-launcher",
+    bundlePortable: true,
     files: [
+      runtimeLauncherRelativePath,
+      runtimeBridgeRelativePath,
       "README.md",
       "launch-host-agent.cmd",
       "launch-host-agent.ps1",
@@ -180,9 +198,9 @@ This folder contains a service-friendly handoff for the ClawDesk host bridge run
 - Kind: \`${kind}\`
 - Host name: \`${hostName}\`
 - Gateway: \`${gatewayBaseUrl}\`
-- Config: \`${configPath}\`
-- Lock: \`${lockPath}\`
-- Status: \`${statusPath}\`
+- Config: \`${configRelativePath}\`
+- Lock: \`${lockRelativePath}\`
+- Status: \`${statusRelativePath}\`
 
 ## Launch
 
@@ -214,6 +232,8 @@ remove-host-agent.ps1
 uninstall-host-agent.ps1
 \`\`\`
 
+The bundle includes a local copy of the reusable host bridge runtime so the install root can be moved without depending on the repo checkout.
+
 The launcher writes a lifecycle status file so a future Windows service or startup hook can supervise the runtime without changing the bridge contract.
 
 ## Scheduled Task
@@ -227,15 +247,45 @@ This creates a hidden logon task that launches the same runtime through the laun
 
   const launchCmd = `@echo off
 setlocal
-set "CLAWDESK_HOST_AGENT_STATUS_FILE=${statusPath}"
-${launcherCommand}
+pushd "%~dp0"
+set "CLAWDESK_HOST_AGENT_STATUS_FILE=%CD%\\${statusRelativePath}"
+powershell.exe -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0launch-host-agent.ps1"
+popd
 endlocal
 `;
 
-  const launchPs1 = `param()
+  const launchPs1 = `param(
+  [int]$MaxHeartbeats = 0
+)
 $ErrorActionPreference = "Stop"
-$env:CLAWDESK_HOST_AGENT_STATUS_FILE = "${statusPath}"
-& ${shellQuote(nodeExecutable)} ${launcherArgs.join(" ")}
+$bundleRoot = $PSScriptRoot
+Push-Location $bundleRoot
+try {
+  $launcherScript = Join-Path $bundleRoot "${runtimeLauncherRelativePath}"
+  $statusFile = Join-Path $bundleRoot "${statusRelativePath}"
+  $configFile = Join-Path $bundleRoot "${configRelativePath}"
+  $lockFile = Join-Path $bundleRoot "${lockRelativePath}"
+  $arguments = @(
+    $launcherScript,
+    "--status-file", $statusFile,
+    "--gateway", "${gatewayBaseUrl}",
+    "--target-id", "${targetId}",
+    "--target-name", "${targetName}",
+    "--kind", "${kind}",
+    "--host-name", "${hostName}",
+    "--bridge-version", "${bridgeVersion}",
+    "--config", $configFile,
+    "--lock-file", $lockFile,
+    "--daemon",
+    "--heartbeat-interval-ms", "${options.heartbeatIntervalMs}"
+  )
+  if ($MaxHeartbeats -gt 0) {
+    $arguments += @("--max-heartbeats", [string]$MaxHeartbeats)
+  }
+  & ${shellQuote(nodeExecutable)} @arguments
+} finally {
+  Pop-Location
+}
 `;
 
   const installPs1 = `param(
@@ -264,8 +314,8 @@ if ($Preview) { $arguments += "-Preview" }
 $ErrorActionPreference = "Stop"
 $taskName = "${manifest.taskName}"
 $powershell = ${shellQuote("powershell.exe")}
-$launchScript = ${shellQuote(path.join(outputDir, "launch-host-agent.ps1"))}
-$statusFile = "${statusPath}"
+$launchScript = Join-Path $PSScriptRoot "launch-host-agent.ps1"
+$statusFile = Join-Path $PSScriptRoot "${statusRelativePath}"
 $registerDefinition = [pscustomobject]@{
   TaskName = $taskName
   Execute = $powershell
@@ -310,12 +360,12 @@ if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) {
 }
 `;
 
-  const uninstallPs1 = `param()
+const uninstallPs1 = `param()
 $ErrorActionPreference = "Stop"
 $paths = @(
-  "${configPath}",
-  "${lockPath}",
-  "${statusPath}"
+  (Join-Path $PSScriptRoot "${configRelativePath}"),
+  (Join-Path $PSScriptRoot "${lockRelativePath}"),
+  (Join-Path $PSScriptRoot "${statusRelativePath}")
 )
 foreach ($file in $paths) {
   if (Test-Path $file) { Remove-Item -LiteralPath $file -Force }
@@ -333,7 +383,7 @@ Write-Host "Removed host agent config, lock, and status files."
   await writeText(path.join(outputDir, "uninstall-host-agent.ps1"), uninstallPs1);
   await writeText(path.join(outputDir, "host-agent-install.json"), `${JSON.stringify(manifest, null, 2)}\n`);
 
-  const configPreview = await readJsonIfExists(configPath);
+  const configPreview = await readJsonIfExists(path.join(outputDir, configRelativePath));
   return {
     ...manifest,
     configPreview,
