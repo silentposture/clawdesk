@@ -12,6 +12,7 @@ Goals:
 - Demonstrate the next step toward a real host-side agent bridge.
 - Demonstrate both one-shot onboarding and daemon-style heartbeat loops.
 - Reuse the same runtime that future host-side installs can share.
+- Keep the install-time identity in a local config file so repeated runs keep the same bridge / device / install identity.
 
 Run:
 
@@ -26,6 +27,8 @@ node examples/local-agent-bridge/bridge-agent.mjs --gateway http://127.0.0.1:188
 ```
 
 Add `--daemon --heartbeat-interval-ms 10000 --max-heartbeats 3` to exercise the long-lived heartbeat loop in a bounded smoke run.
+
+The runtime persists identity to `~/.clawdesk/host-agent.json` by default, or to a path passed with `--config`.
 
 Reusable runtime:
 

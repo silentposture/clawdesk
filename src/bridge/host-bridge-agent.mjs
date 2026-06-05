@@ -1,5 +1,7 @@
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
 import os from "node:os";
+import path from "node:path";
 import { pathToFileURL } from "node:url";
 
 function parseArgs(argv) {
@@ -19,6 +21,7 @@ function parseArgs(argv) {
     heartbeatIntervalMs: 10_000,
     maxHeartbeats: 0,
     bridgeId: "",
+    configPath: "",
   };
 
   for (let i = 2; i < argv.length; i += 1) {
@@ -53,6 +56,9 @@ function parseArgs(argv) {
       i += 1;
     } else if (arg === "--bridge-id" && next) {
       options.bridgeId = next;
+      i += 1;
+    } else if (arg === "--config" && next) {
+      options.configPath = next;
       i += 1;
     } else if (arg === "--dry-run") {
       options.dryRun = true;
@@ -96,6 +102,27 @@ function defaultDeviceId(targetId) {
 
 function defaultInstallId(targetId) {
   return `${targetId || "host"}-install-${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function resolveConfigPath(value) {
+  const raw = String(value || "").trim();
+  if (raw) return path.resolve(raw);
+  return path.join(os.homedir(), ".clawdesk", "host-agent.json");
+}
+
+async function readJsonFile(filePath) {
+  try {
+    const raw = await fs.readFile(filePath, "utf8");
+    return JSON.parse(raw);
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+async function writeJsonFile(filePath, value) {
+  await fs.mkdir(path.dirname(filePath), { recursive: true });
+  await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
 }
 
 async function postJson(url, body) {
@@ -155,6 +182,7 @@ async function seedTargetRegistryIfNeeded(gatewayBaseUrl, targetId, targetName, 
 
 async function runHostBridgeAgent(argv, runtime = {}) {
   const options = parseArgs(argv);
+  const configPath = resolveConfigPath(options.configPath || runtime.configPath || process.env.CLAWDESK_HOST_AGENT_CONFIG || "");
   const gatewayBaseUrl = normalizeBaseUrl(
     options.gatewayBaseUrl || runtime.gatewayBaseUrl || process.env.CLAWDESK_GATEWAY_URL || process.env.OPENCLAW_GATEWAY_URL || "http://127.0.0.1:18890",
   );
@@ -167,14 +195,15 @@ async function runHostBridgeAgent(argv, runtime = {}) {
     throw new Error("Target id is required.");
   }
 
-  const targetName = options.targetName.trim() || targetId;
-  const kind = options.kind.trim() || "remote-desktop";
-  const hostName = options.hostName.trim() || defaultHostName();
-  const bridgeVersion = options.bridgeVersion.trim() || "local-example-bridge";
-  const bridgeId = options.bridgeId.trim() || defaultBridgeId(targetId);
-  const deviceId = options.deviceId.trim() || defaultDeviceId(targetId);
-  const installId = options.installId.trim() || defaultInstallId(targetId);
-  const platform = options.platform.trim() || os.platform();
+  const persistedConfig = await readJsonFile(configPath);
+  const targetName = options.targetName.trim() || persistedConfig?.targetName?.trim() || targetId;
+  const kind = options.kind.trim() || persistedConfig?.kind?.trim() || "remote-desktop";
+  const hostName = options.hostName.trim() || persistedConfig?.hostName?.trim() || defaultHostName();
+  const bridgeVersion = options.bridgeVersion.trim() || persistedConfig?.bridgeVersion?.trim() || "local-example-bridge";
+  const bridgeId = options.bridgeId.trim() || persistedConfig?.bridgeId?.trim() || defaultBridgeId(targetId);
+  const deviceId = options.deviceId.trim() || persistedConfig?.deviceId?.trim() || defaultDeviceId(targetId);
+  const installId = options.installId.trim() || persistedConfig?.installId?.trim() || defaultInstallId(targetId);
+  const platform = options.platform.trim() || persistedConfig?.platform?.trim() || os.platform();
 
   const state = {
     gatewayBaseUrl,
@@ -190,11 +219,29 @@ async function runHostBridgeAgent(argv, runtime = {}) {
     dryRun: options.dryRun,
     heartbeatOnly: options.heartbeatOnly,
     maxHeartbeats: options.maxHeartbeats,
+    configPath,
   };
+
+  if (!options.dryRun) {
+    await writeJsonFile(configPath, {
+      configVersion: 1,
+      gatewayBaseUrl,
+      targetId,
+      targetName,
+      kind,
+      hostName,
+      bridgeVersion,
+      bridgeId,
+      deviceId,
+      installId,
+      platform,
+    });
+  }
 
   if (options.dryRun) {
     printResult("local-agent-bridge dry run", {
       ...state,
+      configPath,
       steps: options.heartbeatOnly
         ? ["heartbeat"]
         : options.daemon
@@ -259,6 +306,7 @@ async function runHostBridgeAgent(argv, runtime = {}) {
     console.log(`# local-agent-bridge daemon`);
     console.log(JSON.stringify({
       ...state,
+      configPath,
       attestation: {
         allowed: attest.payload.allowed,
         reason: attest.payload.reason,
@@ -309,6 +357,7 @@ async function runHostBridgeAgent(argv, runtime = {}) {
 
   printResult("local-agent-bridge result", {
     ...state,
+    configPath,
     attestation: {
       allowed: attest.payload.allowed,
       reason: attest.payload.reason,
